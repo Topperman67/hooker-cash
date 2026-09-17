@@ -3,13 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import {
   Check,
   Shield,
-  Timer,
-  TrendingUp,
-  ChartNoAxesCombined,
   Flame,
-  Users,
-  RefreshCw,
-  Droplets,
   Blocks,
   ChevronLeft,
   ArrowUpRight,
@@ -33,6 +27,12 @@ import {
   mineHook,
 } from '../lib/hookRecipe'
 import { useTransaction } from '../lib/useTransaction'
+import {
+  allocationTotal,
+  balanceAllocations,
+  installedValueModules,
+  valueModuleKeys,
+} from '../lib/hookAllocation'
 import './hook-builder.css'
 
 const needsOracle = (r) => r.buybackBps || r.liquidityBps
@@ -137,6 +137,8 @@ function FeeAllocation({ recipe }) {
 export default function HookBuilder({ draft, update, input, wallet, platform, onConnect, onBusy }) {
   const hook = draft.hook,
     recipe = hook?.recipe || emptyRecipe
+  const valueModules = installedValueModules(hook)
+  const allocated = allocationTotal(recipe)
   const [view, setView] = useState(hook?.mode === 'custom' ? 'builder' : 'presets')
   const [prepared, setPrepared] = useState(null),
     [busy, setBusy] = useState(false),
@@ -172,21 +174,23 @@ export default function HookBuilder({ draft, update, input, wallet, platform, on
     },
     [],
   )
-  function choose(recipe) {
-    update('hook', { mode: 'custom', recipe, deployment: null })
+  function choose(recipe, valueModules = installedValueModules({ recipe })) {
+    update('hook', { mode: 'custom', recipe, valueModules, deployment: null })
     setView('builder')
     setError('')
     setStatus('')
     setPrepared(null)
   }
-  function change(key, value) {
-    const next = { ...recipe, [key]: value }
+  function change(key, value, installed = valueModules) {
+    const next = valueModuleKeys.includes(key)
+      ? balanceAllocations(recipe, key, value)
+      : { ...recipe, [key]: value }
     if (key === 'startCapBps' && !value) next.endCapBps = 0
     if (key === 'startCapBps' && value && !next.endCapBps) next.endCapBps = 1000
     if (next.interval || next.startCapBps) next.window ||= 300
     else next.window = 0
     if (needsOracle(next)) next.oracle = true
-    choose(next)
+    choose(next, installed)
   }
   async function prepare() {
     setBusy(true)
@@ -507,9 +511,39 @@ export default function HookBuilder({ draft, update, input, wallet, platform, on
                       </p>
                     </div>
                     <span>
-                      {modules.filter((m) => m.group === group && recipe[m.key]).length} installed
+                      {group === 'value'
+                        ? valueModules.length
+                        : modules.filter((m) => m.group === group && recipe[m.key]).length}{' '}
+                      installed
                     </span>
                   </div>
+                  {group === 'value' && (
+                    <div className="hook-budget" role="group" aria-label="Creator-share budget">
+                      <div className="hook-budget-heading">
+                        <strong>Your creator-share budget</strong>
+                        <span>
+                          <Check size={12} /> 100% total
+                        </span>
+                      </div>
+                      <div className="hook-budget-totals">
+                        <span>
+                          Modules <b>{number(allocated / 100)}%</b>
+                        </span>
+                        <span>
+                          Available <b>{number((10000 - allocated) / 100)}%</b>
+                        </span>
+                      </div>
+                      <p>
+                        Unused budget stays with you. Increasing a module uses available budget
+                        first, then lowers the others evenly. Zero-percent modules stay editable.
+                      </p>
+                      {hook?.allocationRepaired && (
+                        <p role="status">
+                          Your saved allocations were automatically balanced to 100%.
+                        </p>
+                      )}
+                    </div>
+                  )}
                   {group === 'opening' && (recipe.interval || recipe.startCapBps) ? (
                     <Field
                       label="Opening window · seconds"
@@ -528,7 +562,8 @@ export default function HookBuilder({ draft, update, input, wallet, platform, on
                   {modules
                     .filter((m) => m.group === group)
                     .map((m) => {
-                      const installed = !!recipe[m.key],
+                      const installed =
+                          m.group === 'value' ? valueModules.includes(m.key) : !!recipe[m.key],
                         Icon = m.icon
                       return (
                         <article
@@ -550,6 +585,11 @@ export default function HookBuilder({ draft, update, input, wallet, platform, on
                                 change(
                                   m.key,
                                   installed ? (m.key === 'oracle' ? false : 0) : m.value,
+                                  m.group === 'value'
+                                    ? installed
+                                      ? valueModules.filter((key) => key !== m.key)
+                                      : [...valueModules, m.key]
+                                    : valueModules,
                                 )
                               }
                             >
@@ -570,9 +610,9 @@ export default function HookBuilder({ draft, update, input, wallet, platform, on
                                     <input
                                       type="range"
                                       aria-label={`${m.title} · % of creator share`}
-                                      min="1"
+                                      min="0"
                                       max="100"
-                                      step="1"
+                                      step="0.01"
                                       value={recipe[m.key] / 100}
                                       disabled={locked}
                                       onChange={(e) => change(m.key, Number(e.target.value) * 100)}

@@ -1,4 +1,5 @@
 import { defaultDraft, validateDraft } from './protocolDraft.js'
+import { restoreHookAllocations } from './hookAllocation.js'
 
 export const draftKey = 'hookbrew:launch-draft:v1'
 export const stepKey = 'hookbrew:launch-step:v2'
@@ -9,6 +10,7 @@ export function restoreDraft(storage = localStorage) {
     return {
       ...defaultDraft,
       ...saved,
+      hook: restoreHookAllocations(saved?.hook) || null,
       vesting: saved?.vesting || defaultDraft.vesting,
       splits: Array.isArray(saved?.splits)
         ? saved.splits.map((s) => {

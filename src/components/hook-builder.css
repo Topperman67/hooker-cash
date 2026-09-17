@@ -198,6 +198,55 @@
   margin-bottom: 10px;
   background: #bca2ec03;
 }
+.hook-budget {
+  padding: 16px 18px;
+  margin-bottom: 16px;
+  border: 1px solid #bba3dc35;
+  border-radius: 12px;
+  background: #bba3dc08;
+}
+.hook-budget-heading,
+.hook-budget-totals {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.hook-budget-heading strong {
+  color: #d9cbe9;
+  font-size: 12px;
+  font-weight: 500;
+}
+.hook-budget-heading > span {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+  color: #b9d4c7;
+}
+.hook-budget-totals {
+  justify-content: flex-start;
+  gap: 24px;
+  margin-top: 14px;
+  color: #a99bb9;
+  font-size: 11px;
+}
+.hook-budget-totals b {
+  color: #dec9f3;
+  margin-left: 5px;
+  font-size: 16px;
+  font-weight: 500;
+}
+.hook-budget p {
+  margin: 12px 0 0;
+  color: #a99bb9;
+  font-size: 11px;
+  line-height: 1.7;
+}
+.hook-budget p[role='status'] {
+  color: #cbbadc;
+}
 .hook-module[data-installed='true'] {
   background: #bca2ec08;
   border-color: color-mix(in srgb, var(--module-color) 48%, transparent);
