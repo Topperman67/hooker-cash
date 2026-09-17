@@ -101,6 +101,16 @@ for (const outcome of ['activate', 'already active', 'conflict']) {
   })
 }
 
+test('an existing draft from the older build resumes at review after setup', async ({ page }) => {
+  await init(page)
+  await page.route('**/api/status', (route) => route.fulfill({ json: { deployment, treasury } }))
+  await page.goto('/setup')
+  await page.evaluate(() => localStorage.removeItem('hookbrew:launch-step:v1'))
+  await page.getByRole('link', { name: 'Continue your token launch' }).click()
+  await expect(page.getByRole('heading', { name: 'Ready for the first pour?' })).toBeVisible()
+  await expect(page.locator('.review-list')).toContainText('Saved Brew / BREW')
+})
+
 test('failed status and missing durable storage never send a creator back to deployment', async ({
   page,
 }) => {

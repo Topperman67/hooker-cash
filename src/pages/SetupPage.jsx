@@ -18,6 +18,7 @@ import { api, number, short } from '../lib/api'
 import { publicClient, readableError } from '../lib/chain'
 import { checkWallet, same } from '../lib/protocol'
 import { useTransaction } from '../lib/useTransaction'
+import { draftKey, stepKey, restoreDraft } from '../lib/launchDraft'
 const proxyCode =
   '0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3'
 const key = 'hookbrew:deployment-progress:v1'
@@ -30,6 +31,9 @@ function restore() {
 }
 export default function SetupPage() {
   const [search] = useSearchParams()
+  const [returningToDraft] = useState(
+    () => search.get('returnTo') === 'launch' || !!restoreDraft().name,
+  )
   const platform = usePlatform(),
     wallet = useWallet(),
     { onConnect } = useOutletContext()
@@ -313,10 +317,19 @@ export default function SetupPage() {
                   <p>{platform.deployment.factory}</p>
                 </div>
               </div>
-              <Button primary to="/create">
-                {search.get('returnTo') === 'launch'
-                  ? 'Continue your token launch'
-                  : 'Open token launch studio'}
+              <Button
+                primary
+                to="/create"
+                onClick={() => {
+                  // Older builds saved the form but not its step. Recover that draft
+                  // at review; the studio still validates every preceding step.
+                  try {
+                    if (localStorage.getItem(draftKey) && localStorage.getItem(stepKey) === null)
+                      localStorage.setItem(stepKey, '4')
+                  } catch {}
+                }}
+              >
+                {returningToDraft ? 'Continue your token launch' : 'Open token launch studio'}
               </Button>
             </>
           ) : (
