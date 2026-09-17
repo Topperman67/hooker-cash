@@ -1,0 +1,305 @@
+{
+  "checkedAt": "2026-09-17T01:52:14.682Z",
+  "chainId": 5042,
+  "rpc": "https://rpc.mainnet.arc.io",
+  "blockNumber": "21252386",
+  "blockHash": "0x46ba9a38d76b6523f1406f05d2224b67d57e1f99c130da4902bc79be2c64659f",
+  "sourceMatched": false,
+  "hookbrewLaunchVerified": false,
+  "contracts": [
+    {
+      "name": "poolManager",
+      "address": "0x8366a39CC670B4001A1121B8F6A443A643e40951",
+      "codeBytes": 24009,
+      "codeHash": "0xbd3881180b547f5fe817545743cfb4343e96b1bc6640dcd70c106b0066e95626",
+      "status": "code present; source not matched"
+    },
+    {
+      "name": "stateView",
+      "address": "0xF3334192D15450CdD385c8B70e03f9A6bD9E673b",
+      "codeBytes": 3531,
+      "codeHash": "0x7d9c591e0956fd89d98feb4ffcfe8bf1f7a62bd485edd979fa21d104b49878a6",
+      "status": "code present; source not matched"
+    },
+    {
+      "name": "v4Quoter",
+      "address": "0x8Dc178eFB8111BB0973Dd9d722ebeFF267c98F94",
+      "codeBytes": 6118,
+      "codeHash": "0xd707b1da8cb165e5ea35a3b4450d971eb562ec171e23492aa117036b78a868f6",
+      "status": "code present; source not matched"
+    },
+    {
+      "name": "positionDescriptor",
+      "address": "0x0000000000000000000000000000000000000000",
+      "status": "not deployed / zero address"
+    },
+    {
+      "name": "positionManager",
+      "address": "0x6049c9a0e26405C0985f9E3685C87d0aE917f82B",
+      "codeBytes": 23877,
+      "codeHash": "0x5904204586f0290499c357cfcb99489cdc13740b3cd3f26c735f7ef7f2cff1c5",
+      "status": "code present; source not matched"
+    },
+    {
+      "name": "universalRouter",
+      "address": "0x4fcA4a51Ab4F23A7447b3284fBd7D73289A89Fb1",
+      "codeBytes": 24546,
+      "codeHash": "0x7f949fe75d3483670e17a9ab398a3dc71f285026bba755b48fffd1e42aefad71",
+      "status": "code present; source not matched"
+    },
+    {
+      "name": "artifactV10",
+      "address": "0x552554443dA3F7Ec2CC26CdE38c48769f9a81f60",
+      "codeBytes": 19822,
+      "codeHash": "0xcecd686c75c930c8f8faa631eb26ccd20f87a0579d5d9f5b41b983a10cc3e94f",
+      "status": "code present; source not matched"
+    },
+    {
+      "name": "distributor",
+      "address": "0x91e860974F530d28E601799C0a3196D3Bb8b5c10",
+      "codeBytes": 3565,
+      "codeHash": "0xd874aac327242cd000c3006108590b5797fb3d6288daa8d03eb5f8611ed62136",
+      "status": "code present; source not matched"
+    },
+    {
+      "name": "engineV3",
+      "address": "0x11B1b1e829b15AACdE2FfC1ba5B797Ea815f1445",
+      "codeBytes": 9110,
+      "codeHash": "0xbddc5e8af9314407ee8e5b04dad3d217b208dc7ae8f5cc020c4c70f85b47e529",
+      "status": "code present; source not matched"
+    },
+    {
+      "name": "factoryV2",
+      "address": "0x2707B4c72cD962fb1a511751f2A0C4e8017B6882",
+      "codeBytes": 16393,
+      "codeHash": "0xc7514f3419057129ddf6e171f86c6eeb0550ff20c62a89f0ab4ee1b71ffedde3",
+      "status": "code present; source not matched"
+    },
+    {
+      "name": "hookBuilderV10",
+      "address": "0xa69699a61BA9ceEdA5B4F44010F9512809A4607D",
+      "codeBytes": 7259,
+      "codeHash": "0x887c426fecf1b7fe0d0319c6c21c708fbd6bc8dbe946f4437b65399961364a47",
+      "status": "code present; source not matched"
+    },
+    {
+      "name": "hookRegistry",
+      "address": "0xA4bE82e5048EEA402D294AA64e2A8DeC03E9990B",
+      "codeBytes": 6945,
+      "codeHash": "0x6181eeff9ba5d95f0b3229f7abff746a6dad7b1937dceb2458e06eea6fd6ff33",
+      "status": "code present; source not matched"
+    },
+    {
+      "name": "moduleRegistry",
+      "address": "0x3Eb6EAbfA8F91727969C44CbcdabB87f20a24cec",
+      "codeBytes": 2426,
+      "codeHash": "0x7c08e872290c1eeaa35c8cbfd3ffa7a9accfe2c882299d3a77955e98c10ed114",
+      "status": "code present; source not matched"
+    },
+    {
+      "name": "perpsEngine",
+      "address": "0x1A03539B0ad757a51565f5d0f181223a9E381b1F",
+      "codeBytes": 14217,
+      "codeHash": "0xdc2b055b3dffab1a09d99c6d469fa2802956548d065c28acbb196f9cc519da59",
+      "status": "code present; source not matched"
+    },
+    {
+      "name": "platformToken",
+      "address": "0xdf99516d943f8cc285bdc49fee981f60c113e0fe",
+      "codeBytes": 3697,
+      "codeHash": "0x18730796c769af8db7b9f5ead20af33b9523d1f09209575fa15f2eaa43924a3a",
+      "status": "code present; source not matched"
+    },
+    {
+      "name": "policyV2",
+      "address": "0x67b10E7255deD7753311E8fF318a131783E073F5",
+      "codeBytes": 10395,
+      "codeHash": "0x5880fc3b568dc15e1b3f5fb8870511bbb3d9168e094f1147476f0567740e9ff6",
+      "status": "code present; source not matched"
+    },
+    {
+      "name": "schedulerV2",
+      "address": "0x36fcD45E6891A560e7B430F5F5F7001A4dea04Cc",
+      "codeBytes": 9928,
+      "codeHash": "0x01b11cdbbc72f0d8f3c5429bc25cb32a088f2a563eda1c2b463ea7a93b6d3069",
+      "status": "code present; source not matched"
+    },
+    {
+      "name": "seedExecutorV2",
+      "address": "0x83b527637f312fDe77aF367Cc5645aBD0eD67bEe",
+      "codeBytes": 11886,
+      "codeHash": "0x2ae1f48b207c1e508e64d3c11e37c0836c28da8eda886644497d973a9e3aa777",
+      "status": "code present; source not matched"
+    },
+    {
+      "name": "tokenDeployerV2",
+      "address": "0x05CB5eFf96a172B8Df04F22801A26C236243147D",
+      "codeBytes": 14337,
+      "codeHash": "0xbd7cb4fa67ce1e8e08ad566497e4460b8aba4b0dca040ac86fd5e8a94f1541eb",
+      "status": "code present; source not matched"
+    },
+    {
+      "name": "vestingV3",
+      "address": "0x4435570C3Dc6336eD048865289151B2466b57E94",
+      "codeBytes": 4486,
+      "codeHash": "0x5f94f0b00528752b4e54674cd23bd86868ea162620ba1eb2078a6b28e3a11aed",
+      "status": "code present; source not matched"
+    },
+    {
+      "name": "burn",
+      "address": "0xaaFd392a3F0a93c57ec05Ef383A931e0b9baE5F3",
+      "codeBytes": 843,
+      "codeHash": "0x9dee310adc1f1d3d98e43554ac4ed6d2247182895e7718c7bf1284e0cca2d4c1",
+      "status": "code present; source not matched"
+    },
+    {
+      "name": "buyback",
+      "address": "0x08C8e04Cd9c929A0Ab38fBCb5A2A33D0b9f4dE16",
+      "codeBytes": 3620,
+      "codeHash": "0x222404f3ab07bf65252ba49fe2ed72ffd783d68b4e78cae956511ec1666e45fa",
+      "status": "code present; source not matched"
+    },
+    {
+      "name": "deepen",
+      "address": "0x34f3891440A52499f1161c5A5cFEA9109b2f682e",
+      "codeBytes": 4629,
+      "codeHash": "0xb8c0125248119f06f67f7a1303a12df3017b8ba6df95188df25055b95269e271",
+      "status": "code present; source not matched"
+    },
+    {
+      "name": "floor",
+      "address": "0x3fDFAd75560a62E4Bc09cAefF7476837a39b8e3a",
+      "codeBytes": 4656,
+      "codeHash": "0xed64172a28581282fb27b575a8f2e5247a7a05cc5a9562be572bd4df1a1edc88",
+      "status": "code present; source not matched"
+    },
+    {
+      "name": "jit",
+      "address": "0x275Fb8a5ae7822891bffea39C9A810AC88dda800",
+      "codeBytes": 15578,
+      "codeHash": "0x1f6e1a6b7cccd4be38d2114a005d8d3dc8d285bce15147488bfbf43045331c92",
+      "status": "code present; source not matched"
+    },
+    {
+      "name": "reflect",
+      "address": "0x2EeaBe6Ab99d2Fc97F51593Ed4b89e64AA2E5E8d",
+      "codeBytes": 1365,
+      "codeHash": "0xf7d711c445d27f1bd15c4d7ea74ed458dd819648aaf2c30690d31fc164ef1883",
+      "status": "code present; source not matched"
+    },
+    {
+      "name": "snipeV1",
+      "address": "0xd9d43aD694dc69D49d2410Ad8791A1c938f6568C",
+      "codeBytes": 2405,
+      "codeHash": "0xc50336a0628b028cdd8c806fa46aa22020b1c9c591dc435da43def1dd8cb005a",
+      "status": "code present; source not matched"
+    },
+    {
+      "name": "snipeV2",
+      "address": "0x8222374A6D36d87c41698490D2B8Fe8b27a7920e",
+      "codeBytes": 2858,
+      "codeHash": "0x9caf101197af3d8e7de04a7e6ad54fed9e735fe2b66b77e50d040d821d6994a3",
+      "status": "code present; source not matched"
+    },
+    {
+      "name": "throttle",
+      "address": "0x4E4a6CF6844f554cD16389751092653eb931dc1E",
+      "codeBytes": 1835,
+      "codeHash": "0x9934c2084a708ac970a13a7a31a7915dd03b068eed52aae005157e0a141c2aa6",
+      "status": "code present; source not matched"
+    },
+    {
+      "name": "twap",
+      "address": "0xE2c24244F1B53e252BeD1B0f94FCD810f5afdEF2",
+      "codeBytes": 5084,
+      "codeHash": "0x62ae3bc0481bf942c07214fd0ab8815e93a236dd72dbbca42f90e475e68cb9e5",
+      "status": "code present; source not matched"
+    },
+    {
+      "name": "plain",
+      "address": "0x22f48471f01420AF2750bB60D50F84E4876B6000",
+      "codeBytes": 15578,
+      "codeHash": "0x7337dd0c2a72360be76a2580b87d4a007078d622793cc631850ab2c218fb0b69",
+      "status": "code present; source not matched"
+    },
+    {
+      "name": "reflect50",
+      "address": "0x7b3A862E0aFe90CBC6d7Ee2E69C505e07cAE2000",
+      "codeBytes": 15578,
+      "codeHash": "0xf523d4076d4004fa180b3308bcdad8aef3ebcf2f10f9da2f78743d1a6046fd89",
+      "status": "code present; source not matched"
+    },
+    {
+      "name": "reflect50burn20",
+      "address": "0xA84CE5ADB448d40FD70b62FA7fA4597876A6A000",
+      "codeBytes": 15578,
+      "codeHash": "0x5d4a0403824d99cf507433b7b321969f17c5883625c70fae0d71848bb7986c62",
+      "status": "code present; source not matched"
+    }
+  ],
+  "getters": [
+    {
+      "name": "policy",
+      "value": "0x67b10E7255deD7753311E8fF318a131783E073F5",
+      "expected": "0x67b10E7255deD7753311E8fF318a131783E073F5",
+      "matches": true
+    },
+    {
+      "name": "tokenDeployer",
+      "value": "0x05CB5eFf96a172B8Df04F22801A26C236243147D",
+      "expected": "0x05CB5eFf96a172B8Df04F22801A26C236243147D",
+      "matches": true
+    },
+    {
+      "name": "launchFee",
+      "value": "1000000000000000000",
+      "expected": null,
+      "matches": null,
+      "nativeUsdc": "1"
+    }
+  ],
+  "authority": [
+    {
+      "name": "factoryV2",
+      "address": "0x2707B4c72cD962fb1a511751f2A0C4e8017B6882",
+      "owner": "getter unavailable; authority not established by this call",
+      "treasury": "0x4d292846F109BA1c7B6842F8C8d3E971bc4ab376"
+    },
+    {
+      "name": "policyV2",
+      "address": "0x67b10E7255deD7753311E8fF318a131783E073F5",
+      "owner": "getter unavailable; authority not established by this call",
+      "treasury": "0x4d292846F109BA1c7B6842F8C8d3E971bc4ab376"
+    },
+    {
+      "name": "hookRegistry",
+      "address": "0xA4bE82e5048EEA402D294AA64e2A8DeC03E9990B",
+      "owner": "0x4d292846F109BA1c7B6842F8C8d3E971bc4ab376",
+      "treasury": "getter unavailable; authority not established by this call"
+    },
+    {
+      "name": "moduleRegistry",
+      "address": "0x3Eb6EAbfA8F91727969C44CbcdabB87f20a24cec",
+      "owner": "0x4d292846F109BA1c7B6842F8C8d3E971bc4ab376",
+      "treasury": "getter unavailable; authority not established by this call"
+    },
+    {
+      "name": "hookBuilderV10",
+      "address": "0xa69699a61BA9ceEdA5B4F44010F9512809A4607D",
+      "owner": "getter unavailable; authority not established by this call",
+      "treasury": "0x4d292846F109BA1c7B6842F8C8d3E971bc4ab376"
+    },
+    {
+      "name": "engineV3",
+      "address": "0x11B1b1e829b15AACdE2FfC1ba5B797Ea815f1445",
+      "owner": "0x4d292846F109BA1c7B6842F8C8d3E971bc4ab376",
+      "treasury": "getter unavailable; authority not established by this call"
+    }
+  ],
+  "recentLaunches": {
+    "fromBlock": "21242386",
+    "toBlock": "21252386",
+    "countInRange": 0,
+    "events": []
+  }
+}

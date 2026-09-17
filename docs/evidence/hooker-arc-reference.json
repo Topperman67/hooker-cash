@@ -1,0 +1,341 @@
+{
+  "purpose": "Read-only evidence for the ORIGINAL Hooker deployment. Not Hookbrew deployment configuration. Source matching and ownership are not established.",
+  "sources": [
+    "https://hooker.cash/assets/contracts-D8rUCa7Y.js",
+    "https://hooker.cash/assets/abis-OZoku8Of.js"
+  ],
+  "manifest": {
+    "builderVersion": "10",
+    "catalog": {
+      "burn": "0xaaFd392a3F0a93c57ec05Ef383A931e0b9baE5F3",
+      "buyback": "0x08C8e04Cd9c929A0Ab38fBCb5A2A33D0b9f4dE16",
+      "deepen": "0x34f3891440A52499f1161c5A5cFEA9109b2f682e",
+      "floor": "0x3fDFAd75560a62E4Bc09cAefF7476837a39b8e3a",
+      "jit": "0xCEfbB68BE8885555eE857dABd1E0BAEF365E0675",
+      "reflect": "0x2EeaBe6Ab99d2Fc97F51593Ed4b89e64AA2E5E8d",
+      "snipeV1": "0xd9d43aD694dc69D49d2410Ad8791A1c938f6568C",
+      "snipeV2": "0x8222374A6D36d87c41698490D2B8Fe8b27a7920e",
+      "throttle": "0x4E4a6CF6844f554cD16389751092653eb931dc1E",
+      "twap": "0xE2c24244F1B53e252BeD1B0f94FCD810f5afdEF2"
+    },
+    "chainId": 5042,
+    "constants": {
+      "allowedPoolFees": "[10000,20000,30000,40000,50000]",
+      "launchFeeWei": 1000000000000000000,
+      "poolFee": 10000,
+      "poolManager": "0x8366a39CC670B4001A1121B8F6A443A643e40951",
+      "positionManager": "0x6049c9a0e26405C0985f9E3685C87d0aE917f82B",
+      "totalFeeBps": 100,
+      "usdg": "0x3600000000000000000000000000000000000000",
+      "weth": "0x3600000000000000000000000000000000000000"
+    },
+    "contracts": {
+      "artifactV10": "0x552554443dA3F7Ec2CC26CdE38c48769f9a81f60",
+      "distributor": "0x91e860974F530d28E601799C0a3196D3Bb8b5c10",
+      "engineV3": "0x11B1b1e829b15AACdE2FfC1ba5B797Ea815f1445",
+      "factoryV2": "0x2707B4c72cD962fb1a511751f2A0C4e8017B6882",
+      "hookBuilderV10": "0xa69699a61BA9ceEdA5B4F44010F9512809A4607D",
+      "hookRegistry": "0xA4bE82e5048EEA402D294AA64e2A8DeC03E9990B",
+      "moduleRegistry": "0x3Eb6EAbfA8F91727969C44CbcdabB87f20a24cec",
+      "perpsEngine": "0x1A03539B0ad757a51565f5d0f181223a9E381b1F",
+      "platformToken": "0xdf99516d943f8cc285bdc49fee981f60c113e0fe",
+      "policyV2": "0x67b10E7255deD7753311E8fF318a131783E073F5",
+      "schedulerV2": "0x36fcD45E6891A560e7B430F5F5F7001A4dea04Cc",
+      "seedExecutorV2": "0x83b527637f312fDe77aF367Cc5645aBD0eD67bEe",
+      "tokenDeployerV2": "0x05CB5eFf96a172B8Df04F22801A26C236243147D",
+      "vestingV3": "0x4435570C3Dc6336eD048865289151B2466b57E94"
+    },
+    "deployBlock": 20907903,
+    "presets": {
+      "jit": "0x275Fb8a5ae7822891bffea39C9A810AC88dda800",
+      "plain": "0x22f48471f01420AF2750bB60D50F84E4876B6000",
+      "reflect50": "0x7b3A862E0aFe90CBC6d7Ee2E69C505e07cAE2000",
+      "reflect50burn20": "0xA84CE5ADB448d40FD70b62FA7fA4597876A6A000"
+    },
+    "tier": "modules",
+    "treasury": "0x4d292846F109BA1c7B6842F8C8d3E971bc4ab376"
+  },
+  "infrastructure": {
+    "chainId": 5042,
+    "network": "arc-5042",
+    "deployedAt": "1789413600",
+    "deployer": "0x4d292846F109BA1c7B6842F8C8d3E971bc4ab376",
+    "note": "Arc mainnet V4 infrastructure — every address live-verified 2026-09-14 via VerifyArcInfra (ALL CHECKS PASSED) against the public RPC; PositionManager + UniversalRouter discovered on-chain (they differ from Robinhood's — their initcode embeds constructor args, and Arc has no WETH). positionDescriptor is ZERO: no verified descriptor deployment exists on Arc yet (unused by the web; discover + fill when the explorer lands). See docs/ARC-MULTICHAIN.md §8.",
+    "contracts": {
+      "poolManager": "0x8366a39CC670B4001A1121B8F6A443A643e40951",
+      "stateView": "0xF3334192D15450CdD385c8B70e03f9A6bD9E673b",
+      "v4Quoter": "0x8Dc178eFB8111BB0973Dd9d722ebeFF267c98F94",
+      "positionDescriptor": "0x0000000000000000000000000000000000000000",
+      "positionManager": "0x6049c9a0e26405C0985f9E3685C87d0aE917f82B",
+      "universalRouter": "0x4fcA4a51Ab4F23A7447b3284fBd7D73289A89Fb1"
+    }
+  },
+  "factoryAbi": [
+    {
+      "name": "launch",
+      "type": "function",
+      "stateMutability": "payable",
+      "inputs": [
+        {
+          "name": "name_",
+          "type": "string"
+        },
+        {
+          "name": "symbol_",
+          "type": "string"
+        },
+        {
+          "name": "totalSupply_",
+          "type": "uint256"
+        },
+        {
+          "name": "creatorAllocation_",
+          "type": "uint256"
+        },
+        {
+          "name": "hook_",
+          "type": "address"
+        },
+        {
+          "name": "fee_",
+          "type": "uint24"
+        },
+        {
+          "name": "meta_",
+          "type": "tuple",
+          "components": [
+            {
+              "name": "description",
+              "type": "string"
+            },
+            {
+              "name": "imageURI",
+              "type": "string"
+            },
+            {
+              "name": "website",
+              "type": "string"
+            },
+            {
+              "name": "twitter",
+              "type": "string"
+            },
+            {
+              "name": "telegram",
+              "type": "string"
+            }
+          ]
+        },
+        {
+          "name": "cfg",
+          "type": "tuple",
+          "components": [
+            {
+              "name": "vanitySalt",
+              "type": "bytes32"
+            },
+            {
+              "name": "targetMcap",
+              "type": "uint256"
+            }
+          ]
+        },
+        {
+          "name": "quote_",
+          "type": "address"
+        },
+        {
+          "name": "quoteAmount_",
+          "type": "uint256"
+        },
+        {
+          "name": "split_",
+          "type": "tuple[]",
+          "components": [
+            {
+              "name": "wallet",
+              "type": "address"
+            },
+            {
+              "name": "bps",
+              "type": "uint16"
+            },
+            {
+              "name": "cliffSecs",
+              "type": "uint32"
+            },
+            {
+              "name": "durationSecs",
+              "type": "uint32"
+            }
+          ]
+        }
+      ],
+      "outputs": [
+        {
+          "name": "token",
+          "type": "address"
+        }
+      ]
+    },
+    {
+      "name": "launchFee",
+      "type": "function",
+      "stateMutability": "view",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "uint256"
+        }
+      ]
+    },
+    {
+      "name": "tokenPoolFee",
+      "type": "function",
+      "stateMutability": "view",
+      "inputs": [
+        {
+          "name": "token",
+          "type": "address"
+        }
+      ],
+      "outputs": [
+        {
+          "name": "fee",
+          "type": "uint24"
+        }
+      ]
+    },
+    {
+      "name": "policy",
+      "type": "function",
+      "stateMutability": "view",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address"
+        }
+      ]
+    },
+    {
+      "name": "tokenDeployer",
+      "type": "function",
+      "stateMutability": "view",
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "",
+          "type": "address"
+        }
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "TokenLaunched",
+      "type": "event",
+      "anonymous": false,
+      "inputs": [
+        {
+          "name": "token",
+          "type": "address",
+          "indexed": true
+        },
+        {
+          "name": "creator",
+          "type": "address",
+          "indexed": true
+        },
+        {
+          "name": "hook",
+          "type": "address",
+          "indexed": true
+        },
+        {
+          "name": "poolId",
+          "type": "bytes32",
+          "indexed": false
+        },
+        {
+          "name": "fee",
+          "type": "uint24",
+          "indexed": false
+        },
+        {
+          "name": "sqrtPriceX96",
+          "type": "uint160",
+          "indexed": false
+        },
+        {
+          "name": "totalSupply",
+          "type": "uint256",
+          "indexed": false
+        },
+        {
+          "name": "creatorAllocation",
+          "type": "uint256",
+          "indexed": false
+        },
+        {
+          "name": "vestingCliffSecs",
+          "type": "uint32",
+          "indexed": false
+        },
+        {
+          "name": "vestingDurationSecs",
+          "type": "uint32",
+          "indexed": false
+        }
+      ]
+    },
+    {
+      "name": "TokenLaunched",
+      "type": "event",
+      "anonymous": false,
+      "inputs": [
+        {
+          "name": "token",
+          "type": "address",
+          "indexed": true
+        },
+        {
+          "name": "creator",
+          "type": "address",
+          "indexed": true
+        },
+        {
+          "name": "hook",
+          "type": "address",
+          "indexed": true
+        },
+        {
+          "name": "poolId",
+          "type": "bytes32",
+          "indexed": false
+        },
+        {
+          "name": "fee",
+          "type": "uint24",
+          "indexed": false
+        },
+        {
+          "name": "sqrtPriceX96",
+          "type": "uint160",
+          "indexed": false
+        },
+        {
+          "name": "totalSupply",
+          "type": "uint256",
+          "indexed": false
+        },
+        {
+          "name": "creatorAllocation",
+          "type": "uint256",
+          "indexed": false
+        }
+      ]
+    }
+  ]
+}

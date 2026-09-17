@@ -1,0 +1,72 @@
+[
+  {
+    "contract": "CreatorFeeHookV1",
+    "source": "contracts/hooks/CreatorFeeHookV1.sol",
+    "runtimeBytes": 14764
+  },
+  {
+    "contract": "BuybackBurnHookV1",
+    "source": "contracts/hooks/BuybackBurnHookV1.sol",
+    "runtimeBytes": 13800
+  },
+  {
+    "contract": "HookersFactory",
+    "source": "contracts/HookersFactory.sol",
+    "runtimeBytes": 12617
+  },
+  {
+    "contract": "UERC20Factory",
+    "source": "contracts/vendor/uerc20-factory/factories/UERC20Factory.sol",
+    "runtimeBytes": 11873
+  },
+  {
+    "contract": "LiquidityCustody",
+    "source": "contracts/LiquidityCustody.sol",
+    "runtimeBytes": 7796
+  },
+  {
+    "contract": "UERC20",
+    "source": "contracts/vendor/uerc20-factory/tokens/UERC20.sol",
+    "runtimeBytes": 6168
+  },
+  {
+    "contract": "LaunchPolicyV1",
+    "source": "contracts/LaunchPolicyV1.sol",
+    "runtimeBytes": 4178
+  },
+  {
+    "contract": "FeeRecipientRegistry",
+    "source": "contracts/FeeRecipientRegistry.sol",
+    "runtimeBytes": 3097
+  },
+  {
+    "contract": "MechanismRegistry",
+    "source": "contracts/MechanismRegistry.sol",
+    "runtimeBytes": 2226
+  },
+  {
+    "contract": "FeeRouter",
+    "source": "contracts/FeeRouter.sol",
+    "runtimeBytes": 1811
+  },
+  {
+    "contract": "EthQuoteRegistryV1",
+    "source": "contracts/EthQuoteRegistryV1.sol",
+    "runtimeBytes": 711
+  },
+  {
+    "contract": "LaunchGeometry",
+    "source": "contracts/libraries/LaunchGeometry.sol",
+    "runtimeBytes": 44
+  },
+  {
+    "contract": "SwapFeeMath",
+    "source": "contracts/libraries/SwapFeeMath.sol",
+    "runtimeBytes": 44
+  },
+  {
+    "contract": "UERC20MetadataLibrary",
+    "source": "contracts/vendor/uerc20-factory/libraries/UERC20MetadataLibrary.sol",
+    "runtimeBytes": 44
+  }
+]

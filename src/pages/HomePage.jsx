@@ -1,208 +1,166 @@
+import { ArrowUpRight, Blocks, Droplets, Plus } from 'lucide-react'
+import Glass from '../components/Glass'
+import { BrandMark, Button, Logo } from '../components/UI'
+import ChainStatus from '../components/ChainStatus'
+import { usePlatform } from '../context/PlatformContext'
+import { useResource, compact } from '../lib/api'
 import { Link } from 'react-router-dom'
-import {
-  DEMO_TOKENS,
-  FEATURES,
-  GATE_MODULES,
-  VALUE_MODULES,
-  fmtPct,
-  fmtUsd,
-  moduleById,
-} from '../data'
+import { TokenAvatar } from '../components/UI'
 
-function TokenCard({ t }) {
+function PoolSculpture() {
   return (
-    <Link to={`/token/${t.id}`} className={`token-card panel${t.hot ? ' hot' : ''}`}>
-      <div className="token-top">
-        <div className="avatar">{t.symbol.slice(0, 2)}</div>
-        <div>
-          <div className="token-name">{t.name}</div>
-          <div className="token-sym">${t.symbol}</div>
-        </div>
+    <div
+      className="pool-sculpture"
+      aria-label="Architecture diagram: swaps, custom hooks, and Uniswap V4 pools"
+    >
+      <div className="sculpture-halo" />
+      <div className="sculpture-orbit orbit-one" />
+      <div className="sculpture-orbit orbit-two" />
+      <span className="sculpture-caption">The launch architecture</span>
+      <div className="slab-wrap slab-core">
+        <Glass variant="clear" tone="cyan" radius={38} className="glass-slab">
+          <div className="slab-label">
+            <BrandMark name="uniswap" />
+            <span>Uniswap V4</span>
+            <span className="slab-detail">The pool</span>
+          </div>
+        </Glass>
       </div>
-      <div className="metrics">
-        <div>
-          <div className="metric-label">Mcap</div>
-          <div className="metric-value">{fmtUsd(t.mcap)}</div>
-        </div>
-        <div>
-          <div className="metric-label">24h</div>
-          <div className={`metric-value ${t.change24h >= 0 ? 'up' : 'down'}`}>{fmtPct(t.change24h)}</div>
-        </div>
-        <div>
-          <div className="metric-label">Vol</div>
-          <div className="metric-value">{fmtUsd(t.vol24h)}</div>
-        </div>
-        <div>
-          <div className="metric-label">Liq</div>
-          <div className="metric-value">{fmtUsd(t.liq)}</div>
-        </div>
+      <div className="slab-wrap slab-hook">
+        <Glass variant="clear" tone="violet" radius={38} className="glass-slab">
+          <div className="slab-label">
+            <Logo compact />
+            <span>Your hook</span>
+            <span className="slab-detail">Programmable rules</span>
+          </div>
+        </Glass>
       </div>
-      <div className="hook-chips">
-        {t.modules.map((id) => (
-          <span key={id} className="hook-chip">
-            {moduleById(id)?.name ?? id}
-          </span>
-        ))}
+      <div className="slab-wrap slab-swap">
+        <Glass variant="clear" radius={38} className="glass-slab">
+          <div className="slab-label">
+            <Droplets size={29} />
+            <span>Every swap</span>
+            <span className="slab-detail">On-chain execution</span>
+          </div>
+        </Glass>
       </div>
-      <div className="token-actions">
-        <span className="btn btn-secondary btn-sm">Quick buy</span>
-        <span className="btn btn-ghost btn-sm">Chart</span>
-      </div>
-    </Link>
+      <span className="sculpture-footnote">The Hookbrew launch engine</span>
+    </div>
   )
 }
 
 export default function HomePage() {
+  const { deployment } = usePlatform()
+  const market = useResource('/api/market?sort=newest', 15000)
   return (
     <>
       <section className="home-hero">
-        <div>
+        <div className="hero-copy">
+          <span className="hero-kicker">
+            <BrandMark name="arc" />
+            Hookbrew on Arc
+          </span>
           <h1>
-            A Uniswap V4 pool at birth,
+            Your token.
             <br />
-            dressed in your pick of house modules.
+            Your rules.
           </h1>
-          <p className="lede">
-            Anti-snipe, reflections, burn, a resting bid under price. No Solidity, no presale — and you
-            choose where the creator fee goes.
+          <p>
+            Give your next idea a market. Launch a token, shape its opening rules, and trade in one
+            place — powered by Uniswap V4.
           </p>
           <div className="hero-ctas">
-            <Link className="btn btn-primary btn-lg" to="/create">
-              Launch a token
-            </Link>
-            <Link className="btn btn-secondary btn-lg" to="/market">
-              Walk the floor →
-            </Link>
-          </div>
-          <div className="live-pill">
-            <span className="pulse" />
-            live on mainnet · Arc × Uni V4
+            <Button to="/create" primary className="btn-lg">
+              <Plus size={18} />
+              Create a token
+            </Button>
+            <Button to="/market" className="btn-lg">
+              Explore markets
+              <ArrowUpRight size={17} />
+            </Button>
           </div>
         </div>
-        <div className="hero-viz panel">
-          <div className="stack-card">
-            <div className="stack-row core">V4 CORE</div>
-            <div className="stack-row hook">YOUR HOOK · composable modules</div>
-            <div className="stack-row swap">SWAP</div>
-            <div style={{ marginTop: 8 }}>
-              <div style={{ color: 'var(--text-h)', fontWeight: 700, marginBottom: 6 }}>
-                Programmable liquidity
-              </div>
-              <div style={{ fontSize: 13, lineHeight: 1.45, color: 'var(--text)' }}>
-                Every launch is a Uniswap V4 pool — your hook sandwiched between the swap and the core,
-                tradable everywhere from block one.
-              </div>
-              <Link to="/modules" style={{ display: 'inline-block', marginTop: 12, color: 'var(--gold)' }}>
-                Explore the module plane →
-              </Link>
-            </div>
-          </div>
-        </div>
+        <PoolSculpture />
       </section>
-
-      <section className="powered panel panel-pad">
-        <div>
-          <h3>Trade against USDC</h3>
-          <p>
-            Natively born leverage. The ticker tape TWAP module enables leverage capability — longs and
-            shorts marked against the launch&apos;s own tape, not the last print.
-          </p>
-          <Link className="btn btn-ghost" to="/leaderboard">
-            See who&apos;s on the board →
-          </Link>
-        </div>
-        <div className="panel panel-pad" style={{ background: 'var(--bg-0)' }}>
-          <div className="preview-stat">
-            <span>Long / Short</span>
-            <span>3×</span>
-          </div>
-          <div className="preview-stat">
-            <span>Margin</span>
-            <span>USDC</span>
-          </div>
-          <div className="preview-stat">
-            <span>Mark</span>
-            <span>the tape decides</span>
-          </div>
-          <div className="preview-stat" style={{ borderBottom: 'none' }}>
-            <span>Status</span>
-            <span className="up">experimental</span>
+      <ChainStatus />
+      <section className="floor-section">
+        <div className="section-head">
+          <div>
+            <h2>The market</h2>
+            <p>Launches and pool activity will appear here from verified on-chain sources.</p>
           </div>
         </div>
+        {market.data?.items.length ? (
+          <Glass className="market-table-panel">
+            <div className="table-scroll">
+              <table className="product-table">
+                <thead>
+                  <tr>
+                    <th>Newest tokens</th>
+                    <th>Market cap / USDC</th>
+                    <th>24h volume / USDC</th>
+                    <th>Market</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {market.data.items.slice(0, 5).map((t) => (
+                    <tr key={t.address}>
+                      <td>
+                        <Link className="market-token" to={`/token/${t.address}`}>
+                          <TokenAvatar token={t} />
+                          <span>
+                            <strong>{t.name}</strong>
+                            <small>{t.symbol}</small>
+                          </span>
+                        </Link>
+                      </td>
+                      <td>{compact(t.marketCap)}</td>
+                      <td>{compact(t.volume24h)}</td>
+                      <td>
+                        <Link to={`/token/${t.address}`}>Trade ↗</Link>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Glass>
+        ) : (
+          <Glass className="empty-state">
+            <Blocks size={30} />
+            <h2>
+              {market.error
+                ? 'Market temporarily unavailable'
+                : deployment
+                  ? 'The next launch could be yours.'
+                  : 'Build your first brew.'}
+            </h2>
+            <p>
+              {market.error ||
+                (deployment
+                  ? 'Your launch appears here with a chart and trading terminal after confirmation.'
+                  : 'The launch studio is ready. Configure your token while your Hookbrew contracts await deployment.')}
+            </p>
+            <Button to="/market">
+              Open the market
+              <ArrowUpRight size={16} />
+            </Button>
+          </Glass>
+        )}
       </section>
-
-      <div className="section-head">
+      <Glass className="bottom-cta" tone="violet">
+        <span className="bottom-cta-icon">
+          <Logo compact />
+        </span>
         <div>
-          <h2>Ten modules. Two lanes. Your rules.</h2>
-          <p>Gates work the door at the swap; values carve your cut at the harvest. Fold-cap Σ ≤ 100%.</p>
+          <h2>A little hook. A lot of possibility.</h2>
+          <p>Review the contract integration and the hook architecture.</p>
         </div>
-        <Link className="btn btn-secondary" to="/create">
-          Open the builder
-        </Link>
-      </div>
-
-      <div className="module-lane" style={{ marginBottom: 18 }}>
-        <div className="lane-label">Lane 01 · at the swap · The gates</div>
-        <div className="grid-2">
-          {GATE_MODULES.map((m) => (
-            <div key={m.id} className="mod-card panel">
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                <span className="name">{m.name}</span>
-                <span className={`tag tag-${m.tag}`}>{m.tag}</span>
-                {m.badge && <span className="hook-chip">{m.badge}</span>}
-              </div>
-              <div className="blurb">{m.blurb}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="module-lane" style={{ marginBottom: 28 }}>
-        <div className="lane-label">Lane 02 · at the harvest · The values</div>
-        <div className="grid-3">
-          {VALUE_MODULES.map((m) => (
-            <div key={m.id} className="mod-card panel">
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                <span className="name">{m.name}</span>
-                <span className={`tag tag-${m.tag}`}>{m.tag}</span>
-              </div>
-              <div className="blurb">{m.blurb}</div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="section-head">
-        <div>
-          <h2>Launch in minutes</h2>
-          <p>Pick the modules, set the split, mint. The pool ships with the token.</p>
-        </div>
-      </div>
-      <div className="grid-3" style={{ marginBottom: 32 }}>
-        {FEATURES.map((f) => (
-          <div key={f.title} className="feature-card panel panel-pad">
-            <h3>{f.title}</h3>
-            <p>{f.body}</p>
-          </div>
-        ))}
-      </div>
-
-      <div className="section-head">
-        <div>
-          <h2>Live on the floor</h2>
-          <p>Demo feed — wire indexer for production.</p>
-        </div>
-        <Link className="btn btn-ghost" to="/market">
-          Full market →
-        </Link>
-      </div>
-      <div className="token-grid">
-        {DEMO_TOKENS.slice(0, 4).map((t) => (
-          <TokenCard key={t.id} t={t} />
-        ))}
-      </div>
+        <Button to="/docs">
+          Read the project status
+          <ArrowUpRight size={16} />
+        </Button>
+      </Glass>
     </>
   )
 }
-
-export { TokenCard }

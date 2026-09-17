@@ -5,3 +5,8 @@ dist
 .env.*
 .vercel
 *.log
+test-results
+playwright-report
+artifacts
+.hookbrew-data
+contracts/protocol/cache

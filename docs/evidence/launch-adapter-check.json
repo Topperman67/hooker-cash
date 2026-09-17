@@ -1,0 +1,19 @@
+{
+  "checkedAt": "2026-09-17T02:29:57.964Z",
+  "chainId": 5042,
+  "checkedBlock": "21256905",
+  "factory": "0x2707B4c72cD962fb1a511751f2A0C4e8017B6882",
+  "sentTransactions": 0,
+  "actualTokenDeployed": false,
+  "predictedToken": "0x62226C8892c83721c10A226597c3650cA30d4072",
+  "launchFee": "1000000000000000000",
+  "estimatedGas": "1671259",
+  "gasPrice": "20005297974",
+  "account": "0x000000000000000000000000000000000000beef",
+  "temporaryBalance": "10000000000000000000",
+  "scope": "Production prepareLaunch path, live dependency/code/fee checks, calldata, RPC simulation and gas estimate. Diagnostic balance substituted locally and in simulation/estimation state overrides only; no wallet provider used. This does not validate receipts or complete current source review.",
+  "trace": {
+    "unavailable": true,
+    "reason": "The method \"debug_traceCall\" does not exist / is not available."
+  }
+}

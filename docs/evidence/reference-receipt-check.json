@@ -1,0 +1,23 @@
+{
+  "checkedAt": "2026-09-17T02:33:23.223Z",
+  "sentTransactions": 0,
+  "scope": "Production receipt decoder and post-launch state checks against existing third-party mainnet launches. Intent was reconstructed from the historical transaction; predictedToken was read from its event. This does NOT test an independent pre-signing prediction or a new Hookbrew launch.",
+  "results": [
+    {
+      "passed": true,
+      "token": "0x380621DDB3e5066fF58a7C9Af4741D66FA736166",
+      "transactionHash": "0x4bb8ed8de4dc3e01f0e5242a2dadd35847e82a7d369052ea34cbb92f544189f6",
+      "blockNumber": "21124427",
+      "poolId": "0xcbc06ac33c03a64591c0a8d9b9266275c16d89376e44350ae8ac07f255f772f8",
+      "account": "0xa3abca9632cf1b84888a1a4eba530a039e2ad2ea"
+    },
+    {
+      "passed": true,
+      "token": "0x717DF1A27dD382513aa53f207dAA171c93286D75",
+      "transactionHash": "0xafb288cfc5dcf6b5ab19cb8699fa217836f61ba039e41aa282dd267c267cc0a3",
+      "blockNumber": "21124453",
+      "poolId": "0x1d83abbf794f945046b19c13a23b840e492866a3af34417146d7c965e67d599f",
+      "account": "0x71f82561441ea70d404cf95b7d3525e4e220bc5e"
+    }
+  ]
+}

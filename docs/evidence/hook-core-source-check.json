@@ -1,0 +1,1852 @@
+{
+  "checkedAt": "2026-09-17T02:12:47.467Z",
+  "sourceUrl": "https://hooker.cash/LaunchpadHookCore.standard.json",
+  "sourceSha256": "8edd68bfc9e1750fa84c67fdb5907dac085b3cea28d0491eead2457d2a122117",
+  "compiler": "0.8.26+commit.8a97fa7a.Emscripten.clang",
+  "settings": {
+    "optimizer": {
+      "enabled": true,
+      "runs": 200
+    },
+    "viaIR": true,
+    "evmVersion": "cancun",
+    "metadata": {
+      "bytecodeHash": "none"
+    },
+    "outputSelection": {
+      "*": {
+        "*": [
+          "abi",
+          "evm.bytecode",
+          "evm.deployedBytecode"
+        ]
+      }
+    }
+  },
+  "blockNumber": "21254835",
+  "executorGetters": {
+    "factory": "0x2707B4c72cD962fb1a511751f2A0C4e8017B6882",
+    "quotePolicy": "0x67b10E7255deD7753311E8fF318a131783E073F5"
+  },
+  "executorChecks": {
+    "factory": true,
+    "quotePolicy": true
+  },
+  "limitations": "Runtime template plus every compiler-identified immutable and public manifest checked against the recorded preset configuration. Getter/dependency checks do not validate all storage, module implementations, factory source, or economic safety. The dead-address WETH sentinel is an observed deployment convention, not a generic manifest match.",
+  "comparisons": [
+    {
+      "name": "jit",
+      "address": "0x275Fb8a5ae7822891bffea39C9A810AC88dda800",
+      "templateBytes": 15578,
+      "deployedBytes": 15578,
+      "templateMatchExcludingImmutables": true,
+      "immutableValues": [
+        {
+          "id": "9732",
+          "name": "manager",
+          "type": "address",
+          "value": "0x0000000000000000000000008366a39cc670b4001a1121b8f6a443a643e40951",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 3267
+            },
+            {
+              "length": 32,
+              "start": 3973
+            },
+            {
+              "length": 32,
+              "start": 4926
+            },
+            {
+              "length": 32,
+              "start": 5305
+            },
+            {
+              "length": 32,
+              "start": 5916
+            },
+            {
+              "length": 32,
+              "start": 11966
+            },
+            {
+              "length": 32,
+              "start": 12904
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000008366a39cc670b4001a1121b8f6a443a643e40951",
+          "matchesExpected": true
+        },
+        {
+          "id": "12657",
+          "name": "WETH",
+          "type": "Currency",
+          "value": "0x000000000000000000000000000000000000000000000000000000000000dead",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 2065
+            },
+            {
+              "length": 32,
+              "start": 3375
+            },
+            {
+              "length": 32,
+              "start": 14205
+            }
+          ],
+          "expectedValue": "0x000000000000000000000000000000000000000000000000000000000000dead",
+          "matchesExpected": true
+        },
+        {
+          "id": "12661",
+          "name": "feeShare",
+          "type": "contract LaunchpadFeeShareBase",
+          "value": "0x00000000000000000000000011b1b1e829b15aacde2ffc1ba5b797ea815f1445",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 1902
+            },
+            {
+              "length": 32,
+              "start": 3490
+            },
+            {
+              "length": 32,
+              "start": 5463
+            },
+            {
+              "length": 32,
+              "start": 6109
+            },
+            {
+              "length": 32,
+              "start": 6699
+            },
+            {
+              "length": 32,
+              "start": 11880
+            },
+            {
+              "length": 32,
+              "start": 13166
+            },
+            {
+              "length": 32,
+              "start": 14102
+            },
+            {
+              "length": 32,
+              "start": 14788
+            }
+          ],
+          "expectedValue": "0x00000000000000000000000011b1b1e829b15aacde2ffc1ba5b797ea815f1445",
+          "matchesExpected": true
+        },
+        {
+          "id": "12695",
+          "name": "USDG",
+          "type": "address",
+          "value": "0x0000000000000000000000003600000000000000000000000000000000000000",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 2298
+            },
+            {
+              "length": 32,
+              "start": 2365
+            },
+            {
+              "length": 32,
+              "start": 4776
+            },
+            {
+              "length": 32,
+              "start": 14399
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000003600000000000000000000000000000000000000",
+          "matchesExpected": true
+        },
+        {
+          "id": "13799",
+          "name": "positionManager",
+          "type": "contract PositionManager",
+          "value": "0x0000000000000000000000006049c9a0e26405c0985f9e3685c87d0ae917f82b",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 4314
+            },
+            {
+              "length": 32,
+              "start": 7351
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000006049c9a0e26405c0985f9e3685c87d0ae917f82b",
+          "matchesExpected": true
+        },
+        {
+          "id": "13801",
+          "name": "universalEconomics",
+          "type": "bool",
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000001",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 473
+            },
+            {
+              "length": 32,
+              "start": 3793
+            },
+            {
+              "length": 32,
+              "start": 5185
+            },
+            {
+              "length": 32,
+              "start": 6945
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000000000000000000000000000000000000000000001",
+          "matchesExpected": true
+        },
+        {
+          "id": "13803",
+          "name": "wantsHolderTracking",
+          "type": "bool",
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 5246
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "matchesExpected": true
+        },
+        {
+          "id": "13805",
+          "name": "g0",
+          "type": "address",
+          "value": "0x000000000000000000000000cefbb68be8885555ee857dabd1e0baef365e0675",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 552
+            },
+            {
+              "length": 32,
+              "start": 10291
+            },
+            {
+              "length": 32,
+              "start": 11049
+            }
+          ],
+          "expectedValue": "0x000000000000000000000000cefbb68be8885555ee857dabd1e0baef365e0675",
+          "matchesExpected": true
+        },
+        {
+          "id": "13807",
+          "name": "g1",
+          "type": "address",
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 589
+            },
+            {
+              "length": 32,
+              "start": 10340
+            },
+            {
+              "length": 32,
+              "start": 11098
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "matchesExpected": true
+        },
+        {
+          "id": "13809",
+          "name": "g2",
+          "type": "address",
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 629
+            },
+            {
+              "length": 32,
+              "start": 10389
+            },
+            {
+              "length": 32,
+              "start": 11147
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "matchesExpected": true
+        },
+        {
+          "id": "13811",
+          "name": "g3",
+          "type": "address",
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 668
+            },
+            {
+              "length": 32,
+              "start": 10438
+            },
+            {
+              "length": 32,
+              "start": 11196
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "matchesExpected": true
+        },
+        {
+          "id": "13813",
+          "name": "v0",
+          "type": "address",
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 727
+            },
+            {
+              "length": 32,
+              "start": 15379
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "matchesExpected": true
+        },
+        {
+          "id": "13815",
+          "name": "v1",
+          "type": "address",
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 764
+            },
+            {
+              "length": 32,
+              "start": 15342
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "matchesExpected": true
+        },
+        {
+          "id": "13817",
+          "name": "v2",
+          "type": "address",
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 804
+            },
+            {
+              "length": 32,
+              "start": 15305
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "matchesExpected": true
+        },
+        {
+          "id": "13819",
+          "name": "v3",
+          "type": "address",
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 844
+            },
+            {
+              "length": 32,
+              "start": 15268
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "matchesExpected": true
+        },
+        {
+          "id": "13821",
+          "name": "v4",
+          "type": "address",
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 884
+            },
+            {
+              "length": 32,
+              "start": 15232
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "matchesExpected": true
+        },
+        {
+          "id": "13824",
+          "name": "reflectionsDistributor",
+          "type": "address",
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 2929
+            },
+            {
+              "length": 32,
+              "start": 4383
+            },
+            {
+              "length": 32,
+              "start": 7581
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "matchesExpected": true
+        }
+      ],
+      "getters": {
+        "factory": "0x83b527637f312fDe77aF367Cc5645aBD0eD67bEe",
+        "treasury": "0x4d292846F109BA1c7B6842F8C8d3E971bc4ab376",
+        "manager": "0x8366a39CC670B4001A1121B8F6A443A643e40951",
+        "positionManager": "0x6049c9a0e26405C0985f9E3685C87d0aE917f82B",
+        "feeShare": "0x11B1b1e829b15AACdE2FfC1ba5B797Ea815f1445",
+        "WETH": "0x000000000000000000000000000000000000dEaD",
+        "USDG": "0x3600000000000000000000000000000000000000",
+        "reflectionsDistributor": "0x0000000000000000000000000000000000000000",
+        "universalEconomics": true,
+        "wantsHolderTracking": false,
+        "manifest": [
+          10,
+          1,
+          [
+            "0xCEfbB68BE8885555eE857dABd1E0BAEF365E0675"
+          ],
+          [
+            "0x"
+          ]
+        ]
+      },
+      "dependencyChecks": {
+        "factory": true,
+        "treasury": true,
+        "manager": true,
+        "positionManager": true,
+        "feeShare": true,
+        "WETH": true,
+        "USDG": true,
+        "reflectionsDistributor": true
+      },
+      "manifestMatches": true,
+      "genericManifestDifferences": {
+        "hookFactoryIsSeedExecutor": true,
+        "hookWethDiffersFromGenericManifest": true
+      },
+      "codeHash": "0x1f6e1a6b7cccd4be38d2114a005d8d3dc8d285bce15147488bfbf43045331c92"
+    },
+    {
+      "name": "plain",
+      "address": "0x22f48471f01420AF2750bB60D50F84E4876B6000",
+      "templateBytes": 15578,
+      "deployedBytes": 15578,
+      "templateMatchExcludingImmutables": true,
+      "immutableValues": [
+        {
+          "id": "9732",
+          "name": "manager",
+          "type": "address",
+          "value": "0x0000000000000000000000008366a39cc670b4001a1121b8f6a443a643e40951",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 3267
+            },
+            {
+              "length": 32,
+              "start": 3973
+            },
+            {
+              "length": 32,
+              "start": 4926
+            },
+            {
+              "length": 32,
+              "start": 5305
+            },
+            {
+              "length": 32,
+              "start": 5916
+            },
+            {
+              "length": 32,
+              "start": 11966
+            },
+            {
+              "length": 32,
+              "start": 12904
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000008366a39cc670b4001a1121b8f6a443a643e40951",
+          "matchesExpected": true
+        },
+        {
+          "id": "12657",
+          "name": "WETH",
+          "type": "Currency",
+          "value": "0x000000000000000000000000000000000000000000000000000000000000dead",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 2065
+            },
+            {
+              "length": 32,
+              "start": 3375
+            },
+            {
+              "length": 32,
+              "start": 14205
+            }
+          ],
+          "expectedValue": "0x000000000000000000000000000000000000000000000000000000000000dead",
+          "matchesExpected": true
+        },
+        {
+          "id": "12661",
+          "name": "feeShare",
+          "type": "contract LaunchpadFeeShareBase",
+          "value": "0x00000000000000000000000011b1b1e829b15aacde2ffc1ba5b797ea815f1445",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 1902
+            },
+            {
+              "length": 32,
+              "start": 3490
+            },
+            {
+              "length": 32,
+              "start": 5463
+            },
+            {
+              "length": 32,
+              "start": 6109
+            },
+            {
+              "length": 32,
+              "start": 6699
+            },
+            {
+              "length": 32,
+              "start": 11880
+            },
+            {
+              "length": 32,
+              "start": 13166
+            },
+            {
+              "length": 32,
+              "start": 14102
+            },
+            {
+              "length": 32,
+              "start": 14788
+            }
+          ],
+          "expectedValue": "0x00000000000000000000000011b1b1e829b15aacde2ffc1ba5b797ea815f1445",
+          "matchesExpected": true
+        },
+        {
+          "id": "12695",
+          "name": "USDG",
+          "type": "address",
+          "value": "0x0000000000000000000000003600000000000000000000000000000000000000",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 2298
+            },
+            {
+              "length": 32,
+              "start": 2365
+            },
+            {
+              "length": 32,
+              "start": 4776
+            },
+            {
+              "length": 32,
+              "start": 14399
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000003600000000000000000000000000000000000000",
+          "matchesExpected": true
+        },
+        {
+          "id": "13799",
+          "name": "positionManager",
+          "type": "contract PositionManager",
+          "value": "0x0000000000000000000000006049c9a0e26405c0985f9e3685c87d0ae917f82b",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 4314
+            },
+            {
+              "length": 32,
+              "start": 7351
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000006049c9a0e26405c0985f9e3685c87d0ae917f82b",
+          "matchesExpected": true
+        },
+        {
+          "id": "13801",
+          "name": "universalEconomics",
+          "type": "bool",
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000001",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 473
+            },
+            {
+              "length": 32,
+              "start": 3793
+            },
+            {
+              "length": 32,
+              "start": 5185
+            },
+            {
+              "length": 32,
+              "start": 6945
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000000000000000000000000000000000000000000001",
+          "matchesExpected": true
+        },
+        {
+          "id": "13803",
+          "name": "wantsHolderTracking",
+          "type": "bool",
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 5246
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "matchesExpected": true
+        },
+        {
+          "id": "13805",
+          "name": "g0",
+          "type": "address",
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 552
+            },
+            {
+              "length": 32,
+              "start": 10291
+            },
+            {
+              "length": 32,
+              "start": 11049
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "matchesExpected": true
+        },
+        {
+          "id": "13807",
+          "name": "g1",
+          "type": "address",
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 589
+            },
+            {
+              "length": 32,
+              "start": 10340
+            },
+            {
+              "length": 32,
+              "start": 11098
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "matchesExpected": true
+        },
+        {
+          "id": "13809",
+          "name": "g2",
+          "type": "address",
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 629
+            },
+            {
+              "length": 32,
+              "start": 10389
+            },
+            {
+              "length": 32,
+              "start": 11147
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "matchesExpected": true
+        },
+        {
+          "id": "13811",
+          "name": "g3",
+          "type": "address",
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 668
+            },
+            {
+              "length": 32,
+              "start": 10438
+            },
+            {
+              "length": 32,
+              "start": 11196
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "matchesExpected": true
+        },
+        {
+          "id": "13813",
+          "name": "v0",
+          "type": "address",
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 727
+            },
+            {
+              "length": 32,
+              "start": 15379
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "matchesExpected": true
+        },
+        {
+          "id": "13815",
+          "name": "v1",
+          "type": "address",
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 764
+            },
+            {
+              "length": 32,
+              "start": 15342
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "matchesExpected": true
+        },
+        {
+          "id": "13817",
+          "name": "v2",
+          "type": "address",
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 804
+            },
+            {
+              "length": 32,
+              "start": 15305
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "matchesExpected": true
+        },
+        {
+          "id": "13819",
+          "name": "v3",
+          "type": "address",
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 844
+            },
+            {
+              "length": 32,
+              "start": 15268
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "matchesExpected": true
+        },
+        {
+          "id": "13821",
+          "name": "v4",
+          "type": "address",
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 884
+            },
+            {
+              "length": 32,
+              "start": 15232
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "matchesExpected": true
+        },
+        {
+          "id": "13824",
+          "name": "reflectionsDistributor",
+          "type": "address",
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 2929
+            },
+            {
+              "length": 32,
+              "start": 4383
+            },
+            {
+              "length": 32,
+              "start": 7581
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "matchesExpected": true
+        }
+      ],
+      "getters": {
+        "factory": "0x83b527637f312fDe77aF367Cc5645aBD0eD67bEe",
+        "treasury": "0x4d292846F109BA1c7B6842F8C8d3E971bc4ab376",
+        "manager": "0x8366a39CC670B4001A1121B8F6A443A643e40951",
+        "positionManager": "0x6049c9a0e26405C0985f9E3685C87d0aE917f82B",
+        "feeShare": "0x11B1b1e829b15AACdE2FfC1ba5B797Ea815f1445",
+        "WETH": "0x000000000000000000000000000000000000dEaD",
+        "USDG": "0x3600000000000000000000000000000000000000",
+        "reflectionsDistributor": "0x0000000000000000000000000000000000000000",
+        "universalEconomics": true,
+        "wantsHolderTracking": false,
+        "manifest": [
+          10,
+          1,
+          [],
+          []
+        ]
+      },
+      "dependencyChecks": {
+        "factory": true,
+        "treasury": true,
+        "manager": true,
+        "positionManager": true,
+        "feeShare": true,
+        "WETH": true,
+        "USDG": true,
+        "reflectionsDistributor": true
+      },
+      "manifestMatches": true,
+      "genericManifestDifferences": {
+        "hookFactoryIsSeedExecutor": true,
+        "hookWethDiffersFromGenericManifest": true
+      },
+      "codeHash": "0x7337dd0c2a72360be76a2580b87d4a007078d622793cc631850ab2c218fb0b69"
+    },
+    {
+      "name": "reflect50",
+      "address": "0x7b3A862E0aFe90CBC6d7Ee2E69C505e07cAE2000",
+      "templateBytes": 15578,
+      "deployedBytes": 15578,
+      "templateMatchExcludingImmutables": true,
+      "immutableValues": [
+        {
+          "id": "9732",
+          "name": "manager",
+          "type": "address",
+          "value": "0x0000000000000000000000008366a39cc670b4001a1121b8f6a443a643e40951",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 3267
+            },
+            {
+              "length": 32,
+              "start": 3973
+            },
+            {
+              "length": 32,
+              "start": 4926
+            },
+            {
+              "length": 32,
+              "start": 5305
+            },
+            {
+              "length": 32,
+              "start": 5916
+            },
+            {
+              "length": 32,
+              "start": 11966
+            },
+            {
+              "length": 32,
+              "start": 12904
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000008366a39cc670b4001a1121b8f6a443a643e40951",
+          "matchesExpected": true
+        },
+        {
+          "id": "12657",
+          "name": "WETH",
+          "type": "Currency",
+          "value": "0x000000000000000000000000000000000000000000000000000000000000dead",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 2065
+            },
+            {
+              "length": 32,
+              "start": 3375
+            },
+            {
+              "length": 32,
+              "start": 14205
+            }
+          ],
+          "expectedValue": "0x000000000000000000000000000000000000000000000000000000000000dead",
+          "matchesExpected": true
+        },
+        {
+          "id": "12661",
+          "name": "feeShare",
+          "type": "contract LaunchpadFeeShareBase",
+          "value": "0x00000000000000000000000011b1b1e829b15aacde2ffc1ba5b797ea815f1445",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 1902
+            },
+            {
+              "length": 32,
+              "start": 3490
+            },
+            {
+              "length": 32,
+              "start": 5463
+            },
+            {
+              "length": 32,
+              "start": 6109
+            },
+            {
+              "length": 32,
+              "start": 6699
+            },
+            {
+              "length": 32,
+              "start": 11880
+            },
+            {
+              "length": 32,
+              "start": 13166
+            },
+            {
+              "length": 32,
+              "start": 14102
+            },
+            {
+              "length": 32,
+              "start": 14788
+            }
+          ],
+          "expectedValue": "0x00000000000000000000000011b1b1e829b15aacde2ffc1ba5b797ea815f1445",
+          "matchesExpected": true
+        },
+        {
+          "id": "12695",
+          "name": "USDG",
+          "type": "address",
+          "value": "0x0000000000000000000000003600000000000000000000000000000000000000",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 2298
+            },
+            {
+              "length": 32,
+              "start": 2365
+            },
+            {
+              "length": 32,
+              "start": 4776
+            },
+            {
+              "length": 32,
+              "start": 14399
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000003600000000000000000000000000000000000000",
+          "matchesExpected": true
+        },
+        {
+          "id": "13799",
+          "name": "positionManager",
+          "type": "contract PositionManager",
+          "value": "0x0000000000000000000000006049c9a0e26405c0985f9e3685c87d0ae917f82b",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 4314
+            },
+            {
+              "length": 32,
+              "start": 7351
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000006049c9a0e26405c0985f9e3685c87d0ae917f82b",
+          "matchesExpected": true
+        },
+        {
+          "id": "13801",
+          "name": "universalEconomics",
+          "type": "bool",
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000001",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 473
+            },
+            {
+              "length": 32,
+              "start": 3793
+            },
+            {
+              "length": 32,
+              "start": 5185
+            },
+            {
+              "length": 32,
+              "start": 6945
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000000000000000000000000000000000000000000001",
+          "matchesExpected": true
+        },
+        {
+          "id": "13803",
+          "name": "wantsHolderTracking",
+          "type": "bool",
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000001",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 5246
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000000000000000000000000000000000000000000001",
+          "matchesExpected": true
+        },
+        {
+          "id": "13805",
+          "name": "g0",
+          "type": "address",
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 552
+            },
+            {
+              "length": 32,
+              "start": 10291
+            },
+            {
+              "length": 32,
+              "start": 11049
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "matchesExpected": true
+        },
+        {
+          "id": "13807",
+          "name": "g1",
+          "type": "address",
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 589
+            },
+            {
+              "length": 32,
+              "start": 10340
+            },
+            {
+              "length": 32,
+              "start": 11098
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "matchesExpected": true
+        },
+        {
+          "id": "13809",
+          "name": "g2",
+          "type": "address",
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 629
+            },
+            {
+              "length": 32,
+              "start": 10389
+            },
+            {
+              "length": 32,
+              "start": 11147
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "matchesExpected": true
+        },
+        {
+          "id": "13811",
+          "name": "g3",
+          "type": "address",
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 668
+            },
+            {
+              "length": 32,
+              "start": 10438
+            },
+            {
+              "length": 32,
+              "start": 11196
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "matchesExpected": true
+        },
+        {
+          "id": "13813",
+          "name": "v0",
+          "type": "address",
+          "value": "0x0000000000000000000000002eeabe6ab99d2fc97f51593ed4b89e64aa2e5e8d",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 727
+            },
+            {
+              "length": 32,
+              "start": 15379
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000002eeabe6ab99d2fc97f51593ed4b89e64aa2e5e8d",
+          "matchesExpected": true
+        },
+        {
+          "id": "13815",
+          "name": "v1",
+          "type": "address",
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 764
+            },
+            {
+              "length": 32,
+              "start": 15342
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "matchesExpected": true
+        },
+        {
+          "id": "13817",
+          "name": "v2",
+          "type": "address",
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 804
+            },
+            {
+              "length": 32,
+              "start": 15305
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "matchesExpected": true
+        },
+        {
+          "id": "13819",
+          "name": "v3",
+          "type": "address",
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 844
+            },
+            {
+              "length": 32,
+              "start": 15268
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "matchesExpected": true
+        },
+        {
+          "id": "13821",
+          "name": "v4",
+          "type": "address",
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 884
+            },
+            {
+              "length": 32,
+              "start": 15232
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "matchesExpected": true
+        },
+        {
+          "id": "13824",
+          "name": "reflectionsDistributor",
+          "type": "address",
+          "value": "0x00000000000000000000000091e860974f530d28e601799c0a3196d3bb8b5c10",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 2929
+            },
+            {
+              "length": 32,
+              "start": 4383
+            },
+            {
+              "length": 32,
+              "start": 7581
+            }
+          ],
+          "expectedValue": "0x00000000000000000000000091e860974f530d28e601799c0a3196d3bb8b5c10",
+          "matchesExpected": true
+        }
+      ],
+      "getters": {
+        "factory": "0x83b527637f312fDe77aF367Cc5645aBD0eD67bEe",
+        "treasury": "0x4d292846F109BA1c7B6842F8C8d3E971bc4ab376",
+        "manager": "0x8366a39CC670B4001A1121B8F6A443A643e40951",
+        "positionManager": "0x6049c9a0e26405C0985f9E3685C87d0aE917f82B",
+        "feeShare": "0x11B1b1e829b15AACdE2FfC1ba5B797Ea815f1445",
+        "WETH": "0x000000000000000000000000000000000000dEaD",
+        "USDG": "0x3600000000000000000000000000000000000000",
+        "reflectionsDistributor": "0x91e860974F530d28E601799C0a3196D3Bb8b5c10",
+        "universalEconomics": true,
+        "wantsHolderTracking": true,
+        "manifest": [
+          10,
+          1,
+          [
+            "0x2EeaBe6Ab99d2Fc97F51593Ed4b89e64AA2E5E8d"
+          ],
+          [
+            "0x0000000000000000000000000000000000000000000000000000000000001388"
+          ]
+        ]
+      },
+      "dependencyChecks": {
+        "factory": true,
+        "treasury": true,
+        "manager": true,
+        "positionManager": true,
+        "feeShare": true,
+        "WETH": true,
+        "USDG": true,
+        "reflectionsDistributor": true
+      },
+      "manifestMatches": true,
+      "genericManifestDifferences": {
+        "hookFactoryIsSeedExecutor": true,
+        "hookWethDiffersFromGenericManifest": true
+      },
+      "codeHash": "0xf523d4076d4004fa180b3308bcdad8aef3ebcf2f10f9da2f78743d1a6046fd89"
+    },
+    {
+      "name": "reflect50burn20",
+      "address": "0xA84CE5ADB448d40FD70b62FA7fA4597876A6A000",
+      "templateBytes": 15578,
+      "deployedBytes": 15578,
+      "templateMatchExcludingImmutables": true,
+      "immutableValues": [
+        {
+          "id": "9732",
+          "name": "manager",
+          "type": "address",
+          "value": "0x0000000000000000000000008366a39cc670b4001a1121b8f6a443a643e40951",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 3267
+            },
+            {
+              "length": 32,
+              "start": 3973
+            },
+            {
+              "length": 32,
+              "start": 4926
+            },
+            {
+              "length": 32,
+              "start": 5305
+            },
+            {
+              "length": 32,
+              "start": 5916
+            },
+            {
+              "length": 32,
+              "start": 11966
+            },
+            {
+              "length": 32,
+              "start": 12904
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000008366a39cc670b4001a1121b8f6a443a643e40951",
+          "matchesExpected": true
+        },
+        {
+          "id": "12657",
+          "name": "WETH",
+          "type": "Currency",
+          "value": "0x000000000000000000000000000000000000000000000000000000000000dead",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 2065
+            },
+            {
+              "length": 32,
+              "start": 3375
+            },
+            {
+              "length": 32,
+              "start": 14205
+            }
+          ],
+          "expectedValue": "0x000000000000000000000000000000000000000000000000000000000000dead",
+          "matchesExpected": true
+        },
+        {
+          "id": "12661",
+          "name": "feeShare",
+          "type": "contract LaunchpadFeeShareBase",
+          "value": "0x00000000000000000000000011b1b1e829b15aacde2ffc1ba5b797ea815f1445",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 1902
+            },
+            {
+              "length": 32,
+              "start": 3490
+            },
+            {
+              "length": 32,
+              "start": 5463
+            },
+            {
+              "length": 32,
+              "start": 6109
+            },
+            {
+              "length": 32,
+              "start": 6699
+            },
+            {
+              "length": 32,
+              "start": 11880
+            },
+            {
+              "length": 32,
+              "start": 13166
+            },
+            {
+              "length": 32,
+              "start": 14102
+            },
+            {
+              "length": 32,
+              "start": 14788
+            }
+          ],
+          "expectedValue": "0x00000000000000000000000011b1b1e829b15aacde2ffc1ba5b797ea815f1445",
+          "matchesExpected": true
+        },
+        {
+          "id": "12695",
+          "name": "USDG",
+          "type": "address",
+          "value": "0x0000000000000000000000003600000000000000000000000000000000000000",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 2298
+            },
+            {
+              "length": 32,
+              "start": 2365
+            },
+            {
+              "length": 32,
+              "start": 4776
+            },
+            {
+              "length": 32,
+              "start": 14399
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000003600000000000000000000000000000000000000",
+          "matchesExpected": true
+        },
+        {
+          "id": "13799",
+          "name": "positionManager",
+          "type": "contract PositionManager",
+          "value": "0x0000000000000000000000006049c9a0e26405c0985f9e3685c87d0ae917f82b",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 4314
+            },
+            {
+              "length": 32,
+              "start": 7351
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000006049c9a0e26405c0985f9e3685c87d0ae917f82b",
+          "matchesExpected": true
+        },
+        {
+          "id": "13801",
+          "name": "universalEconomics",
+          "type": "bool",
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000001",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 473
+            },
+            {
+              "length": 32,
+              "start": 3793
+            },
+            {
+              "length": 32,
+              "start": 5185
+            },
+            {
+              "length": 32,
+              "start": 6945
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000000000000000000000000000000000000000000001",
+          "matchesExpected": true
+        },
+        {
+          "id": "13803",
+          "name": "wantsHolderTracking",
+          "type": "bool",
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000001",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 5246
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000000000000000000000000000000000000000000001",
+          "matchesExpected": true
+        },
+        {
+          "id": "13805",
+          "name": "g0",
+          "type": "address",
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 552
+            },
+            {
+              "length": 32,
+              "start": 10291
+            },
+            {
+              "length": 32,
+              "start": 11049
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "matchesExpected": true
+        },
+        {
+          "id": "13807",
+          "name": "g1",
+          "type": "address",
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 589
+            },
+            {
+              "length": 32,
+              "start": 10340
+            },
+            {
+              "length": 32,
+              "start": 11098
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "matchesExpected": true
+        },
+        {
+          "id": "13809",
+          "name": "g2",
+          "type": "address",
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 629
+            },
+            {
+              "length": 32,
+              "start": 10389
+            },
+            {
+              "length": 32,
+              "start": 11147
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "matchesExpected": true
+        },
+        {
+          "id": "13811",
+          "name": "g3",
+          "type": "address",
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 668
+            },
+            {
+              "length": 32,
+              "start": 10438
+            },
+            {
+              "length": 32,
+              "start": 11196
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "matchesExpected": true
+        },
+        {
+          "id": "13813",
+          "name": "v0",
+          "type": "address",
+          "value": "0x0000000000000000000000002eeabe6ab99d2fc97f51593ed4b89e64aa2e5e8d",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 727
+            },
+            {
+              "length": 32,
+              "start": 15379
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000002eeabe6ab99d2fc97f51593ed4b89e64aa2e5e8d",
+          "matchesExpected": true
+        },
+        {
+          "id": "13815",
+          "name": "v1",
+          "type": "address",
+          "value": "0x000000000000000000000000aafd392a3f0a93c57ec05ef383a931e0b9bae5f3",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 764
+            },
+            {
+              "length": 32,
+              "start": 15342
+            }
+          ],
+          "expectedValue": "0x000000000000000000000000aafd392a3f0a93c57ec05ef383a931e0b9bae5f3",
+          "matchesExpected": true
+        },
+        {
+          "id": "13817",
+          "name": "v2",
+          "type": "address",
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 804
+            },
+            {
+              "length": 32,
+              "start": 15305
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "matchesExpected": true
+        },
+        {
+          "id": "13819",
+          "name": "v3",
+          "type": "address",
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 844
+            },
+            {
+              "length": 32,
+              "start": 15268
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "matchesExpected": true
+        },
+        {
+          "id": "13821",
+          "name": "v4",
+          "type": "address",
+          "value": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 884
+            },
+            {
+              "length": 32,
+              "start": 15232
+            }
+          ],
+          "expectedValue": "0x0000000000000000000000000000000000000000000000000000000000000000",
+          "matchesExpected": true
+        },
+        {
+          "id": "13824",
+          "name": "reflectionsDistributor",
+          "type": "address",
+          "value": "0x00000000000000000000000091e860974f530d28e601799c0a3196d3bb8b5c10",
+          "allOccurrencesAgree": true,
+          "locations": [
+            {
+              "length": 32,
+              "start": 2929
+            },
+            {
+              "length": 32,
+              "start": 4383
+            },
+            {
+              "length": 32,
+              "start": 7581
+            }
+          ],
+          "expectedValue": "0x00000000000000000000000091e860974f530d28e601799c0a3196d3bb8b5c10",
+          "matchesExpected": true
+        }
+      ],
+      "getters": {
+        "factory": "0x83b527637f312fDe77aF367Cc5645aBD0eD67bEe",
+        "treasury": "0x4d292846F109BA1c7B6842F8C8d3E971bc4ab376",
+        "manager": "0x8366a39CC670B4001A1121B8F6A443A643e40951",
+        "positionManager": "0x6049c9a0e26405C0985f9E3685C87d0aE917f82B",
+        "feeShare": "0x11B1b1e829b15AACdE2FfC1ba5B797Ea815f1445",
+        "WETH": "0x000000000000000000000000000000000000dEaD",
+        "USDG": "0x3600000000000000000000000000000000000000",
+        "reflectionsDistributor": "0x91e860974F530d28E601799C0a3196D3Bb8b5c10",
+        "universalEconomics": true,
+        "wantsHolderTracking": true,
+        "manifest": [
+          10,
+          1,
+          [
+            "0x2EeaBe6Ab99d2Fc97F51593Ed4b89e64AA2E5E8d",
+            "0xaaFd392a3F0a93c57ec05Ef383A931e0b9baE5F3"
+          ],
+          [
+            "0x0000000000000000000000000000000000000000000000000000000000001388",
+            "0x00000000000000000000000000000000000000000000000000000000000007d0"
+          ]
+        ]
+      },
+      "dependencyChecks": {
+        "factory": true,
+        "treasury": true,
+        "manager": true,
+        "positionManager": true,
+        "feeShare": true,
+        "WETH": true,
+        "USDG": true,
+        "reflectionsDistributor": true
+      },
+      "manifestMatches": true,
+      "genericManifestDifferences": {
+        "hookFactoryIsSeedExecutor": true,
+        "hookWethDiffersFromGenericManifest": true
+      },
+      "codeHash": "0x5d4a0403824d99cf507433b7b321969f17c5883625c70fae0d71848bb7986c62"
+    }
+  ]
+}

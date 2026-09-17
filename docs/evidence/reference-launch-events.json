@@ -1,0 +1,298 @@
+{
+  "checkedAt": "2026-09-17T02:31:05.223Z",
+  "chainId": 5042,
+  "factory": "0x2707B4c72cD962fb1a511751f2A0C4e8017B6882",
+  "latestBlock": "21257021",
+  "scope": "Bounded historical public log scan starting at the published deployment block, stopping after sample matching launches or an error. Not a complete market index.",
+  "windows": [
+    {
+      "fromBlock": "20907903",
+      "toBlock": "20917902",
+      "logCount": 5
+    },
+    {
+      "fromBlock": "20917903",
+      "toBlock": "20927902",
+      "logCount": 0
+    },
+    {
+      "fromBlock": "20927903",
+      "toBlock": "20937902",
+      "logCount": 0
+    },
+    {
+      "fromBlock": "20937903",
+      "toBlock": "20947902",
+      "logCount": 0
+    },
+    {
+      "fromBlock": "20947903",
+      "toBlock": "20957902",
+      "logCount": 0
+    },
+    {
+      "fromBlock": "20957903",
+      "toBlock": "20967902",
+      "logCount": 0
+    },
+    {
+      "fromBlock": "20967903",
+      "toBlock": "20977902",
+      "logCount": 0
+    },
+    {
+      "fromBlock": "20977903",
+      "toBlock": "20987902",
+      "logCount": 0
+    },
+    {
+      "fromBlock": "20987903",
+      "toBlock": "20997902",
+      "logCount": 0
+    },
+    {
+      "fromBlock": "20997903",
+      "toBlock": "21007902",
+      "logCount": 0
+    },
+    {
+      "fromBlock": "21007903",
+      "toBlock": "21017902",
+      "logCount": 0
+    },
+    {
+      "fromBlock": "21017903",
+      "toBlock": "21027902",
+      "logCount": 0
+    },
+    {
+      "fromBlock": "21027903",
+      "toBlock": "21037902",
+      "logCount": 0
+    },
+    {
+      "fromBlock": "21037903",
+      "toBlock": "21047902",
+      "logCount": 0
+    },
+    {
+      "fromBlock": "21047903",
+      "toBlock": "21057902",
+      "logCount": 0
+    },
+    {
+      "fromBlock": "21057903",
+      "toBlock": "21067902",
+      "logCount": 0
+    },
+    {
+      "fromBlock": "21067903",
+      "toBlock": "21077902",
+      "logCount": 0
+    },
+    {
+      "fromBlock": "21077903",
+      "toBlock": "21087902",
+      "logCount": 0
+    },
+    {
+      "fromBlock": "21087903",
+      "toBlock": "21097902",
+      "logCount": 0
+    },
+    {
+      "fromBlock": "21097903",
+      "toBlock": "21107902",
+      "logCount": 0
+    },
+    {
+      "fromBlock": "21107903",
+      "toBlock": "21117902",
+      "logCount": 0
+    },
+    {
+      "fromBlock": "21117903",
+      "toBlock": "21127902",
+      "logCount": 12
+    }
+  ],
+  "topics": [
+    "0x3768da20f1a0f6eba5a7c457cedb798e7ff8e8643161a7f53ce1cf4449b6a3e0",
+    "0x7849fc1c993340176af0faef7e91d8f6ec0e85b39f1b7561d7333376f4badc23",
+    "0xe0a9dd889192a8b247b2ab29bee6a878e09fa64dd6a6cc44021840e99f75ef41",
+    "0xb6c9a26d6f036c73d9fe9b6490b4248f768d5f73de0e2039e4e94069da966b35",
+    "0x0fd958ac60db1437ae35514054402c4e597e81881e4b6dd47a6509bd89121428",
+    "0x90b66579eb916ad7d7f944cc99cc9271b9010aff2880667d5a50aecb6f4e409f"
+  ],
+  "samples": [
+    {
+      "transactionHash": "0x9785ab5868b9c5a416a7beaf0aa0c2f6fa3deaaeb6f3b1a5c84315f9299c7d53",
+      "blockNumber": "21118603",
+      "address": "0x2707b4c72cd962fb1a511751f2a0c4e8017b6882",
+      "topics": [
+        "0x90b66579eb916ad7d7f944cc99cc9271b9010aff2880667d5a50aecb6f4e409f",
+        "0x000000000000000000000000df99516d943f8cc285bdc49fee981f60c113e0fe",
+        "0x0000000000000000000000004d292846f109ba1c7b6842f8c8d3e971bc4ab376",
+        "0x0000000000000000000000002a643ae21fbd56d0c123719db912f45659cca080"
+      ],
+      "data": "0xc44924bc8f5d181383bcf3a4d1812c5588cf9485fdb164d990dfb9eef96c834d00000000000000000000000000000000000000000000000000000000000075300000000000000000000000000000000012d940b6044f7da400000000000000000000000000000000000000000000000000000000033b2e3c9fd0803ce800000000000000000000000000000000000000000000000052b7d2dcc80cd2e4000000",
+      "event": {
+        "eventName": "TokenLaunched",
+        "args": {
+          "token": "0xdF99516D943f8cc285bDc49FeE981F60C113e0Fe",
+          "creator": "0x4d292846F109BA1c7B6842F8C8d3E971bc4ab376",
+          "hook": "0x2a643ae21FbD56d0c123719dB912f45659cca080",
+          "poolId": "0xc44924bc8f5d181383bcf3a4d1812c5588cf9485fdb164d990dfb9eef96c834d",
+          "fee": 30000,
+          "sqrtPriceX96": "25054144837504793110787542211287318528",
+          "totalSupply": "1000000000000000000000000000",
+          "creatorAllocation": "100000000000000000000000000"
+        }
+      },
+      "transactionTo": "0x2707b4c72cd962fb1a511751f2a0c4e8017b6882",
+      "transactionFrom": "0x4d292846f109ba1c7b6842f8c8d3e971bc4ab376",
+      "transactionCall": {
+        "functionName": "launch",
+        "args": [
+          "hooker.cash",
+          "HOOKER",
+          "1000000000000000000000000000",
+          "100000000000000000000000000",
+          "0x2a643ae21FbD56d0c123719dB912f45659cca080",
+          30000,
+          {
+            "description": "Platform Token",
+            "imageURI": "ipfs://QmfBcHzwSoxQRtrR8tzDSrqEuKG4AYRdDi9M1ACnrXq7Tb",
+            "website": "https://hooker.cash",
+            "twitter": "hooker_cash",
+            "telegram": ""
+          },
+          {
+            "vanitySalt": "0x0000000000000000000000000000000000000000000000000000000000000000",
+            "targetMcap": "10000000000"
+          },
+          "0x3600000000000000000000000000000000000000",
+          "0",
+          [
+            {
+              "wallet": "0x4d292846F109BA1c7B6842F8C8d3E971bc4ab376",
+              "bps": 9000,
+              "cliffSecs": 0,
+              "durationSecs": 0
+            },
+            {
+              "wallet": "0x099485C681dC946430A75bD214d9Cb52CC92d3bF",
+              "bps": 1000,
+              "cliffSecs": 0,
+              "durationSecs": 0
+            }
+          ]
+        ]
+      }
+    },
+    {
+      "transactionHash": "0x4bb8ed8de4dc3e01f0e5242a2dadd35847e82a7d369052ea34cbb92f544189f6",
+      "blockNumber": "21124427",
+      "address": "0x2707b4c72cd962fb1a511751f2a0c4e8017b6882",
+      "topics": [
+        "0x90b66579eb916ad7d7f944cc99cc9271b9010aff2880667d5a50aecb6f4e409f",
+        "0x000000000000000000000000380621ddb3e5066ff58a7c9af4741d66fa736166",
+        "0x000000000000000000000000a3abca9632cf1b84888a1a4eba530a039e2ad2ea",
+        "0x00000000000000000000000022f48471f01420af2750bb60d50f84e4876b6000"
+      ],
+      "data": "0xcbc06ac33c03a64591c0a8d9b9266275c16d89376e44350ae8ac07f255f772f80000000000000000000000000000000000000000000000000000000000002710000000000000000000000000000000002269aa7d308b506900000000000000000000000000000000000000000000000000000000033b2e3c9fd0803ce800000000000000000000000000000000000000000000000052b7d2dcc80cd2e4000000",
+      "event": {
+        "eventName": "TokenLaunched",
+        "args": {
+          "token": "0x380621DDB3e5066fF58a7C9Af4741D66FA736166",
+          "creator": "0xA3abcA9632cF1B84888A1a4eBa530a039e2Ad2ea",
+          "hook": "0x22f48471f01420AF2750bB60D50F84E4876B6000",
+          "poolId": "0xcbc06ac33c03a64591c0a8d9b9266275c16d89376e44350ae8ac07f255f772f8",
+          "fee": 10000,
+          "sqrtPriceX96": "45742400955009932533317166455005904896",
+          "totalSupply": "1000000000000000000000000000",
+          "creatorAllocation": "100000000000000000000000000"
+        }
+      },
+      "transactionTo": "0x2707b4c72cd962fb1a511751f2a0c4e8017b6882",
+      "transactionFrom": "0xa3abca9632cf1b84888a1a4eba530a039e2ad2ea",
+      "transactionCall": {
+        "functionName": "launch",
+        "args": [
+          "VIBING CAT",
+          "VIBE",
+          "1000000000000000000000000000",
+          "100000000000000000000000000",
+          "0x22f48471f01420AF2750bB60D50F84E4876B6000",
+          10000,
+          {
+            "description": "",
+            "imageURI": "ipfs://QmcbQp8ZtoswpKUotEMr5KCdJhCmFCX6LD8FC7ic6iWPqM",
+            "website": "",
+            "twitter": "",
+            "telegram": ""
+          },
+          {
+            "vanitySalt": "0x0000000000000000000000000000000000000000000000000000000000000000",
+            "targetMcap": "3000000000"
+          },
+          "0x3600000000000000000000000000000000000000",
+          "0",
+          []
+        ]
+      }
+    },
+    {
+      "transactionHash": "0xafb288cfc5dcf6b5ab19cb8699fa217836f61ba039e41aa282dd267c267cc0a3",
+      "blockNumber": "21124453",
+      "address": "0x2707b4c72cd962fb1a511751f2a0c4e8017b6882",
+      "topics": [
+        "0x90b66579eb916ad7d7f944cc99cc9271b9010aff2880667d5a50aecb6f4e409f",
+        "0x000000000000000000000000717df1a27dd382513aa53f207daa171c93286d75",
+        "0x00000000000000000000000071f82561441ea70d404cf95b7d3525e4e220bc5e",
+        "0x00000000000000000000000022f48471f01420af2750bb60d50f84e4876b6000"
+      ],
+      "data": "0x1d83abbf794f945046b19c13a23b840e492866a3af34417146d7c965e67d599f0000000000000000000000000000000000000000000000000000000000002710000000000000000000000000000000001aa7f01b7ffd3e5600000000000000000000000000000000000000000000000000000000033b2e3c9fd0803ce800000000000000000000000000000000000000000000000052b7d2dcc80cd2e4000000",
+      "event": {
+        "eventName": "TokenLaunched",
+        "args": {
+          "token": "0x717DF1A27dD382513aa53f207dAA171c93286D75",
+          "creator": "0x71F82561441eA70D404CF95B7d3525e4E220Bc5E",
+          "hook": "0x22f48471f01420AF2750bB60D50F84E4876B6000",
+          "poolId": "0x1d83abbf794f945046b19c13a23b840e492866a3af34417146d7c965e67d599f",
+          "fee": 10000,
+          "sqrtPriceX96": "35431911422859142048317691986536562688",
+          "totalSupply": "1000000000000000000000000000",
+          "creatorAllocation": "100000000000000000000000000"
+        }
+      },
+      "transactionTo": "0x2707b4c72cd962fb1a511751f2a0c4e8017b6882",
+      "transactionFrom": "0x71f82561441ea70d404cf95b7d3525e4e220bc5e",
+      "transactionCall": {
+        "functionName": "launch",
+        "args": [
+          "HOOK",
+          "HOOK",
+          "1000000000000000000000000000",
+          "100000000000000000000000000",
+          "0x22f48471f01420AF2750bB60D50F84E4876B6000",
+          10000,
+          {
+            "description": "",
+            "imageURI": "ipfs://QmNShAPBCoT2pGnwU56uvESJSTMDXKKT8PXcgUc5skymNX",
+            "website": "https://hooker.cash/",
+            "twitter": "",
+            "telegram": ""
+          },
+          {
+            "vanitySalt": "0x0000000000000000000000000000000000000000000000000000000000000000",
+            "targetMcap": "5000000000"
+          },
+          "0x3600000000000000000000000000000000000000",
+          "0",
+          []
+        ]
+      }
+    }
+  ]
+}

@@ -1,101 +1,183 @@
-import { useMemo, useState } from 'react'
-import { DEMO_TOKENS } from '../data'
-import { TokenCard } from './HomePage'
-
-export default function MarketPage() {
-  const [view, setView] = useState('tiles')
-  const [sort, setSort] = useState('vol')
-  const [q, setQ] = useState('')
-
-  const rows = useMemo(() => {
-    let list = [...DEMO_TOKENS]
-    if (q.trim()) {
-      const s = q.toLowerCase()
-      list = list.filter(
-        (t) => t.name.toLowerCase().includes(s) || t.symbol.toLowerCase().includes(s),
-      )
-    }
-    list.sort((a, b) => {
-      if (sort === 'mcap') return b.mcap - a.mcap
-      if (sort === 'chg') return b.change24h - a.change24h
-      return b.vol24h - a.vol24h
-    })
-    return list
-  }, [q, sort])
-
+import { useEffect, useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
+import { isAddress } from 'viem'
+import { ArrowUpRight, FlaskConical, Search } from 'lucide-react'
+import Glass from '../components/Glass'
+import { Button, PageHeading, TokenAvatar } from '../components/UI'
+import TokenLookup from '../components/TokenLookup'
+import { useResource, compact, number } from '../lib/api'
+export default function MarketPage({ trading = false }) {
+  const [params, setParams] = useSearchParams(),
+    q = params.get('q') || '',
+    sort = params.get('sort') || 'newest',
+    fee = params.get('fee') || '',
+    offset = Number(params.get('offset')) || 0
+  const [input, setInput] = useState(q)
+  useEffect(() => setInput(q), [q])
+  const result = useResource(
+    `/api/market?q=${encodeURIComponent(q)}&sort=${sort}&fee=${fee}&offset=${offset}`,
+    10000,
+  )
+  function filter(key, value) {
+    const p = new URLSearchParams(params)
+    value ? p.set(key, value) : p.delete(key)
+    if (key !== 'offset') p.delete('offset')
+    setParams(p)
+  }
   return (
     <>
-      <h1 className="page-title">Market</h1>
-      <p className="page-sub">Cash money, fast hookers. Live launches on Arc — demo data until indexer is wired.</p>
-
-      <div className="feed-toolbar">
-        <div className="seg">
-          <button type="button" className={view === 'tiles' ? 'on' : ''} onClick={() => setView('tiles')}>
-            ▦ Tiles
-          </button>
-          <button type="button" className={view === 'list' ? 'on' : ''} onClick={() => setView('list')}>
-            ☰ List
-          </button>
+      <PageHeading
+        title={trading ? 'Find your next trade.' : 'Fresh brews. Open markets.'}
+        description={
+          trading
+            ? 'Choose a market to open its live chart and buy or sell with your wallet.'
+            : 'Explore tokens launched on Hookbrew. Every listing comes from a confirmed on-chain launch.'
+        }
+        action={
+          <Button primary to="/create">
+            <FlaskConical size={16} /> Launch a token
+          </Button>
+        }
+      />
+      <Glass className="product-market-toolbar" radius={20}>
+        <form
+          onSubmit={(e) => {
+            e.preventDefault()
+            filter('q', input.trim())
+          }}
+        >
+          <Search size={18} />
+          <input
+            aria-label="Token contract address"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            placeholder="Search tokens, symbols or addresses…"
+          />
+          <Button type="submit">Search</Button>
+        </form>
+        <div>
+          <select
+            aria-label="Sort markets"
+            value={sort}
+            onChange={(e) => filter('sort', e.target.value)}
+          >
+            <option value="newest">Newest launches</option>
+            <option value="volume">24h volume</option>
+            <option value="mcap">Market cap</option>
+          </select>
+          <select
+            aria-label="Filter pool fee"
+            value={fee}
+            onChange={(e) => filter('fee', e.target.value)}
+          >
+            <option value="">All pool fees</option>
+            {[1, 2, 3, 4, 5].map((n) => (
+              <option key={n} value={n * 10000}>
+                {n}% fee
+              </option>
+            ))}
+          </select>
         </div>
-        <div className="seg">
-          {[
-            ['vol', '24h vol'],
-            ['mcap', 'mcap'],
-            ['chg', '24h %'],
-          ].map(([k, label]) => (
-            <button key={k} type="button" className={sort === k ? 'on' : ''} onClick={() => setSort(k)}>
-              {label}
-            </button>
-          ))}
-        </div>
-        <div className="top-search" style={{ maxWidth: 260, marginLeft: 'auto' }}>
-          <span>⌕</span>
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Filter tokens…" />
+      </Glass>
+      {isAddress(q) && <TokenLookup address={q} />}
+      {result.error && (
+        <p className="form-error" role="alert">
+          Market unavailable: {result.error} <button onClick={result.refresh}>Retry</button>
+        </p>
+      )}
+      {result.data?.index?.error && (
+        <p className="form-error">Market index delayed: {result.data.index.error}</p>
+      )}
+      {!!result.data?.items.length ? (
+        <Glass className="market-table-panel" radius={24}>
+          <div className="table-scroll">
+            <table className="product-table market-table">
+              <thead>
+                <tr>
+                  <th>Token</th>
+                  <th>Price / USDC</th>
+                  <th>Market cap</th>
+                  <th>24h volume</th>
+                  <th>24h change</th>
+                  <th>Pool fee</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {result.data.items.map((t) => (
+                  <tr key={t.address}>
+                    <td>
+                      <Link to={`/token/${t.address}`} className="market-token">
+                        <TokenAvatar token={t} />
+                        <span>
+                          <strong>{t.name}</strong>
+                          <small>{t.symbol}</small>
+                        </span>
+                      </Link>
+                    </td>
+                    <td>{number(t.price, 10)}</td>
+                    <td>{compact(t.marketCap)}</td>
+                    <td>{compact(t.volume24h)}</td>
+                    <td className={t.change24h >= 0 ? 'text-mint' : 'text-rose'}>
+                      {t.change24h == null
+                        ? '—'
+                        : `${t.change24h >= 0 ? '+' : ''}${number(t.change24h)}%`}
+                    </td>
+                    <td>{t.fee / 10000}%</td>
+                    <td>
+                      <Link to={`/token/${t.address}`} aria-label={`Trade ${t.name}`}>
+                        <ArrowUpRight size={18} />
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Glass>
+      ) : (
+        !result.error && (
+          <Glass className="product-empty market-empty" radius={26}>
+            <img src="/brand/hookbrew/hookbrew-icon.png" alt="" width="100" height="100" />
+            <span className="eyebrow">THE MARKET STARTS HERE</span>
+            <h2>
+              {result.loading
+                ? 'Reading the market…'
+                : q || fee
+                  ? 'No matching brews.'
+                  : result.data?.deployment
+                    ? 'Be the first to brew.'
+                    : 'Your launch venue is ready to set up.'}
+            </h2>
+            <p>
+              {q || fee
+                ? 'Try a different name, address or fee tier.'
+                : result.data?.deployment
+                  ? 'Confirmed launches appear here automatically, with their own chart and trading terminal.'
+                  : 'Deploy Hookbrew’s contracts with your treasury, then launch the first token. You can build and save your token draft now.'}
+            </p>
+            <div className="product-actions">
+              <Button primary to="/create">
+                Open launch studio
+              </Button>
+              {!result.data?.deployment && <Button to="/setup">Set up contracts</Button>}
+            </div>
+          </Glass>
+        )
+      )}
+      <div className="product-inline market-pagination">
+        <span>{result.data?.total ?? '—'} indexed tokens · USDC quote markets</span>
+        <div className="product-actions">
+          {offset > 0 && (
+            <Button onClick={() => filter('offset', String(Math.max(0, offset - 24)))}>
+              Previous
+            </Button>
+          )}
+          {result.data?.next != null && (
+            <Button onClick={() => filter('offset', String(result.data.next))}>Next</Button>
+          )}
         </div>
       </div>
-
-      {view === 'tiles' ? (
-        <div className="token-grid">
-          {rows.map((t) => (
-            <TokenCard key={t.id} t={t} />
-          ))}
-        </div>
-      ) : (
-        <div className="panel" style={{ overflow: 'auto' }}>
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Token</th>
-                <th>Price</th>
-                <th>Mcap</th>
-                <th>24h</th>
-                <th>Vol</th>
-                <th>Liq</th>
-                <th>Age</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((t) => (
-                <tr key={t.id}>
-                  <td>
-                    <strong style={{ color: 'var(--text-h)' }}>{t.name}</strong>{' '}
-                    <span className="mono">${t.symbol}</span>
-                  </td>
-                  <td className="mono">${t.price}</td>
-                  <td className="mono">${(t.mcap / 1000).toFixed(1)}K</td>
-                  <td className={t.change24h >= 0 ? 'up' : 'down'}>
-                    {t.change24h >= 0 ? '+' : ''}
-                    {t.change24h.toFixed(1)}%
-                  </td>
-                  <td className="mono">${(t.vol24h / 1000).toFixed(1)}K</td>
-                  <td className="mono">${(t.liq / 1000).toFixed(1)}K</td>
-                  <td className="mono">{t.age}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
     </>
   )
 }

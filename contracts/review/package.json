@@ -1,0 +1,9 @@
+{
+  "name": "hookbrew-contract-source-review",
+  "private": true,
+  "type": "module",
+  "description": "Pinned compiler for read-only source and bytecode verification",
+  "dependencies": {
+    "solc": "0.8.26"
+  }
+}

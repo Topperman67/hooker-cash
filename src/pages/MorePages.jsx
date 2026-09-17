@@ -1,296 +1,230 @@
-import { DEMO_ACTIVITY, DEMO_TOKENS, fmtUsd } from '../data'
+import { Link } from 'react-router-dom'
+import Glass from '../components/Glass'
+import { Button, PageHeading, TokenAvatar } from '../components/UI'
+import ChainStatus from '../components/ChainStatus'
+import { useResource, compact, short } from '../lib/api'
 
+function IndexedTable({ liquidity = false }) {
+  const market = useResource(`/api/market?sort=${liquidity ? 'newest' : 'volume'}`)
+  return (
+    <>
+      <Glass className="market-table-panel">
+        <div className="table-scroll">
+          <table className="product-table">
+            <thead>
+              <tr>
+                <th>{liquidity ? 'Pool' : 'Rank / token'}</th>
+                <th>{liquidity ? 'Seed position' : '24h volume / USDC'}</th>
+                <th>{liquidity ? 'Creator' : 'Market cap / USDC'}</th>
+                <th>Pool fee</th>
+              </tr>
+            </thead>
+            <tbody>
+              {market.data?.items.map((t, index) => (
+                <tr key={t.address}>
+                  <td>
+                    <Link to={`/token/${t.address}`} className="market-token">
+                      {!liquidity && <span>{index + 1}</span>}
+                      <TokenAvatar token={t} />
+                      <span>
+                        <strong>{t.name}</strong>
+                        <small>{t.symbol} / USDC</small>
+                      </span>
+                    </Link>
+                  </td>
+                  <td>{liquidity ? 'Factory held · no withdrawal' : compact(t.volume24h)}</td>
+                  <td>{liquidity ? short(t.creator) : compact(t.marketCap)}</td>
+                  <td>{t.fee / 10000}%</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        {!market.data?.items.length && (
+          <div className="table-empty">
+            <p>
+              {market.error ||
+                (market.loading ? 'Reading indexed pools…' : 'No Hookbrew pools are indexed yet.')}
+            </p>
+            <Button to="/create">Create a token</Button>
+            <Button to="/setup">Contract setup</Button>
+          </div>
+        )}
+      </Glass>
+      <p className="fine-print">
+        {liquidity
+          ? 'The factory seed position has no withdrawal function. Open a token’s Creator & vesting tab to harvest and claim fees. External LP position management is not included.'
+          : 'Top 24 indexed tokens ranked by USDC swap volume over the past 24 hours. Volume is observed activity, not a recommendation.'}
+      </p>
+    </>
+  )
+}
 export default function LiquidityPage() {
   return (
     <>
-      <h1 className="page-title">Liquidity</h1>
-      <p className="page-sub">Sealed seed positions from launch — no removal path for anyone.</p>
-      <div className="panel" style={{ overflow: 'auto' }}>
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Pool</th>
-              <th>TVL</th>
-              <th>24h vol</th>
-              <th>Fee tier</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {DEMO_TOKENS.map((t) => (
-              <tr key={t.id}>
-                <td>
-                  <strong style={{ color: 'var(--text-h)' }}>
-                    {t.symbol}/USDC
-                  </strong>
-                </td>
-                <td className="mono">{fmtUsd(t.liq)}</td>
-                <td className="mono">{fmtUsd(t.vol24h)}</td>
-                <td className="mono">0.25%</td>
-                <td>
-                  <span className="tag tag-deepen">sealed</span>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <PageHeading
+        title="The pools behind the brews."
+        description="Every Hookbrew launch creates a token / USDC pool with a permanent factory seed position."
+      />
+      <IndexedTable liquidity />
     </>
   )
 }
-
 export function LeaderboardPage() {
-  const board = [...DEMO_TOKENS].sort((a, b) => b.vol24h - a.vol24h)
   return (
     <>
-      <h1 className="page-title">Leaderboard</h1>
-      <p className="page-sub">
-        Tape-bearing launches can go on the board — leveraged longs and shorts, margin in USDC. Experimental.
-      </p>
-      <div className="grid-3" style={{ marginBottom: 18 }}>
-        {board.slice(0, 3).map((t, i) => (
-          <div key={t.id} className="panel panel-pad">
-            <div className="metric-label">#{i + 1} volume</div>
-            <div style={{ color: 'var(--text-h)', fontWeight: 700, fontSize: 18 }}>${t.symbol}</div>
-            <div className="mono" style={{ marginTop: 6 }}>
-              {fmtUsd(t.vol24h)} · mcap {fmtUsd(t.mcap)}
-            </div>
-          </div>
-        ))}
-      </div>
-      <div className="panel" style={{ overflow: 'auto' }}>
-        <table className="table">
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>Token</th>
-              <th>Vol 24h</th>
-              <th>Mcap</th>
-              <th>Change</th>
-            </tr>
-          </thead>
-          <tbody>
-            {board.map((t, i) => (
-              <tr key={t.id}>
-                <td className="mono">{i + 1}</td>
-                <td style={{ color: 'var(--text-h)', fontWeight: 600 }}>${t.symbol}</td>
-                <td className="mono">{fmtUsd(t.vol24h)}</td>
-                <td className="mono">{fmtUsd(t.mcap)}</td>
-                <td className={t.change24h >= 0 ? 'up' : 'down'}>
-                  {t.change24h >= 0 ? '+' : ''}
-                  {t.change24h.toFixed(1)}%
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <div className="section-head" style={{ marginTop: 28 }}>
-        <div>
-          <h2>Tape</h2>
-          <p>Recent floor activity</p>
-        </div>
-      </div>
-      <div className="panel">
-        <table className="table">
-          <thead>
-            <tr>
-              <th>Type</th>
-              <th>Token</th>
-              <th>Size</th>
-              <th>When</th>
-            </tr>
-          </thead>
-          <tbody>
-            {DEMO_ACTIVITY.map((a, i) => (
-              <tr key={i}>
-                <td>
-                  <span className={`tag ${a.type === 'sell' ? 'tag-burn' : a.type === 'launch' ? 'tag-oracle' : 'tag-floor'}`}>
-                    {a.type}
-                  </span>
-                </td>
-                <td className="mono">${a.symbol}</td>
-                <td>{a.amount}</td>
-                <td className="mono">{a.when}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <PageHeading
+        title="Where the activity is."
+        description="Real swap volume. A rolling 24-hour window. Markets ranked from confirmed pool events."
+      />
+      <IndexedTable />
     </>
   )
 }
-
 export function AgentsPage() {
   return (
     <>
-      <h1 className="page-title">Agents</h1>
-      <p className="page-sub">MCP / agent surface for reading the floor and assembling launches programmatically.</p>
-      <div className="grid-2">
-        <div className="panel panel-pad">
-          <h3 style={{ margin: '0 0 8px', color: 'var(--text-h)' }}>Read tools</h3>
-          <ul>
-            <li>
-              <code>list_launches</code> — recent tokens + modules
-            </li>
-            <li>
-              <code>get_token</code> — mcap, vol, hook chips
-            </li>
-            <li>
-              <code>list_modules</code> — gate/value registry
-            </li>
-          </ul>
-        </div>
-        <div className="panel panel-pad">
-          <h3 style={{ margin: '0 0 8px', color: 'var(--text-h)' }}>Write tools</h3>
-          <ul>
-            <li>
-              <code>preview_launch</code> — deterministic address + weight check
-            </li>
-            <li>
-              <code>build_launch_tx</code> — unsigned payload for wallet agents
-            </li>
-            <li>
-              <code>quote_swap</code> — V4 route estimate
-            </li>
-          </ul>
-        </div>
-      </div>
-      <div className="panel panel-pad" style={{ marginTop: 14 }}>
-        <div className="metric-label">Endpoint (placeholder)</div>
-        <code>https://api.hooker.cash/mcp</code>
-        <p style={{ margin: '10px 0 0', fontSize: 13, color: 'var(--text-dim)' }}>
-          Wire your indexer auth secrets in env. This vamp ships the IA and agent docs shell only.
+      <PageHeading
+        title="Hookbrew for builders."
+        description="Public market reads for integrations, dashboards and agents."
+      />
+      <Glass as="article" className="docs-body">
+        <h2>Read API</h2>
+        <p>
+          The server exposes the same data used by this app. No private API credential from the
+          original project is used.
         </p>
-      </div>
+        <pre>
+          GET /api/status{'\n'}GET /api/market?q=&sort=volume&fee=&offset=0{'\n'}GET
+          /api/tokens/:address{'\n'}GET /api/tokens/:address/trades?side=buy{'\n'}GET
+          /api/tokens/:address/candles?interval=300
+        </pre>
+        <h2>Wallet signing stays with you</h2>
+        <p>
+          There is no transaction-capable MCP service or agent signing wallet in this build. Read
+          responses include index progress, confirmed trades, and deployment identity. Unavailable
+          markets return explicit errors.
+        </p>
+        <Button to="/docs">Read the protocol guide</Button>
+      </Glass>
     </>
   )
 }
-
 export function DocsPage() {
   return (
-    <div className="docs-layout">
-      <nav className="docs-nav panel panel-pad">
-        <a className="active" href="#hooks">
-          Uniswap V4 hooks
-        </a>
-        <a href="#builder">Hook Builder</a>
-        <a href="#split">70/30 split</a>
-        <a href="#tape">Ticker Tape</a>
-        <a href="#limits">Honest limits</a>
-        <a href="#faq">FAQ</a>
-      </nav>
-      <article className="docs-body panel panel-pad">
-        <div className="chip" style={{ marginBottom: 12 }}>
-          📚 Guides
-        </div>
-        <h2 id="hooks">Uniswap V4 hooks?</h2>
+    <>
+      <PageHeading
+        title="Built to brew. Built on-chain."
+        description="The Hookbrew v1 launch and trading guide."
+      />
+      <ChainStatus />
+      <Glass as="article" className="docs-body">
+        <h2>Launch studio</h2>
         <p>
-          The 30-second version: a <code>hook</code> is a contract Uniswap calls at points like{' '}
-          <code>beforeSwap</code> / <code>afterSwap</code>. Your pool keeps AMM math; the hook adds house
-          rules.
+          Set a name, ticker, artwork and socials. Every token has a fixed one-billion supply, an
+          ERC20 USDC market, and a 1–5% pool fee. Opening valuation targets 2,000–10,000 USDC and
+          rounds to a V4 price tick. This valuation is not deposited liquidity or funds raised.
         </p>
-        <h2 id="builder">Build your own — no Solidity needed</h2>
+        <h2>Founder buys and vesting</h2>
         <p>
-          Pick modules on the Hook Builder. Gates run the door at the swap; values carve the cut at harvest.
-          The builder assembles reviewed bytecode — card pick, not a code review.
+          An optional initial purchase is capped at 10% of token supply. Approve the exact ERC20
+          USDC amount, simulate, and sign the launch. Up to ten recipients share that allocation and
+          creator fees. Each recipient can have an immutable cliff followed by linear vesting; zero
+          periods deliver immediately.
         </p>
-        <h2 id="split">The 70/30 split</h2>
+        <h2>Launch guards</h2>
         <p>
-          Every swap pays the pool fee. At harvest, up to 70% can flow to creator-chosen recipients; the rest
-          is protocol. Delta-free routing means external routers can still pick these pools up.
+          Optional buy caps ramp as a percentage of the seed position’s virtual USDC reserves for up
+          to one hour. Optional global buy spacing applies during that window. Sells and the founder
+          purchase are exempt. These rules cannot guarantee protection against bots or multiple
+          wallets.
         </p>
-        <h2 id="tape">Ticker Tape</h2>
+        <h2>Trading inside Hookbrew</h2>
         <p>
-          Optional TWAP record — one honest tick a second, born with the pool. Required if you want the
-          leverage board. Experimental.
+          Open a token market for its real swap chart and buy/sell ticket. Quotes come from the V4
+          quoter. The Hookbrew router takes an exact input, enforces minimum received and a
+          deadline, and delivers output directly to your wallet. Approvals are exact amounts. USDC
+          for gas and ERC20 USDC for trading are two interfaces to one balance on Arc. Keep enough
+          USDC for both the purchase and gas.
         </p>
-        <h2 id="limits">Honest limits</h2>
+        <h2>Creator fees and seed liquidity</h2>
         <p>
-          Buy caps key off the router, not the wallet — per-wallet keying is impossible from a pool hook by
-          design. No custody. No refunds. Assume hostile tokens.
+          The factory holds the seed LP position with no withdrawal function. Harvesting allocates
+          70% of its fees to recipients and 30% to the immutable Hookbrew treasury. Recipients with
+          founder tokens must retain their original allocation, counting unreleased vesting, to
+          claim creator fees. Protocol fees are independent of that hold requirement. Other
+          liquidity positions are outside this fee split.
         </p>
-        <h2 id="faq">FAQ</h2>
+        <h2>Data and confirmations</h2>
         <p>
-          <strong style={{ color: 'var(--text-h)' }}>Is liquidity locked?</strong> Seed liquidity is sealed
-          inside launch contracts from block one — no removal path.
+          The server indexes confirmed TokenLaunched and PoolManager Swap events, including external
+          routes into these pools. Own-router events identify traders; external routes are labeled
+          separately. Candles use actual observed swaps and do not fill gaps with invented activity.
+          The index follows two blocks behind the head, persists to disk, and rebuilds after a
+          detected reorganization.
         </p>
+        <h2>Deployment and contract source</h2>
         <p>
-          <strong style={{ color: 'var(--text-h)' }}>Do I need Solidity?</strong> No. Module cards compose the
-          hook. Custom advanced hooks are a separate path.
+          Hookbrew v1 is an independent implementation in contracts/protocol. The setup page
+          verifies the deployment bytecode, fixed treasury, receipt and network. The treasury signs
+          a host-bound activation message identifying both deployment transactions. The original
+          Hooker factory and treasury are not used. Local contract and integration tests do not
+          constitute an independent security audit.
         </p>
-      </article>
-    </div>
+        <Button to="/setup">Contract deployment setup</Button>
+        <h2>Current scope</h2>
+        <p>
+          This build covers launches, token branding, recipient splits, vesting, creator claims,
+          indexed markets, charts and spot trading. The original project’s eight-module builder,
+          reflection and buyback modules, managed external LP positions, leveraged markets, and
+          transaction-capable MCP service remain separate backlog items.
+        </p>
+        <h2>Hosting</h2>
+        <p>
+          Run the Node server with persistent storage and set HOOKBREW_PUBLIC_URL to the public
+          HTTPS origin before a live launch. Token metadata and uploaded artwork must remain
+          accessible at that origin. Browser drafts are saved on this device; on-chain token
+          metadata is immutable.
+        </p>
+      </Glass>
+    </>
   )
 }
-
 export function TermsPage() {
   return (
     <>
-      <h1 className="page-title">Terms</h1>
-      <div className="panel panel-pad docs-body">
+      <PageHeading title="Using Hookbrew." description="Your wallet controls every transaction." />
+      <Glass as="article" className="docs-body">
+        <h2>Wallet control</h2>
         <p>
-          This interface is a non-custodial window onto permissionless smart contracts. It does not custody
-          funds, provide investment advice, or endorse any token. You are solely responsible for wallet
-          security, transaction review, and risk.
+          The app does not collect private keys. Transactions require your wallet signature.
+          Approvals, launches, swaps, and claims are separate on-chain actions. A confirmed
+          transaction cannot be undone by this interface.
         </p>
+        <h2>Protocol availability</h2>
         <p>
-          Tokens can be launched by anyone. Many will be worthless or malicious. Charts and stats may be
-          incomplete, delayed, or wrong. Signed transactions are final.
+          Live launches and trading require an activated Hookbrew deployment. Newly written
+          contracts have not had an independent security audit. A successful simulation does not
+          guarantee a transaction’s future execution or economic outcome.
         </p>
+        <h2>Market data</h2>
         <p>
-          This repository is a design/product vamp of the hooker.cash launchpad UX for portfolio and
-          integration work. It is not affiliated with the production Hooker team unless explicitly stated.
-          NFA.
+          Token names, descriptions and links are creator-provided. Pool data is indexed from
+          on-chain events and may be delayed or unavailable. Listings do not represent endorsement,
+          guaranteed liquidity, or guaranteed value.
         </p>
-      </div>
-    </>
-  )
-}
-
-export function TokenPage() {
-  const t = DEMO_TOKENS[0]
-  return (
-    <>
-      <h1 className="page-title">
-        {t.name} <span className="mono">${t.symbol}</span>
-      </h1>
-      <p className="page-sub">Token desk — demo. Wire address routing for production.</p>
-      <div className="trade-layout">
-        <div className="panel panel-pad">
-          <div className="chart-fake">
-            <svg viewBox="0 0 400 160" preserveAspectRatio="none">
-              <path
-                d="M0,100 C50,90 80,120 120,80 S200,40 240,60 320,20 400,40"
-                fill="none"
-                stroke="#62d9ff"
-                strokeWidth="2.5"
-              />
-            </svg>
-          </div>
-        </div>
-        <div className="panel panel-pad">
-          <div className="preview-stat">
-            <span>Price</span>
-            <span>{fmtUsd(t.price)}</span>
-          </div>
-          <div className="preview-stat">
-            <span>Mcap</span>
-            <span>{fmtUsd(t.mcap)}</span>
-          </div>
-          <div className="preview-stat">
-            <span>Vol 24h</span>
-            <span>{fmtUsd(t.vol24h)}</span>
-          </div>
-          <div className="preview-stat" style={{ borderBottom: 'none' }}>
-            <span>Modules</span>
-            <span>{t.modules.join(', ')}</span>
-          </div>
-          <button className="btn btn-primary btn-lg" type="button" style={{ width: '100%', marginTop: 12 }}>
-            Trade ${t.symbol}
-          </button>
-        </div>
-      </div>
+        <h2>Local storage and hosting</h2>
+        <p>
+          This browser stores the entry acknowledgement, token drafts, deployment progress, and
+          pending transaction hashes. Uploaded artwork and token metadata are public and stored by
+          the Hookbrew server. An on-chain metadata URI is immutable.
+        </p>
+        <h2>Independent project</h2>
+        <p>
+          Hookbrew is based on the original Hooker interface with separate contracts and treasury.
+          No affiliation with the original project is implied.
+        </p>
+      </Glass>
     </>
   )
 }

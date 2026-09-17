@@ -1,0 +1,16 @@
+# Brand asset sources
+
+Assets are stored locally; the UI does not hotlink remote logos.
+
+| Asset | Source | Treatment |
+| --- | --- | --- |
+| Arc network icon | [Circle pressroom brand kit](https://www.circle.com/pressroom), [official Arc ZIP](https://6778953.fs1.hubspotusercontent-na1.net/hubfs/6778953/Brand/Arc/Arc_Logos.zip), `Arc Network Icon/Arc_network.svg` | Original SVG, unchanged |
+| Arc white wordmark | Same official Arc ZIP, `Full Logo/SVG/Arc_Logo_White.svg` | Original SVG, unchanged; available for larger partner placements |
+| USDC token logo | [Circle pressroom brand kit](https://www.circle.com/pressroom), [official USDC ZIP](https://6778953.fs1.hubspotusercontent-na1.net/hubfs/6778953/Pressroom/brandkit/logo-downloads/usdc.zip), `Token Logo/USDC Token.svg` | Original SVG, unchanged |
+| Uniswap icon | [Uniswap's official brand-assets repository](https://github.com/Uniswap/brand-assets), [pink icon SVG](https://raw.githubusercontent.com/Uniswap/brand-assets/main/Uniswap%20Brand%20Assets/Uniswap_icon_pink.svg) | Original SVG, unchanged |
+| Hookbrew icon and wordmark | Original built-in image generation | See [Hookbrew generation prompts](hookbrew/README.md) |
+| Navigation glass symbols | Original built-in image generation, with Hookbrew icon as style reference | See [original generation prompts](navigation/README.md) |
+
+Source assets retrieved on 2026-09-16. Third-party marks identify the network, quote asset and protocol; they do not imply endorsement. The seven original glass emblems now identify left-navigation sections. They do not identify coins or deployed contracts. Real token lookup uses neutral initials from contract-provided names and symbols.
+
+The original prompts are retained in `navigation/README.md` as generation history. Their former token-theme wording is not a claim that those coins exist. Hookbrew's icon and wordmark remain in `hookbrew/`.

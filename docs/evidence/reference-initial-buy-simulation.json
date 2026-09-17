@@ -1,0 +1,231 @@
+{
+  "checkedAt": "2026-09-17T02:15:29.842Z",
+  "chainId": 5042,
+  "block": "21255186",
+  "rpc": "https://rpc.mainnet.arc.io",
+  "factory": "0x2707B4c72cD962fb1a511751f2A0C4e8017B6882",
+  "quote": "0x3600000000000000000000000000000000000000",
+  "launchFee": "1000000000000000000",
+  "initialBuy": "1000000",
+  "compiler": "0.8.26+commit.8a97fa7a.Emscripten.clang",
+  "probeSourceHash": "0xda003f9f279207808210c89d46edae08c56e05776e76ca3677efe5d4b7937130",
+  "stateOverride": {
+    "address": "0x000000000000000000000000000000000000cafe",
+    "nativeBalance": "100000000000000000000",
+    "purpose": "Temporary diagnostic code and funding, discarded after each eth_call; existing protocol contracts and storage are not overridden."
+  },
+  "sentTransactions": 0,
+  "limitations": "Simulates ERC-20 approval, native launch fee, launch, initial purchase and post-launch balances inside one eth_call. Not a broadcast, subsequent market swap, complete source review, or security certification.",
+  "results": [
+    {
+      "name": "jit",
+      "hook": "0x275Fb8a5ae7822891bffea39C9A810AC88dda800",
+      "creatorAllocationCap": "100000000000000000000000000",
+      "vested": false,
+      "expectRevert": false,
+      "expectationMet": true,
+      "checks": {
+        "ephemeralTokenHasCode": true,
+        "exactMetadata": true,
+        "exactSupply": true,
+        "initialBuyDeliveredTokens": true,
+        "purchaseWithinCreatorCap": true,
+        "poolReceivedTokens": true,
+        "quoteAndNativeBalancesAgree": true,
+        "exactLaunchAndBuyCost": true,
+        "allowanceConsumed": true,
+        "registeredWithHook": true
+      },
+      "observed": {
+        "token": "0x1aFf3ef68C9E623B423e658c84b168826254766c",
+        "runtimeBytes": "2824",
+        "name": "Hookbrew read only",
+        "symbol": "PROBE",
+        "totalSupply": "1000000000000000000000000000",
+        "purchaserBalance": "195778947496964471281113",
+        "poolManagerBalance": "999804221052503035518829172",
+        "vestingBalance": "0",
+        "quoteBefore": "100000000",
+        "quoteAfter": "98000000",
+        "nativeBefore": "100000000000000000000",
+        "nativeAfter": "98000000000000000000",
+        "remainingAllowance": "0",
+        "registeredWithHook": true
+      },
+      "tokenActuallyDeployed": false
+    },
+    {
+      "name": "plain",
+      "hook": "0x22f48471f01420AF2750bB60D50F84E4876B6000",
+      "creatorAllocationCap": "100000000000000000000000000",
+      "vested": false,
+      "expectRevert": false,
+      "expectationMet": true,
+      "checks": {
+        "ephemeralTokenHasCode": true,
+        "exactMetadata": true,
+        "exactSupply": true,
+        "initialBuyDeliveredTokens": true,
+        "purchaseWithinCreatorCap": true,
+        "poolReceivedTokens": true,
+        "quoteAndNativeBalancesAgree": true,
+        "exactLaunchAndBuyCost": true,
+        "allowanceConsumed": true,
+        "registeredWithHook": true
+      },
+      "observed": {
+        "token": "0x1cf618f826448B78Fb73F3416Ed9Bef5059d2190",
+        "runtimeBytes": "2824",
+        "name": "Hookbrew read only",
+        "symbol": "PROBE",
+        "totalSupply": "1000000000000000000000000000",
+        "purchaserBalance": "195778947496964471281113",
+        "poolManagerBalance": "999804221052503035518829172",
+        "vestingBalance": "0",
+        "quoteBefore": "100000000",
+        "quoteAfter": "98000000",
+        "nativeBefore": "100000000000000000000",
+        "nativeAfter": "98000000000000000000",
+        "remainingAllowance": "0",
+        "registeredWithHook": true
+      },
+      "tokenActuallyDeployed": false
+    },
+    {
+      "name": "reflect50",
+      "hook": "0x7b3A862E0aFe90CBC6d7Ee2E69C505e07cAE2000",
+      "creatorAllocationCap": "100000000000000000000000000",
+      "vested": false,
+      "expectRevert": false,
+      "expectationMet": true,
+      "checks": {
+        "ephemeralTokenHasCode": true,
+        "exactMetadata": true,
+        "exactSupply": true,
+        "initialBuyDeliveredTokens": true,
+        "purchaseWithinCreatorCap": true,
+        "poolReceivedTokens": true,
+        "quoteAndNativeBalancesAgree": true,
+        "exactLaunchAndBuyCost": true,
+        "allowanceConsumed": true,
+        "registeredWithHook": true
+      },
+      "observed": {
+        "token": "0x69155211192aC7d8ae3A31fD3070F5EAaa362369",
+        "runtimeBytes": "3697",
+        "name": "Hookbrew read only",
+        "symbol": "PROBE",
+        "totalSupply": "1000000000000000000000000000",
+        "purchaserBalance": "196956861134554729537784",
+        "poolManagerBalance": "999803043138865444905244354",
+        "vestingBalance": "0",
+        "quoteBefore": "100000000",
+        "quoteAfter": "98000000",
+        "nativeBefore": "100000000000000000000",
+        "nativeAfter": "98000000000000000000",
+        "remainingAllowance": "0",
+        "registeredWithHook": true
+      },
+      "tokenActuallyDeployed": false
+    },
+    {
+      "name": "reflect50burn20",
+      "hook": "0xA84CE5ADB448d40FD70b62FA7fA4597876A6A000",
+      "creatorAllocationCap": "100000000000000000000000000",
+      "vested": false,
+      "expectRevert": false,
+      "expectationMet": true,
+      "checks": {
+        "ephemeralTokenHasCode": true,
+        "exactMetadata": true,
+        "exactSupply": true,
+        "initialBuyDeliveredTokens": true,
+        "purchaseWithinCreatorCap": true,
+        "poolReceivedTokens": true,
+        "quoteAndNativeBalancesAgree": true,
+        "exactLaunchAndBuyCost": true,
+        "allowanceConsumed": true,
+        "registeredWithHook": true
+      },
+      "observed": {
+        "token": "0x423D56c2247BAC71f0099F54FE1e65cf0cB3337f",
+        "runtimeBytes": "3697",
+        "name": "Hookbrew read only",
+        "symbol": "PROBE",
+        "totalSupply": "1000000000000000000000000000",
+        "purchaserBalance": "196956861134554729537784",
+        "poolManagerBalance": "999803043138865444905244354",
+        "vestingBalance": "0",
+        "quoteBefore": "100000000",
+        "quoteAfter": "98000000",
+        "nativeBefore": "100000000000000000000",
+        "nativeAfter": "98000000000000000000",
+        "remainingAllowance": "0",
+        "registeredWithHook": true
+      },
+      "tokenActuallyDeployed": false
+    },
+    {
+      "name": "plain-with-vested-buy",
+      "hook": "0x22f48471f01420AF2750bB60D50F84E4876B6000",
+      "creatorAllocationCap": "100000000000000000000000000",
+      "vested": true,
+      "expectRevert": false,
+      "expectationMet": true,
+      "checks": {
+        "ephemeralTokenHasCode": true,
+        "exactMetadata": true,
+        "exactSupply": true,
+        "initialBuyDeliveredTokens": true,
+        "purchaseWithinCreatorCap": true,
+        "poolReceivedTokens": true,
+        "quoteAndNativeBalancesAgree": true,
+        "exactLaunchAndBuyCost": true,
+        "allowanceConsumed": true,
+        "registeredWithHook": true
+      },
+      "observed": {
+        "token": "0xE101585c7a644073Ab712292158EC547819feF75",
+        "runtimeBytes": "2824",
+        "name": "Hookbrew read only",
+        "symbol": "PROBE",
+        "totalSupply": "1000000000000000000000000000",
+        "purchaserBalance": "0",
+        "poolManagerBalance": "999803043138865444905244354",
+        "vestingBalance": "196956861134554729537784",
+        "quoteBefore": "100000000",
+        "quoteAfter": "98000000",
+        "nativeBefore": "100000000000000000000",
+        "nativeAfter": "98000000000000000000",
+        "remainingAllowance": "0",
+        "registeredWithHook": true
+      },
+      "tokenActuallyDeployed": false
+    },
+    {
+      "name": "zero-cap-rejects-initial-buy",
+      "hook": "0x22f48471f01420AF2750bB60D50F84E4876B6000",
+      "creatorAllocationCap": "0",
+      "expectRevert": true,
+      "expectationMet": true,
+      "error": "The contract function \"run\" reverted with the following reason:\ncreator buy exceeds allocation cap",
+      "details": "execution reverted: creator buy exceeds allocation cap",
+      "data": {
+        "abiItem": {
+          "inputs": [
+            {
+              "name": "message",
+              "type": "string"
+            }
+          ],
+          "name": "Error",
+          "type": "error"
+        },
+        "args": [
+          "creator buy exceeds allocation cap"
+        ],
+        "errorName": "Error"
+      }
+    }
+  ]
+}

@@ -1,58 +1,87 @@
-# Hooker Cash — UX vamp
+# Hookbrew
 
-Full front-end remake/vamp of [hooker.cash](https://hooker.cash/) — the Uniswap V4 meme launchpad on **Arc**.
+An Arc / Uniswap V4 launch venue with its own contracts, a five-stage launch studio, event indexer, and in-site trading terminal. The midnight liquid-glass interface uses QuickLiquid and the original Hookbrew logo assets.
 
-Scraped + structured with **Scrapling** (`DynamicFetcher`), then rebuilt as a clean Vite + React SPA.
+**The implementation is available locally. A live Hookbrew deployment has not been broadcast.** Open `/setup` to review and deploy the factory and router using your wallet. The configured protocol treasury is `0x2e01dD8dF4A4fb06Ea62a944a658E9ae01DB2ac4`.
 
-## What’s included
+## Implemented
 
-| Surface | Notes |
-|--------|--------|
-| **Access gate** | Four-rule confirm wall (localStorage unlock) |
-| **Home** | Hero, programmable liquidity stack, module lanes, feature grid, live floor cards |
-| **Market** | Tile + list feed, sort/filter |
-| **Create / Hook Builder** | Name/symbol, quote, fee tier, 70/30 split, gate + value module toggles, launch preview |
-| **Trade** | Chart shell + swap box (demo quotes) |
-| **Liquidity** | Sealed pool table |
-| **Leaderboard** | Volume board + activity tape |
-| **Modules** | Full hook registry (Velvet Rope, Bouncer, Ticker Tape, JIT Guard, Ashtray, Champagne Room, Make It Rain, Money Flip, Sugar Daddy) |
-| **Agents** | MCP tool IA placeholder |
-| **Docs / Terms** | Guide copy + NFA |
+- Token identity, uploaded artwork, description and social links; local draft persistence.
+- Fixed one-billion supply; USDC quote pool; 1–5% pool fee; opening valuation target of 2,000–10,000 USDC.
+- Optional founder buy, capped at 10% of supply; up to ten recipients with exact percentage splits and independent cliff/linear vesting schedules.
+- Optional time-limited buy caps and global buy spacing; sells remain open.
+- Permanent factory seed position. Harvested seed fees split 70% to creators and 30% to the protocol treasury.
+- Creator fee claims and vested token releases. Founder recipients retain their original allocation to qualify for creator fees, counting unreleased vesting.
+- Indexed market search, fee filters, sorting, volume rankings, and seed-pool listings.
+- Token pages with actual OHLC/volume charts, interval selection, recent trades, identity links and creator controls.
+- Real V4 quotes and own-router exact-input buy/sell execution, exact approvals, minimum output, deadline, transaction simulation, wallet/account checks and receipt validation.
+- Wallet-signed deployment, mined hook address, compiled-bytecode verification, treasury-signed activation, persisted configuration, event indexing and reorganization recovery.
 
-## Stack
+There are no production fixture tokens, fabricated charts, simulated wallets, or pretend successful transactions. Browser and chain test fixtures live in the test suites. Contract and integration tests are not an independent security audit.
 
-- Vite 6 + React 19 + React Router 7
-- CSS design tokens matched to production (Arc cyan accent on `#08070a`)
-- Demo market data in `src/data.js` — swap for indexer when wiring mainnet
+## Run locally
 
-## Run
+Requires Node 22.12+ (or Node 24) and npm.
 
-```bash
-npm install
+```sh
+npm ci
+npm ci --ignore-scripts --prefix contracts/protocol
+npm run contracts:build
 npm run dev
 ```
 
-```bash
+Vite serves both the frontend and `/api` middleware. The first-visit acknowledgement is stored locally. No private key is read or stored by the app.
+
+For a production build with the API and media server:
+
+```sh
 npm run build
-npm run preview
+npm start
 ```
 
-## Deploy
+Set `HOST=0.0.0.0` when required by your host, `PORT` (default 5173), `HOOKBREW_PUBLIC_URL=https://your-domain`, and `HOOKBREW_DATA_DIR` to a persistent directory. Optionally set `HOOKBREW_RPC_URL` to your Arc RPC. The default bind address is loopback. Put public deployments behind HTTPS; configure your reverse proxy to preserve the original Host header.
 
-Static SPA. `vercel.json` rewrites all routes to `index.html`.
+`npm run preview` is a frontend-only Vite preview; use `npm start` for the complete application. Static-only hosting does not run this indexer/API.
 
-```bash
-vercel link --project hooker-cash --yes
-vercel deploy --prod --yes
+## Activate your venue
+
+1. Run the public HTTPS application with durable storage and a stable public URL. Metadata URLs written on-chain are immutable.
+2. Open `/setup`, connect a funded Arc deployer wallet, and prepare the factory deployment. Review the treasury and gas estimate, then sign.
+3. Prepare and sign the router deployment. The factory constructor creates the vesting vault.
+4. Connect the configured treasury wallet and sign the deployment-specific activation message. This authorization costs no gas. Server verification also supports ERC-1271 signatures.
+5. The server verifies both transactions against this exact compiled build and starts indexing your factory. Open `/create` to launch.
+
+The setup page stores public transaction hashes and can export a deployment record. Back up `.hookbrew-data` (or the configured directory), especially `deployment.json` and `media/`. Index files can be rebuilt from chain events. Run one server process per data directory; JSON persistence is intended for a single-instance venue, not a distributed indexer.
+
+Native USDC pays launch fees and gas. ERC20 USDC at `0x3600000000000000000000000000000000000000` is the pool’s trading asset. A live launch requires a public HTTPS metadata origin. The flat launch fee is 1 native USDC, paid directly to the configured treasury.
+
+Both USDC interfaces share one underlying balance. The app reserves the combined purchase, fee and gas cost; buy MAX keeps a gas reserve. Public media storage defaults to a 256 MB ceiling, configurable with `HOOKBREW_MEDIA_LIMIT_MB`.
+
+## Verify
+
+```sh
+npx playwright install chromium
+npm run contracts:test
+npm run test:unit
+npm run test:e2e
+npm run format:check
+npm run build
 ```
 
-## Honest scope
+The contract suite uses real local Uniswap V4 PoolManager/Quoter contracts. It covers buys/sells in both currency orderings, slippage, vesting, guards, recipient validation, creator eligibility and treasury isolation. Its HTTP integration test covers signature/bytecode-bound activation, real event indexing, persistence and reorganization recovery.
 
-- **UI/UX vamp** of the launchpad product surface — not a bytecode fork of production contracts.
-- Wallet connect is a **demo** address stub; wire RainbowKit/wagmi + factory ABIs for live launches.
-- Not affiliated with the production Hooker team unless you say so.
+The browser lifecycle suite starts its own local Hardhat chain on port 8547, deploys real contracts and drives the actual launch/approve/buy/sell interface. It uses isolated test accounts and redirects RPC calls to that local node. Other browser tests cover wallet rejection, receipt verification, reload recovery, draft validation, mobile layout and unavailable services.
 
-## Reference
+## Architecture and scope
 
-- Live product: https://hooker.cash/
-- Contracts research (related ecosystem): https://github.com/gigahooker/hookers-contracts
+- `contracts/protocol`: independent Hookbrew v1 Solidity source and tests.
+- `public/protocol`: compiled deployment bytecode and ABIs, exported from that source.
+- `server`: same-origin API, content-addressed media/metadata, deployment activation, confirmed event index.
+- `src/lib/protocol*`: transaction and validation adapters; `src/components/LaunchStudio.jsx` and `src/pages/TokenTerminal.jsx`: product workflows.
+- `src/config/launchDeployment.js`: separate, unset historical Hooker V10 adapter. It is not the Hookbrew v1 configuration.
+
+The original eight-module builder, reflections/buybacks, external LP position management, leveraged markets, and transaction-capable MCP service remain backlog work. See [the build notes](docs/HOOKBREW_V1.md), [reference audit](docs/FEATURE_PARITY_AUDIT.md) and [parity backlog](docs/FEATURE_BACKLOG.md). Historical original-contract research stays in `contracts/review`; those contracts and fee destinations are not adopted.
+
+## Attribution
+
+[QuickLiquid](https://github.com/amarnath3003/quickLiquid) supplies refraction with accessibility/browser fallbacks. Outfit and DM Sans are bundled locally. Charts use [TradingView Lightweight Charts](https://www.tradingview.com/), with attribution in the terminal. See [DESIGN.md](DESIGN.md), [asset sources](public/brand/SOURCES.md) and dependency licenses. Hookbrew is based on the original [Hooker interface](https://hooker.cash/), without implied affiliation.

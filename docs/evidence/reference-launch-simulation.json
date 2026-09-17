@@ -1,0 +1,119 @@
+{
+  "checkedAt": "2026-09-17T02:05:18.322Z",
+  "chainId": 5042,
+  "block": "21253974",
+  "rpc": "https://rpc.mainnet.arc.io",
+  "factory": "0x2707B4c72cD962fb1a511751f2A0C4e8017B6882",
+  "quote": "0x3600000000000000000000000000000000000000",
+  "policy": "0x67b10E7255deD7753311E8fF318a131783E073F5",
+  "allowedQuote": true,
+  "launchFee": "1000000000000000000",
+  "simulationAccount": "0x000000000000000000000000000000000000beef",
+  "temporaryNativeBalance": "10000000000000000000",
+  "sentTransactions": 0,
+  "scope": "Read-only launch simulation. Successful baseline cases use zero creator allocation cap and no initial buy; negative cases exercise invalid inputs. Does not establish source verification, a real deployment, post-launch trading or fee claims.",
+  "results": [
+    {
+      "name": "jit",
+      "hook": "0x275Fb8a5ae7822891bffea39C9A810AC88dda800",
+      "expectRevert": false,
+      "expectationMet": true,
+      "result": "eth_call succeeded",
+      "predictedToken": "0x939c0A4bF7FF33515F6D3c364F3C91EC45A06f85",
+      "tokenActuallyDeployed": false
+    },
+    {
+      "name": "plain",
+      "hook": "0x22f48471f01420AF2750bB60D50F84E4876B6000",
+      "expectRevert": false,
+      "expectationMet": true,
+      "result": "eth_call succeeded",
+      "predictedToken": "0x16C6F4c91a9F87e83c0c8947773862c1Ad6a67fb",
+      "tokenActuallyDeployed": false
+    },
+    {
+      "name": "reflect50",
+      "hook": "0x7b3A862E0aFe90CBC6d7Ee2E69C505e07cAE2000",
+      "expectRevert": false,
+      "expectationMet": true,
+      "result": "eth_call succeeded",
+      "predictedToken": "0x24A3b8f21b64Ed907748d27E8bB100D93a594245",
+      "tokenActuallyDeployed": false
+    },
+    {
+      "name": "reflect50burn20",
+      "hook": "0xA84CE5ADB448d40FD70b62FA7fA4597876A6A000",
+      "expectRevert": false,
+      "expectationMet": true,
+      "result": "eth_call succeeded",
+      "predictedToken": "0xa27D29805fe6380E5158Ed0348a5aDA562e9b733",
+      "tokenActuallyDeployed": false
+    },
+    {
+      "name": "insufficient-launch-fee",
+      "hook": "0x22f48471f01420AF2750bB60D50F84E4876B6000",
+      "expectRevert": true,
+      "expectationMet": true,
+      "result": "eth_call failed",
+      "failureType": "ContractFunctionRevertedError",
+      "error": "The contract function \"launch\" reverted with the following signature:\n0xdba8417e",
+      "details": "execution reverted: ۨA~",
+      "cause": "The contract function \"launch\" reverted with the following signature:\n0xdba8417e"
+    },
+    {
+      "name": "oversized-token-name",
+      "hook": "0x22f48471f01420AF2750bB60D50F84E4876B6000",
+      "expectRevert": true,
+      "expectationMet": true,
+      "result": "eth_call failed",
+      "failureType": "ContractFunctionRevertedError",
+      "error": "The contract function \"launch\" reverted with the following signature:\n0xb11b2ad8",
+      "details": "execution reverted",
+      "cause": "The contract function \"launch\" reverted with the following signature:\n0xb11b2ad8"
+    },
+    {
+      "name": "oversized-token-symbol",
+      "hook": "0x22f48471f01420AF2750bB60D50F84E4876B6000",
+      "expectRevert": true,
+      "expectationMet": true,
+      "result": "eth_call failed",
+      "failureType": "ContractFunctionRevertedError",
+      "error": "The contract function \"launch\" reverted with the following signature:\n0xb11b2ad8",
+      "details": "execution reverted",
+      "cause": "The contract function \"launch\" reverted with the following signature:\n0xb11b2ad8"
+    },
+    {
+      "name": "zero-hook-address",
+      "hook": "0x0000000000000000000000000000000000000000",
+      "expectRevert": true,
+      "expectationMet": true,
+      "result": "eth_call failed",
+      "failureType": "ContractFunctionRevertedError",
+      "error": "The contract function \"launch\" reverted with the following signature:\n0x10569d5c",
+      "details": "execution reverted",
+      "cause": "The contract function \"launch\" reverted with the following signature:\n0x10569d5c"
+    },
+    {
+      "name": "non-contract-quote",
+      "hook": "0x22f48471f01420AF2750bB60D50F84E4876B6000",
+      "expectRevert": true,
+      "expectationMet": true,
+      "result": "eth_call failed",
+      "failureType": "ContractFunctionRevertedError",
+      "error": "The contract function \"launch\" reverted with the following signature:\n0x49018d50",
+      "details": "execution reverted",
+      "cause": "The contract function \"launch\" reverted with the following signature:\n0x49018d50"
+    },
+    {
+      "name": "creator-allocation-over-cap",
+      "hook": "0x22f48471f01420AF2750bB60D50F84E4876B6000",
+      "expectRevert": true,
+      "expectationMet": true,
+      "result": "eth_call failed",
+      "failureType": "ContractFunctionRevertedError",
+      "error": "The contract function \"launch\" reverted with the following signature:\n0x7bdf87cf",
+      "details": "execution reverted",
+      "cause": "The contract function \"launch\" reverted with the following signature:\n0x7bdf87cf"
+    }
+  ]
+}

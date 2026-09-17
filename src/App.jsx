@@ -1,19 +1,17 @@
-import { useEffect, useState } from 'react'
+import { lazy, Suspense, useEffect, useState } from 'react'
 import { Navigate, Route, Routes } from 'react-router-dom'
 import AccessGate from './components/AccessGate'
 import Shell from './components/Shell'
+import WalletDialog from './components/WalletDialog'
+import { useWallet } from './context/WalletContext'
 import HomePage from './pages/HomePage'
 import MarketPage from './pages/MarketPage'
 import CreatePage from './pages/CreatePage'
 import TradePage from './pages/TradePage'
 import ModulesPage from './pages/ModulesPage'
-import LiquidityPage, {
-  AgentsPage,
-  DocsPage,
-  LeaderboardPage,
-  TermsPage,
-  TokenPage,
-} from './pages/MorePages'
+const TokenTerminal = lazy(() => import('./pages/TokenTerminal'))
+const SetupPage = lazy(() => import('./pages/SetupPage'))
+import LiquidityPage, { AgentsPage, DocsPage, LeaderboardPage, TermsPage } from './pages/MorePages'
 
 const GATE_KEY = 'hooker_vamp_access_v1'
 
@@ -25,12 +23,11 @@ export default function App() {
       return false
     }
   })
-  const [connected, setConnected] = useState(null)
+  const { account: connected } = useWallet()
+  const [walletOpen, setWalletOpen] = useState(false)
 
   useEffect(() => {
-    document.title = unlocked
-      ? 'hooker.cash — the hook launchpad on Arc'
-      : 'Hooker — access check'
+    if (!unlocked) document.title = 'Hookbrew — access check'
   }, [unlocked])
 
   function enter() {
@@ -43,13 +40,7 @@ export default function App() {
   }
 
   function onConnect() {
-    if (connected) {
-      setConnected(null)
-      return
-    }
-    // Demo connect — replace with RainbowKit / wagmi for production
-    const demo = `0x${Math.random().toString(16).slice(2)}${Math.random().toString(16).slice(2)}`.slice(0, 42)
-    setConnected(demo)
+    setWalletOpen(true)
   }
 
   if (!unlocked) {
@@ -57,23 +48,36 @@ export default function App() {
   }
 
   return (
-    <Routes>
-      <Route element={<Shell onConnect={onConnect} connected={connected} />}>
-        <Route index element={<HomePage />} />
-        <Route path="market" element={<MarketPage />} />
-        <Route path="create" element={<CreatePage />} />
-        <Route path="trade" element={<TradePage />} />
-        <Route path="liquidity" element={<LiquidityPage />} />
-        <Route path="leaderboard" element={<LeaderboardPage />} />
-        <Route path="modules" element={<ModulesPage />} />
-        <Route path="hooks" element={<Navigate to="/modules" replace />} />
-        <Route path="agents" element={<AgentsPage />} />
-        <Route path="docs" element={<DocsPage />} />
-        <Route path="guide" element={<Navigate to="/docs" replace />} />
-        <Route path="terms" element={<TermsPage />} />
-        <Route path="token/:id" element={<TokenPage />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Route>
-    </Routes>
+    <>
+      <Suspense
+        fallback={
+          <p className="product-loading" role="status">
+            Opening Hookbrew…
+          </p>
+        }
+      >
+        <Routes>
+          <Route element={<Shell onConnect={onConnect} connected={connected} />}>
+            <Route index element={<HomePage />} />
+            <Route path="market" element={<MarketPage />} />
+            <Route path="create" element={<CreatePage />} />
+            <Route path="trade" element={<TradePage />} />
+            <Route path="liquidity" element={<LiquidityPage />} />
+            <Route path="leaderboard" element={<LeaderboardPage />} />
+            <Route path="modules" element={<ModulesPage />} />
+            <Route path="hooks" element={<Navigate to="/modules" replace />} />
+            <Route path="agents" element={<AgentsPage />} />
+            <Route path="docs" element={<DocsPage />} />
+            <Route path="guide" element={<Navigate to="/docs" replace />} />
+            <Route path="terms" element={<TermsPage />} />
+            <Route path="token/:id" element={<TokenTerminal />} />
+            <Route path="asset/:id" element={<TokenTerminal />} />
+            <Route path="setup" element={<SetupPage />} />
+            <Route path="*" element={<Navigate to="/" replace />} />
+          </Route>
+        </Routes>
+      </Suspense>
+      <WalletDialog open={walletOpen} onClose={() => setWalletOpen(false)} />
+    </>
   )
 }
