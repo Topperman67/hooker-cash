@@ -8,7 +8,9 @@ The specific identity is a brewing workbench followed by a trading desk: uploade
 
 Use an aubergine-black background (#090411), dark plum surfaces (#12081f and #1c0c30), violet edges (#b4a1ff), mint (#a5e7d2), and porcelain type (#f6f3ff). Broad surfaces stay dark. Outfit headings, DM Sans controls, and the original flask-and-hook wordmark establish the identity.
 
-The labeled left navigation uses the original seven glass emblems: stacked slabs for overview, rising arrow for market, flame for creation, spring for trade, drops for liquidity, goblet for rankings, and shield for registry. The secondary agents and documentation links reuse the spring and stack. The flask appears in branding, mobile navigation, and the architecture sculpture. These are interface symbols, not token identities.
+The left navigation uses quiet, distinct outline symbols: dashboard for overview, chart for market, plus for creation, exchange arrows for trade, drops for liquidity, trophy for rankings, blocks for the hook registry, bot for agents, and an open book for documentation. Use midnight #090411, dark plum #12081f, muted silver #aaa8b6, readable neutral #b9b5c3, porcelain #f0edf4, and restrained sage #b9cec8 for the active item. Keep DM Sans labels left aligned beside consistent 28px icon frames. Outfit and the glass flask remain the brand signature. The sidebar keeps its liquid-glass surface, but no glowing or colorful navigation artwork competes with the workspace.
+
+Use one continuous navigation list with equal spacing, followed by help at the bottom. Remove the promotional card and the gap after Leaderboard. Compact the brand and rows on short desktop windows; use two columns in the mobile landscape drawer so every destination remains visible without an inner scrollbar. Retain visible focus, mobile close controls, and accessible link labels.
 
 QuickLiquid refraction is always configured on. No user-facing off/lightweight mode exists, and the obsolete preference is ignored. Retain the engine's system accessibility preferences and browser fallbacks. Destroy lenses and listeners on unmount.
 

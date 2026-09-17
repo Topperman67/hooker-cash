@@ -117,21 +117,13 @@ test('gate requires all acknowledgements and remembers entry', async ({ page }) 
   await expect(page.locator('.gate-screen')).toHaveCount(0)
 })
 
-test('sidebar uses glass assets and ignores the obsolete off preference', async ({ page }) => {
+test('sidebar uses distinct section icons and keeps the glass surface', async ({ page }) => {
   await unlock(page)
   await page.addInitScript(() => localStorage.setItem('hooker_glass_lightweight_v1', '1'))
   await page.goto('/')
-  await expect(page.locator('.nav-glass-icon')).toHaveCount(9)
-  expect(
-    await page
-      .locator('.nav-glass-icon')
-      .evaluateAll((images) =>
-        images.every(
-          (image) =>
-            image.src.includes('/brand/navigation/') && image.complete && image.naturalWidth > 0,
-        ),
-      ),
-  ).toBe(true)
+  await expect(page.locator('.nav-icon svg')).toHaveCount(9)
+  await expect(page.locator('a[href="/trade"] .lucide-arrow-left-right')).toBeVisible()
+  await expect(page.locator('a[href="/agents"] .lucide-bot')).toBeVisible()
   await expect(page.locator('.glass-mode')).toHaveCount(0)
   await expect(page.getByRole('button', { name: /liquid glass|light glass/i })).toHaveCount(0)
   await expect(page.locator('.ql-lens').first()).toBeAttached()

@@ -1,13 +1,21 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom'
 import {
+  ArrowLeftRight,
   ArrowUpRight,
+  Blocks,
+  BookOpen,
+  Bot,
+  ChartNoAxesCombined,
   CircleHelp,
+  CirclePlus,
+  Droplets,
   ExternalLink,
+  LayoutDashboard,
   Menu,
   Search,
   ShieldCheck,
-  Sparkles,
+  Trophy,
   Wallet,
   X,
 } from 'lucide-react'
@@ -17,15 +25,15 @@ import { shortenAddress } from '../config/network'
 import { useChain } from '../context/ChainContext'
 
 const NAV = [
-  { to: '/', label: 'Overview', image: 'overview' },
-  { to: '/market', label: 'Market', image: 'market' },
-  { to: '/create', label: 'Create a token', image: 'create' },
-  { to: '/trade', label: 'Trade', image: 'trade' },
-  { to: '/liquidity', label: 'Liquidity', image: 'liquidity' },
-  { to: '/leaderboard', label: 'Leaderboard', image: 'leaderboard' },
-  { to: '/modules', label: 'Hook registry', image: 'registry' },
-  { to: '/agents', label: 'Agents', image: 'trade' },
-  { to: '/docs', label: 'Documentation', image: 'overview' },
+  { to: '/', label: 'Overview', icon: LayoutDashboard },
+  { to: '/market', label: 'Market', icon: ChartNoAxesCombined },
+  { to: '/create', label: 'Create a token', icon: CirclePlus },
+  { to: '/trade', label: 'Trade', icon: ArrowLeftRight },
+  { to: '/liquidity', label: 'Liquidity', icon: Droplets },
+  { to: '/leaderboard', label: 'Leaderboard', icon: Trophy },
+  { to: '/modules', label: 'Hook registry', icon: Blocks },
+  { to: '/agents', label: 'Agents', icon: Bot },
+  { to: '/docs', label: 'Documentation', icon: BookOpen },
 ]
 
 export default function Shell({ onConnect, connected }) {
@@ -150,25 +158,19 @@ export default function Shell({ onConnect, connected }) {
         </Link>
         <div className="sidebar-caption">Brew your own tokenomics.</div>
         <nav ref={navigation} aria-label="Primary navigation" id="primary-navigation">
-          {NAV.map(({ to, label, image }, index) => (
+          {NAV.map(({ to, label, icon: Icon }) => (
             <NavLink
               key={to}
               to={to}
               end={to === '/'}
               onClick={() => setMenuOpen(false)}
-              className={({ isActive }) =>
-                `nav-item ${isActive ? 'active' : ''} ${index === 6 ? 'nav-divider' : ''}`
-              }
+              className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}
             >
               {({ isActive }) => (
                 <>
-                  <img
-                    className="nav-glass-icon"
-                    src={`/brand/navigation/${image}.png`}
-                    alt=""
-                    width="36"
-                    height="36"
-                  />
+                  <span className="nav-icon" aria-hidden="true">
+                    <Icon size={19} strokeWidth={1.65} />
+                  </span>
                   <span>{label}</span>
                   {isActive && <span className="nav-active-dot" />}
                   {to === '/create' && !isActive && <span className="nav-plus">+</span>}
@@ -178,16 +180,6 @@ export default function Shell({ onConnect, connected }) {
           ))}
         </nav>
         <div className="sidebar-bottom">
-          <Glass className="sidebar-callout" radius={17} tone="violet">
-            <Sparkles size={19} />
-            <strong>
-              A little hook.
-              <br />A lot of possibility.
-            </strong>
-            <Link to="/modules">
-              Meet the modules <ArrowUpRight size={14} />
-            </Link>
-          </Glass>
           <Link to="/docs" className="help-link">
             <CircleHelp size={15} />
             Need a hand?
