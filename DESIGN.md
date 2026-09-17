@@ -22,4 +22,8 @@ QuickLiquid refraction is always configured on. No user-facing off/lightweight m
 
 Real data has priority over a visually busy dashboard. Every token identity must come from a contract or a verified metadata source. No invented markets, prices, trades, balances, liquidity locks, quotes, transaction receipts, or generated chart histories. Use readable unavailable states until a real source is connected. Architecture illustrations must be identified as illustrations.
 
-Current implementation connects browser wallets, Arc RPC, and ERC-20 metadata lookup. Launching, swapping, pool indexing, rankings, and agent access remain incomplete; they must not be presented as working features.
+Current implementation connects wallet-confirmed launches, swaps, module builds, event indexing and market data. Agent transaction execution remains unavailable.
+
+## Stage 2 hook workbench
+
+Keep midnight #090411, plum #12081f, lavender #bca2ec, porcelain #e9e2f4 and muted text #a397b8. Outfit provides headings; DM Sans provides controls. Presets lead into a left-aligned workbench: the module list is the working area, a compact sticky recipe panel shows installed sockets, exact per-currency fee allocation and the build transaction. It stacks below modules on mobile. Color identifies a module, never an unverified security rating. The distinctive element is the assembled recipe, not a decorative image. Each install exposes only its relevant controls. A confirmed recipe shows its real contract address; draft recipes never imply deployment.

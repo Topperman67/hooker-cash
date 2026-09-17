@@ -247,12 +247,13 @@ export default function TokenTerminal() {
                   </p>
                 </div>
               )}
-              {tab === 'rewards' && <CreatorPosition token={token} />}
+              {tab === 'rewards' && <CreatorPosition token={token} deployment={deployment} />}
             </div>
           </Glass>
         </div>
         <aside>
           <TradeTicket
+            venue={deployment}
             key={token.address}
             token={token}
             onTrade={() => {

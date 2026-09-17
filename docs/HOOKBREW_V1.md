@@ -16,7 +16,7 @@ Factory and router are immutable. Deployment setup mines a valid CREATE2 salt, e
 
 ## Economics and contract behavior
 
-The launch studio follows **Pool → Hook → Token → Payouts → Review**. New drafts default to a 1% pool fee and an optional $5,000 starting market-cap target. Existing drafts retain their selected economics, but normal entry and reload always begin at Pool (step 1), ignoring saved step numbers. Only an explicit return from setup resumes a valid review. The active factory supports USDC and the open/guarded V1 presets; extra quote assets, reflection/burn hooks, custom module composition and scheduled launches are not offered as executable options.
+The launch studio follows **Pool → Hook → Token → Payouts → Review**. New drafts default to a 1% pool fee and an optional $5,000 starting market-cap target. Existing drafts retain their selected economics, but normal entry and reload always begin at Pool (step 1), ignoring saved step numbers. Only an explicit return from setup resumes a valid review. The original factory supports USDC and the open/guarded V1 presets. The [modular builder](HOOK_BUILDER.md) adds separately deployed recipe-specific factories without changing V1. Extra quote assets and scheduled launches are not offered as executable options.
 
 Payouts offers no lock, a one-hour cliff, 24-hour linear, one-hour cliff plus 24-hour linear, 30-day linear, quarter, year and custom schedules. Custom values use whole hours or days, encoded as exact contract seconds. Each split wallet inherits the global schedule unless it overrides it. A global lock with no split rows materializes one 100% recipient using the connected creator wallet. Old per-wallet day schedules are preserved. The existing approval, simulation, receipt-recovery and deployment-resume paths are retained.
 
@@ -42,4 +42,4 @@ The file store/index is for a single server instance. It needs disk backups, an 
 
 Tests cover real V4 launch and trading paths, both address orderings, protected buy timing, vesting, slippage/expiry, recipient mistakes, creator hold eligibility, protocol fee isolation, server activation, indexing/restarts/reorgs, and the browser's core lifecycle. Production deployment signatures, public hosting, and independent contract security review remain outstanding external steps.
 
-The reference product's modular hook builder, reflection/burn/buyback designs, external LP management, leveraged positions and agent transaction service are not claimed as implemented. The catalogue is explicitly a reference catalogue.
+The Hookbrew modular builder implements the seven behaviors documented in [HOOK_BUILDER.md](HOOK_BUILDER.md). It is a separate implementation, with asset-specific fee allocations and permissionless market-module execution. The original product’s resting-bid module, external LP management, leveraged positions and agent transaction service remain outside this build.

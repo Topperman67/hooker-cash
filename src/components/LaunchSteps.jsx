@@ -1,3 +1,4 @@
+import { recipeModules } from '../lib/hookRecipe'
 import { useState } from 'react'
 import {
   Check,
@@ -114,89 +115,10 @@ export function PoolStep({ draft, input, update }) {
       <div className="launch-economics">
         <Shield size={18} />
         <p>
-          Fixed 1 billion supply. Permanent seed liquidity. Harvested seed-position fees are split{' '}
-          <strong>70% to creators / 30% to the protocol.</strong>
+          1 billion tokens at launch. Permanent seed liquidity. Harvested seed-position fees start
+          with <strong>70% to creators / 30% to the protocol.</strong>
         </p>
       </div>
-    </>
-  )
-}
-
-export function HookStep({ draft, update, input }) {
-  return (
-    <>
-      <div className="launch-economics">
-        <Check size={18} />
-        <p>
-          Both options include your <strong>{Number(draft.fee) / 10000}% pool fee</strong>, the
-          70/30 fee split, and permanent seed liquidity. The guard adds temporary rules for opening
-          trades.
-        </p>
-      </div>
-      <div className="launch-hook-grid">
-        <button
-          type="button"
-          className="launch-hook-card"
-          aria-pressed={!draft.guarded}
-          onClick={() => update('guarded', false)}
-        >
-          <span className="launch-choice-icon">
-            <FlaskConical size={23} />
-          </span>
-          <span className="launch-choice-check">{!draft.guarded && <Check size={15} />}</span>
-          <strong>Open market</strong>
-          <span>
-            The base Hookbrew hook. Anyone can buy or sell as soon as your launch confirms.
-          </span>
-          <small>BASE V1 · CREATOR FEES</small>
-        </button>
-        <button
-          type="button"
-          className="launch-hook-card"
-          aria-pressed={draft.guarded}
-          onClick={() => update('guarded', true)}
-        >
-          <span className="launch-choice-icon">
-            <Shield size={23} />
-          </span>
-          <span className="launch-choice-check">{draft.guarded && <Check size={15} />}</span>
-          <strong>Guarded opening</strong>
-          <span>
-            Set temporary buy caps that relax over time, with optional spacing between buys.
-          </span>
-          <small>BASE V1 + CUSTOM BUY GUARD</small>
-        </button>
-      </div>
-      {draft.guarded && (
-        <div className="launch-inset">
-          <div className="launch-subheading">
-            <h3>Configure your guard</h3>
-            <span>Expires automatically</span>
-          </div>
-          <div className="product-grid-2">
-            <Field label="Guard duration · seconds" hint="1–3,600 seconds">
-              {input('window', { type: 'number', min: 1, max: 3600 })}
-            </Field>
-            <Field label="Global buy spacing · seconds" hint="0 disables spacing · maximum 60">
-              {input('interval', { type: 'number', min: 0, max: 60 })}
-            </Field>
-            <Field label="Starting buy cap · %" hint="Share of virtual USDC reserves per swap">
-              {input('startCap', { type: 'number', min: 0.01, max: 50, step: 0.01 })}
-            </Field>
-            <Field label="Ending buy cap · %" hint="Ramps linearly from the starting cap">
-              {input('endCap', { type: 'number', min: 0.01, max: 50, step: 0.01 })}
-            </Field>
-          </div>
-          <p className="fine-print">
-            Sells stay open and the founder buy is exempt. Per-swap caps do not guarantee protection
-            from bots or multiple wallets.
-          </p>
-        </div>
-      )}
-      <p className="fine-print">
-        Fee claims are hold-gated: recipients of founder tokens must retain that allocation,
-        including unreleased vesting. Hook settings are permanent after launch.
-      </p>
     </>
   )
 }
@@ -491,7 +413,7 @@ export function ReviewStep({ draft, platform, wallet, go }) {
       step: 1,
       rows: [
         ['Preset', draft.guarded ? 'Guarded opening' : 'Open market · base V1'],
-        ...(draft.guarded
+        ...(draft.hook?.mode !== 'custom' && draft.guarded
           ? [
               [
                 'Buy guard',
@@ -508,7 +430,12 @@ export function ReviewStep({ draft, platform, wallet, go }) {
       step: 2,
       rows: [
         ['Name / symbol', `${draft.name} / $${draft.symbol}`],
-        ['Supply', '1,000,000,000 · fixed'],
+        [
+          'Supply',
+          draft.hook?.recipe?.burnBps || draft.hook?.recipe?.buybackBps
+            ? '1,000,000,000 at launch · burns reduce supply'
+            : '1,000,000,000 · fixed',
+        ],
         ...(draft.description ? [['Description', draft.description]] : []),
         ...['website', 'twitter', 'telegram']
           .filter((key) => draft[key])

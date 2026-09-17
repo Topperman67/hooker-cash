@@ -25,10 +25,11 @@ import {
 } from '../lib/protocol'
 import { publicClient, readableError } from '../lib/chain'
 import { api, number } from '../lib/api'
-export default function TradeTicket({ token, onTrade }) {
+export default function TradeTicket({ token, onTrade, venue }) {
   const wallet = useWallet(),
     { onConnect } = useOutletContext(),
-    { deployment } = usePlatform()
+    platform = usePlatform()
+  const deployment = venue || platform.deployment
   const [buy, setBuy] = useState(true),
     [input, setInput] = useState(''),
     [slippage, setSlippage] = useState('1'),

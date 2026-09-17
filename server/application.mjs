@@ -12,6 +12,7 @@ import {
 } from 'viem'
 import { treasury as configuredTreasury, arcInfrastructure } from './settings.mjs'
 import { createIndexer } from './indexer.mjs'
+import { createHookRegistry } from './hooks.mjs'
 import { candlesFor } from './market-math.mjs'
 import { configuredStore } from './storage.mjs'
 import abi from '../src/generated/protocol.json' with { type: 'json' }
@@ -65,6 +66,36 @@ export async function createApplication(options = {}) {
         retryCount: 1,
       }),
     })
+  const hookRegistry = createHookRegistry({ client, infrastructure, treasury, store, dataDir, abi })
+  const hookIndexers = new Map()
+  let hookRecords = [],
+    syncOffset = 0
+  async function refreshHooks() {
+    hookRecords = (await hookRegistry.list()).filter(
+      (h) => h.chainId === infrastructure.chainId && same(h.treasury, treasury),
+    )
+    await Promise.all(
+      hookRecords.map(async (h) => {
+        let item = hookIndexers.get(h.factory.toLowerCase())
+        if (!item) {
+          item = createIndexer({ client, config: h, abi, dataDir, store })
+          hookIndexers.set(h.factory.toLowerCase(), item)
+        }
+        await item.load(!!store)
+      }),
+    )
+  }
+  async function syncAll() {
+    await refreshHooks()
+    const extra = [...hookIndexers.values()],
+      selected = []
+    for (let n = 0; n < Math.min(3, extra.length); n++)
+      selected.push(extra[(syncOffset + n) % extra.length])
+    syncOffset = extra.length ? (syncOffset + 3) % extra.length : 0
+    await Promise.all([indexer?.sync(), ...selected.map((i) => i.sync())])
+  }
+  const allTokens = () =>
+    [indexer, ...hookIndexers.values()].filter(Boolean).flatMap((i) => i.tokens())
   const limits = new Map()
   async function activateLocal(next) {
     const nextIndexer = createIndexer({ client, config: next, abi, dataDir, store })
@@ -74,7 +105,7 @@ export async function createApplication(options = {}) {
     if (timer) clearInterval(timer)
     if (!serverless) {
       indexer.sync()
-      timer = setInterval(() => indexer.sync(), 10000)
+      timer = setInterval(() => syncAll().catch(() => {}), 10000)
       timer.unref()
     }
   }
@@ -276,6 +307,7 @@ export async function createApplication(options = {}) {
       try {
         await refreshDeployment()
         if (store) await indexer?.load(true)
+        await refreshHooks()
       } catch (e) {
         throw Object.assign(e, { status: 503 })
       }
@@ -287,11 +319,18 @@ export async function createApplication(options = {}) {
           storage,
           index: indexer?.status() || null,
         })
+      if (req.method === 'GET' && path === '/api/hooks')
+        return json(res, 200, { items: hookRecords })
+      const hookMatch = path.match(/^\/api\/hooks\/(0x[\da-fA-F]{64})$/)
+      if (req.method === 'GET' && hookMatch)
+        return json(res, 200, {
+          deployment: hookRecords.find((h) => same(h.recipeHash, hookMatch[1])) || null,
+        })
       if (req.method === 'GET' && path === '/api/market') {
         const q = (url.searchParams.get('q') || '').toLowerCase().slice(0, 100),
           sort = url.searchParams.get('sort') || 'newest',
           fee = Number(url.searchParams.get('fee') || 0)
-        let tokens = (indexer?.tokens() || []).filter(
+        let tokens = allTokens().filter(
           (t) =>
             (!q ||
               [t.name, t.symbol, t.address, t.creator].some((s) => s.toLowerCase().includes(q))) &&
@@ -315,27 +354,28 @@ export async function createApplication(options = {}) {
           ),
           total: tokens.length,
           next: offset + limit < tokens.length ? offset + limit : null,
-          deployment: !!config,
+          deployment: !!config || hookRecords.length > 0,
           index: indexer?.status() || null,
         })
       }
       const match = path.match(/^\/api\/tokens\/(0x[\da-fA-F]{40})(?:\/(trades|candles))?$/)
       if (req.method === 'GET' && match) {
-        const token = indexer?.token(match[1])
+        const tokenIndexer = [indexer, ...hookIndexers.values()].find((i) => i?.token(match[1]))
+        const token = tokenIndexer?.token(match[1])
         if (!token)
           return json(res, 404, {
             error: config
               ? 'This token is not indexed in this Hookbrew deployment yet.'
               : 'Hookbrew contracts have not been deployed yet.',
           })
-        const trades = indexer.trades(match[1])
+        const trades = tokenIndexer.trades(match[1])
         if (match[2] === 'candles') {
           const n = Number(url.searchParams.get('interval'))
           const interval = [60, 300, 900, 3600, 14400, 86400].includes(n) ? n : 300
           return json(res, 200, {
             items: candlesFor(trades, interval),
             interval,
-            index: indexer.status(),
+            index: tokenIndexer.status(),
           })
         }
         if (match[2] === 'trades') {
@@ -346,19 +386,26 @@ export async function createApplication(options = {}) {
             items: rows.slice(offset, offset + 50),
             total: rows.length,
             next: offset + 50 < rows.length ? offset + 50 : null,
-            index: indexer.status(),
+            index: tokenIndexer.status(),
           })
         }
         const metadata = await tokenMetadata(token)
         return json(res, 200, {
           token: { ...token, metadata },
-          deployment: config,
-          index: indexer.status(),
+          deployment: same(token.hook, config?.factory)
+            ? config
+            : hookRecords.find((h) => same(h.factory, token.hook)),
+          index: tokenIndexer.status(),
         })
       }
       if (req.method === 'POST') writeAllowed(req)
       if (req.method === 'POST' && !storage.ready)
         return json(res, 503, { error: storage.error, code: 'STORAGE_UNCONFIGURED' })
+      if (req.method === 'POST' && path === '/api/hooks/register') {
+        const deployment = await hookRegistry.register(await body(req, 8000))
+        await refreshHooks()
+        return json(res, 201, { deployment })
+      }
       if (req.method === 'POST' && path === '/api/media') {
         const b = await body(req),
           m = String(b.data || '').match(/^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/)
@@ -559,8 +606,8 @@ export async function createApplication(options = {}) {
         }
       }
       if (req.method === 'POST' && path === '/api/sync') {
-        if (serverless) await indexer?.sync()
-        else indexer?.sync()
+        if (serverless) await syncAll()
+        else syncAll().catch(() => {})
         return json(res, 202, { index: indexer?.status() || null })
       }
       return json(res, 404, { error: 'Endpoint not found.' })
@@ -570,9 +617,17 @@ export async function createApplication(options = {}) {
       })
     }
   }
+  if (!serverless) {
+    await refreshDeployment()
+    await refreshHooks()
+    if (!timer) {
+      timer = setInterval(() => syncAll().catch(() => {}), 10000)
+      timer.unref()
+    }
+  }
   return {
     middleware,
-    sync: () => indexer?.sync(),
+    sync: syncAll,
     close: () => timer && clearInterval(timer),
     client,
     get deployment() {

@@ -28,7 +28,8 @@ import { useTransaction } from '../lib/useTransaction'
 import { readableError } from '../lib/chain'
 import { draftKey, stepKey, legacyStepKey, restoreDraft, restoreStep } from '../lib/launchDraft'
 
-import { PoolStep, HookStep, TokenStep, PayoutStep, ReviewStep } from './LaunchSteps'
+import HookBuilder from './HookBuilder'
+import { PoolStep, TokenStep, PayoutStep, ReviewStep } from './LaunchSteps'
 import './launch-flow.css'
 
 const steps = ['Pool', 'Hook', 'Token', 'Payouts', 'Review']
@@ -42,12 +43,13 @@ export default function LaunchStudio() {
     [error, setError] = useState(''),
     [uploading, setUploading] = useState(false),
     [estimate, setEstimate] = useState(null),
-    [checking, setChecking] = useState(false)
+    [checking, setChecking] = useState(false),
+    [hookBusy, setHookBusy] = useState(false)
   const platform = usePlatform(),
     wallet = useWallet(),
     { onConnect } = useOutletContext(),
     navigate = useNavigate()
-  const deployment = platform.deployment,
+  const deployment = draft.hook?.mode === 'custom' ? draft.hook.deployment : platform.deployment,
     revision = useRef(0),
     editor = useRef(null)
   const tx = useTransaction('launch', async (receipt, record) => {
@@ -71,12 +73,12 @@ export default function LaunchStudio() {
     if (entryKey.current === location.key) return
     entryKey.current = location.key
     // Clicking Create again is a new entry, without interrupting a submitted transaction.
-    if (!locked) {
+    if (!locked && !hookBusy) {
       setStep(restoreStep(draft, { resumeReview }))
       setError('')
       setEstimate(null)
     }
-  }, [location.key, resumeReview, draft, locked])
+  }, [location.key, resumeReview, draft, locked, hookBusy])
   useEffect(() => {
     try {
       localStorage.setItem(draftKey, JSON.stringify(draft))
@@ -194,10 +196,14 @@ export default function LaunchStudio() {
         'Could not verify launch availability. Your draft is saved. Retry status before signing.',
       )
     if (current.storage?.ready === false) throw Error(current.storage.error)
+    const available =
+      draft.hook?.mode === 'custom'
+        ? (await api(`/api/hooks/${draft.hook.deployment.recipeHash}`)).deployment
+        : current.deployment
     if (
-      !current.deployment ||
-      !same(current.deployment.factory, deployment?.factory) ||
-      !same(current.deployment.router, deployment?.router)
+      !available ||
+      !same(available.factory, deployment?.factory) ||
+      !same(available.router, deployment?.router)
     )
       throw Error(
         'The active deployment changed. Your draft is saved; refresh the simulation before signing.',
@@ -253,15 +259,15 @@ export default function LaunchStudio() {
             Launch a <span>token.</span>
           </h1>
           <p>
-            A fixed supply. A market from day one. Choose your pool, shape the hook, and make it
-            yours. Your seed liquidity stays permanently locked.
+            A fixed initial supply. A market from day one. Choose your pool, shape the hook, and
+            make it yours. Your seed liquidity stays permanently locked.
           </p>
         </header>
         <nav className="launch-steps" aria-label="Launch steps">
           {steps.map((label, i) => (
             <button
               key={label}
-              disabled={locked || checking || uploading || i > step + 1}
+              disabled={locked || checking || uploading || hookBusy || i > step + 1}
               onClick={() => go(i)}
               aria-current={i === step ? 'step' : undefined}
               data-complete={i < step}
@@ -287,7 +293,17 @@ export default function LaunchStudio() {
         </div>
         <fieldset disabled={locked || checking} className="studio-fields">
           {step === 0 && <PoolStep draft={draft} input={input} update={update} />}
-          {step === 1 && <HookStep draft={draft} input={input} update={update} />}
+          {step === 1 && (
+            <HookBuilder
+              draft={draft}
+              input={input}
+              update={update}
+              wallet={wallet}
+              platform={platform}
+              onConnect={onConnect}
+              onBusy={setHookBusy}
+            />
+          )}
           {step === 2 && (
             <TokenStep
               draft={draft}
@@ -411,7 +427,10 @@ export default function LaunchStudio() {
         <TransactionStatus tx={tx} />
         <div className="studio-navigation launch-navigation">
           {step > 0 && (
-            <Button disabled={locked || checking || uploading} onClick={() => go(step - 1)}>
+            <Button
+              disabled={locked || checking || uploading || hookBusy}
+              onClick={() => go(step - 1)}
+            >
               <ArrowLeft size={15} />
               Back
             </Button>
@@ -420,7 +439,7 @@ export default function LaunchStudio() {
             <Button
               primary
               className="launch-continue"
-              disabled={locked || checking || uploading}
+              disabled={locked || checking || uploading || hookBusy}
               onClick={() => go(step + 1)}
             >
               {step === 3 ? 'Review launch' : 'Continue'}

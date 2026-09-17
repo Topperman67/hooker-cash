@@ -204,180 +204,244 @@ test.afterAll(async () => {
   }
   delete process.env.HOOKBREW_PUBLIC_URL
 })
-test('wallet launch → real indexed chart → exact approval → buy → sell inside Hookbrew', async ({
-  page,
-}) => {
-  test.setTimeout(180000)
-  page.on('pageerror', (e) => errors.push(e.message))
-  let holdReceipts = false
-  await page.route(/https:\/\/rpc\.(?:drpc\.)?mainnet\.arc\.io/, async (route) => {
-    const r = await fetch(rpc, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: route.request().postData(),
+for (const customHook of [false, true])
+  test(`${customHook ? 'custom hook build → ' : ''}wallet launch → real indexed chart → exact approval → buy → sell inside Hookbrew`, async ({
+    page,
+  }) => {
+    test.setTimeout(180000)
+    page.on('pageerror', (e) => errors.push(e.message))
+    let holdReceipts = false
+    await page.route(/https:\/\/rpc\.(?:drpc\.)?mainnet\.arc\.io/, async (route) => {
+      const r = await fetch(rpc, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: route.request().postData(),
+      })
+      const response = await r.json(),
+        request = route.request().postDataJSON()
+      if (holdReceipts && request.method === 'eth_getTransactionReceipt') response.result = null
+      await route.fulfill({ status: r.status, json: response })
     })
-    const response = await r.json(),
-      request = route.request().postDataJSON()
-    if (holdReceipts && request.method === 'eth_getTransactionReceipt') response.result = null
-    await route.fulfill({ status: r.status, json: response })
-  })
-  await page.route('**/test-wallet-rpc', async (route) => {
-    const r = await fetch(rpc, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: route.request().postData(),
+    await page.route('**/test-wallet-rpc', async (route) => {
+      const r = await fetch(rpc, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: route.request().postData(),
+      })
+      await route.fulfill({
+        status: r.status,
+        contentType: 'application/json',
+        body: await r.text(),
+      })
     })
-    await route.fulfill({ status: r.status, contentType: 'application/json', body: await r.text() })
-  })
-  await page.route('**/api/**', async (route) => {
-    const u = new URL(route.request().url())
-    const r = await fetch(origin + u.pathname + u.search, {
-      method: route.request().method(),
-      headers: { Origin: origin, 'Content-Type': 'application/json' },
-      ...(route.request().method() === 'POST' ? { body: route.request().postData() } : {}),
+    await page.route('**/api/**', async (route) => {
+      const u = new URL(route.request().url())
+      const r = await fetch(origin + u.pathname + u.search, {
+        method: route.request().method(),
+        headers: { Origin: origin, 'Content-Type': 'application/json' },
+        ...(route.request().method() === 'POST' ? { body: route.request().postData() } : {}),
+      })
+      await route.fulfill({
+        status: r.status,
+        contentType: 'application/json',
+        body: await r.text(),
+      })
     })
-    await route.fulfill({ status: r.status, contentType: 'application/json', body: await r.text() })
-  })
-  await page.addInitScript(
-    ({ creator }) => {
-      localStorage.setItem('hooker_vamp_access_v1', '1')
-      window.__sends = JSON.parse(sessionStorage.getItem('test-sends') || '[]')
-      window.__rejectNext = false
-      const provider = {
-        on() {},
-        removeListener() {},
-        async request({ method, params }) {
-          if (method === 'eth_accounts' || method === 'eth_requestAccounts') return [creator]
-          if (method === 'eth_chainId') return '0x13b2'
-          if (method === 'eth_sendTransaction') {
-            if (window.__rejectNext) {
-              window.__rejectNext = false
-              throw { code: 4001, message: 'User rejected' }
+    await page.addInitScript(
+      ({ creator }) => {
+        localStorage.setItem('hooker_vamp_access_v1', '1')
+        window.__sends = JSON.parse(sessionStorage.getItem('test-sends') || '[]')
+        window.__rejectNext = false
+        const provider = {
+          on() {},
+          removeListener() {},
+          async request({ method, params }) {
+            if (method === 'eth_accounts' || method === 'eth_requestAccounts') return [creator]
+            if (method === 'eth_chainId') return '0x13b2'
+            if (method === 'eth_sendTransaction') {
+              if (window.__rejectNext) {
+                window.__rejectNext = false
+                throw { code: 4001, message: 'User rejected' }
+              }
+              window.__sends.push(params[0])
+              sessionStorage.setItem('test-sends', JSON.stringify(window.__sends))
             }
-            window.__sends.push(params[0])
-            sessionStorage.setItem('test-sends', JSON.stringify(window.__sends))
-          }
-          const r = await fetch('/test-wallet-rpc', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params: params || [] }),
-          })
-          const body = await r.json()
-          if (body.error) throw body.error
-          return body.result
+            const r = await fetch('/test-wallet-rpc', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params: params || [] }),
+            })
+            const body = await r.json()
+            if (body.error) throw body.error
+            return body.result
+          },
+        }
+        window.ethereum = provider
+      },
+      { creator },
+    )
+    await page.goto('/create')
+    await page.getByRole('button', { name: 'Connect wallet', exact: true }).click()
+    await page.getByRole('button', { name: 'Browser wallet', exact: true }).click()
+    await expect(page.getByRole('dialog')).toContainText(new RegExp(creator, 'i'))
+    await page.getByRole('button', { name: 'Close dialog' }).click()
+    await page.getByRole('button', { name: /Continue/ }).click()
+    if (customHook) {
+      await page.getByRole('button', { name: /Build a custom hook/ }).click()
+      await page.getByRole('button', { name: 'Install Fee burn', exact: true }).click()
+      await page.getByRole('button', { name: 'Install Holder rewards', exact: true }).click()
+      await page.getByRole('button', { name: 'Review hook build', exact: true }).click()
+      await expect(
+        page.getByRole('button', { name: 'Confirm & build hook', exact: true }),
+      ).toBeVisible({ timeout: 60000 })
+      await page.evaluate(() => (window.__rejectNext = true))
+      await page.getByRole('button', { name: 'Confirm & build hook', exact: true }).click()
+      await expect(page.getByRole('alert')).toContainText('declined')
+      holdReceipts = true
+      await page.getByRole('button', { name: 'Confirm & build hook', exact: true }).click()
+      await expect(page.getByRole('link', { name: 'View submitted transaction' })).toBeVisible()
+      await page.reload()
+      holdReceipts = false
+      await page.getByRole('button', { name: /Continue/ }).click()
+      await page.getByRole('button', { name: 'Check confirmation', exact: true }).click()
+      await expect(page.getByText('Ready for Stage 3', { exact: true })).toBeVisible({
+        timeout: 20000,
+      })
+      await page.getByRole('button', { name: 'Connect wallet', exact: true }).click()
+      await page.getByRole('button', { name: 'Browser wallet', exact: true }).click()
+      await page.getByRole('button', { name: 'Close dialog' }).click()
+      // Editing invalidates the selection. Restoring a built recipe reuses it without another transaction.
+      await page.getByRole('button', { name: 'Remove Fee burn', exact: true }).click()
+      await page.getByRole('button', { name: /Continue/ }).click()
+      await expect(page.getByRole('alert')).toContainText('Build or select')
+      await page.getByRole('button', { name: 'Install Fee burn', exact: true }).click()
+      await page.getByRole('button', { name: 'Review hook build', exact: true }).click()
+      await page.getByRole('button', { name: 'Use existing hook', exact: true }).click()
+      await page.screenshot({ path: 'artifacts/hook-builder/confirmed.png', fullPage: true })
+    }
+    await page.getByRole('button', { name: /Continue/ }).click()
+    await page.getByLabel('Token name', { exact: false }).fill('Lifecycle Brew')
+    await page.getByLabel('Ticker symbol', { exact: false }).fill('BREW')
+    await page
+      .getByLabel('Description', { exact: false })
+      .fill('Local test token backed by real Uniswap V4 pool events.')
+    await page.getByRole('button', { name: /Continue/ }).click()
+    await page.getByLabel('Founder buy', { exact: false }).fill('25')
+    await page.getByRole('button', { name: /^Linear 24h/ }).click()
+    await page.getByRole('button', { name: 'Review launch', exact: true }).click()
+    await page.getByRole('button', { name: 'Simulate launch & refresh costs' }).click()
+    await page.getByRole('button', { name: 'Approve founder buy', exact: true }).click()
+    await expect(page.getByText('Confirmed on Arc.', { exact: true })).toBeVisible({
+      timeout: 15000,
+    })
+    await page.getByRole('button', { name: 'Simulate launch & refresh costs' }).click()
+    await expect(page.getByRole('button', { name: /Confirm & launch token/ })).toBeVisible()
+    holdReceipts = true
+    await page.getByRole('button', { name: /Confirm & launch token/ }).click()
+    await expect(page.getByRole('link', { name: 'View submitted transaction' })).toBeVisible()
+    await page.reload()
+    holdReceipts = false
+    await page.getByRole('button', { name: 'Check confirmation', exact: true }).click()
+    await expect(page).toHaveURL(/\/token\/0x[\da-f]{40}/i, { timeout: 20000 })
+    const address = new URL(page.url()).pathname.split('/').at(-1)
+    await expect(page.getByRole('heading', { name: 'Lifecycle Brew', exact: true })).toBeVisible({
+      timeout: 30000,
+    })
+    await expect
+      .poll(
+        async () =>
+          (await apiCall(`/api/tokens/${address}`).catch(() => null))?.token?.tradeCount || 0,
+        {
+          timeout: 15000,
         },
-      }
-      window.ethereum = provider
-    },
-    { creator },
-  )
-  await page.goto('/create')
-  await page.getByRole('button', { name: 'Connect wallet', exact: true }).click()
-  await page.getByRole('button', { name: 'Browser wallet', exact: true }).click()
-  await expect(page.getByRole('dialog')).toContainText(new RegExp(creator, 'i'))
-  await page.getByRole('button', { name: 'Close dialog' }).click()
-  await page.getByRole('button', { name: /Continue/ }).click()
-  await page.getByRole('button', { name: /Continue/ }).click()
-  await page.getByLabel('Token name', { exact: false }).fill('Lifecycle Brew')
-  await page.getByLabel('Ticker symbol', { exact: false }).fill('BREW')
-  await page
-    .getByLabel('Description', { exact: false })
-    .fill('Local test token backed by real Uniswap V4 pool events.')
-  await page.getByRole('button', { name: /Continue/ }).click()
-  await page.getByLabel('Founder buy', { exact: false }).fill('25')
-  await page.getByRole('button', { name: /^Linear 24h/ }).click()
-  await page.getByRole('button', { name: 'Review launch', exact: true }).click()
-  await page.getByRole('button', { name: 'Simulate launch & refresh costs' }).click()
-  await page.getByRole('button', { name: 'Approve founder buy', exact: true }).click()
-  await expect(page.getByText('Confirmed on Arc.', { exact: true })).toBeVisible({ timeout: 15000 })
-  await page.getByRole('button', { name: 'Simulate launch & refresh costs' }).click()
-  await expect(page.getByRole('button', { name: /Confirm & launch token/ })).toBeVisible()
-  holdReceipts = true
-  await page.getByRole('button', { name: /Confirm & launch token/ }).click()
-  await expect(page.getByRole('link', { name: 'View submitted transaction' })).toBeVisible()
-  await page.reload()
-  holdReceipts = false
-  await page.getByRole('button', { name: 'Check confirmation', exact: true }).click()
-  await expect(page).toHaveURL(/\/token\/0x[\da-f]{40}/i, { timeout: 20000 })
-  const address = new URL(page.url()).pathname.split('/').at(-1)
-  await expect(page.getByRole('heading', { name: 'Lifecycle Brew', exact: true })).toBeVisible({
-    timeout: 30000,
-  })
-  await expect
-    .poll(async () => app.indexer.token(address)?.tradeCount || 0, { timeout: 15000 })
-    .toBe(1)
-  await page.getByRole('button', { name: 'Connect wallet', exact: true }).first().click()
-  await page.getByRole('button', { name: 'Browser wallet', exact: true }).click()
-  await expect(page.getByRole('dialog')).toContainText(new RegExp(creator, 'i'))
-  await page.getByRole('button', { name: 'Close dialog' }).click()
-  await page.getByLabel('Amount of USDC to buy with').fill('2')
-  await expect(page.getByRole('button', { name: 'Approve USDC', exact: true })).toBeEnabled()
-  await page.getByRole('button', { name: 'Approve USDC', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'Review buy', exact: true })).toBeEnabled({
-    timeout: 15000,
-  })
-  await page.getByRole('button', { name: 'Review buy', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'Confirm buy', exact: true })).toBeVisible()
-  // Rejected signatures must leave balances unchanged and allow a deliberate retry.
-  await page.evaluate(() => (window.__rejectNext = true))
-  await page.getByRole('button', { name: 'Confirm buy', exact: true }).click()
-  await expect(page.getByRole('alert')).toContainText('declined')
-  expect(
-    await client.readContract({
+      )
+      .toBe(1)
+    await page.getByRole('button', { name: 'Connect wallet', exact: true }).first().click()
+    await page.getByRole('button', { name: 'Browser wallet', exact: true }).click()
+    await expect(page.getByRole('dialog')).toContainText(new RegExp(creator, 'i'))
+    await page.getByRole('button', { name: 'Close dialog' }).click()
+    await page.getByLabel('Amount of USDC to buy with').fill('2')
+    await expect(page.getByRole('button', { name: 'Approve USDC', exact: true })).toBeEnabled()
+    await page.getByRole('button', { name: 'Approve USDC', exact: true }).click()
+    await expect(page.getByRole('button', { name: 'Review buy', exact: true })).toBeEnabled({
+      timeout: 15000,
+    })
+    await page.getByRole('button', { name: 'Review buy', exact: true }).click()
+    await expect(page.getByRole('button', { name: 'Confirm buy', exact: true })).toBeVisible()
+    // Rejected signatures must leave balances unchanged and allow a deliberate retry.
+    await page.evaluate(() => (window.__rejectNext = true))
+    await page.getByRole('button', { name: 'Confirm buy', exact: true }).click()
+    await expect(page.getByRole('alert')).toContainText('declined')
+    expect(
+      await client.readContract({
+        address,
+        abi: erc20Abi,
+        functionName: 'balanceOf',
+        args: [creator],
+      }),
+    ).toBe(0n)
+    await page.getByRole('button', { name: 'Confirm buy', exact: true }).click()
+    await expect
+      .poll(
+        () =>
+          client.readContract({
+            address,
+            abi: erc20Abi,
+            functionName: 'balanceOf',
+            args: [creator],
+          }),
+        { timeout: 15000 },
+      )
+      .toBeGreaterThan(0n)
+    await expect(page.getByText('Confirmed on Arc.', { exact: true })).toBeVisible({
+      timeout: 15000,
+    })
+    await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }))
+    await page.screenshot({ path: 'artifacts/product-build/terminal-desktop.png', fullPage: true })
+    const before = await client.readContract({
       address,
       abi: erc20Abi,
       functionName: 'balanceOf',
       args: [creator],
-    }),
-  ).toBe(0n)
-  await page.getByRole('button', { name: 'Confirm buy', exact: true }).click()
-  await expect
-    .poll(
-      () =>
-        client.readContract({ address, abi: erc20Abi, functionName: 'balanceOf', args: [creator] }),
-      { timeout: 15000 },
-    )
-    .toBeGreaterThan(0n)
-  await expect(page.getByText('Confirmed on Arc.', { exact: true })).toBeVisible({ timeout: 15000 })
-  await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }))
-  await page.screenshot({ path: 'artifacts/product-build/terminal-desktop.png', fullPage: true })
-  const before = await client.readContract({
-    address,
-    abi: erc20Abi,
-    functionName: 'balanceOf',
-    args: [creator],
+    })
+    await page.getByRole('button', { name: 'Sell', exact: true }).click()
+    await expect(page.getByRole('button', { name: '25%', exact: true })).toBeEnabled()
+    await page.getByRole('button', { name: '25%', exact: true }).click()
+    await expect(page.getByRole('button', { name: 'Approve BREW', exact: true })).toBeEnabled()
+    await page.getByRole('button', { name: 'Approve BREW', exact: true }).click()
+    await expect(page.getByRole('button', { name: 'Review sell', exact: true })).toBeEnabled({
+      timeout: 15000,
+    })
+    await page.getByRole('button', { name: 'Review sell', exact: true }).click()
+    await page.getByRole('button', { name: 'Confirm sell', exact: true }).click()
+    await expect
+      .poll(
+        () =>
+          client.readContract({
+            address,
+            abi: erc20Abi,
+            functionName: 'balanceOf',
+            args: [creator],
+          }),
+        { timeout: 15000 },
+      )
+      .toBeLessThan(before)
+    await expect(page.getByText('Confirmed on Arc.', { exact: true })).toBeVisible({
+      timeout: 15000,
+    })
+    await page.getByRole('tab', { name: 'Creator & vesting' }).click()
+    await expect(page.getByRole('heading', { name: 'Creator rewards & vesting' })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Harvest pool fees' })).toBeEnabled()
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.getByRole('tab', { name: 'Recent trades' }).click()
+    await expect
+      .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
+      .toBe(true)
+    await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }))
+    await page.screenshot({ path: 'artifacts/product-build/terminal-mobile.png', fullPage: true })
+    expect(errors).toEqual([])
+    const sends = await page.evaluate(() => window.__sends)
+    expect(sends).toHaveLength(customHook ? 7 : 6)
+    expect(sends.every((tx) => tx.from.toLowerCase() === creator.toLowerCase())).toBe(true)
+    expect(config.treasury.toLowerCase()).not.toBe('0x2e01dd8df4a4fb06ea62a944a658e9ae01db2ac4') // local fixture treasury only
   })
-  await page.getByRole('button', { name: 'Sell', exact: true }).click()
-  await expect(page.getByRole('button', { name: '25%', exact: true })).toBeEnabled()
-  await page.getByRole('button', { name: '25%', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'Approve BREW', exact: true })).toBeEnabled()
-  await page.getByRole('button', { name: 'Approve BREW', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'Review sell', exact: true })).toBeEnabled({
-    timeout: 15000,
-  })
-  await page.getByRole('button', { name: 'Review sell', exact: true }).click()
-  await page.getByRole('button', { name: 'Confirm sell', exact: true }).click()
-  await expect
-    .poll(
-      () =>
-        client.readContract({ address, abi: erc20Abi, functionName: 'balanceOf', args: [creator] }),
-      { timeout: 15000 },
-    )
-    .toBeLessThan(before)
-  await expect(page.getByText('Confirmed on Arc.', { exact: true })).toBeVisible({ timeout: 15000 })
-  await page.getByRole('tab', { name: 'Creator & vesting' }).click()
-  await expect(page.getByRole('heading', { name: 'Creator rewards & vesting' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Harvest pool fees' })).toBeEnabled()
-  await page.setViewportSize({ width: 390, height: 844 })
-  await page.getByRole('tab', { name: 'Recent trades' }).click()
-  await expect
-    .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
-    .toBe(true)
-  await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }))
-  await page.screenshot({ path: 'artifacts/product-build/terminal-mobile.png', fullPage: true })
-  expect(errors).toEqual([])
-  const sends = await page.evaluate(() => window.__sends)
-  expect(sends).toHaveLength(6)
-  expect(sends.every((tx) => tx.from.toLowerCase() === creator.toLowerCase())).toBe(true)
-  expect(config.treasury.toLowerCase()).not.toBe('0x2e01dd8df4a4fb06ea62a944a658e9ae01db2ac4') // local fixture treasury only
-})

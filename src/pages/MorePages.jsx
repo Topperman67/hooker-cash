@@ -175,9 +175,13 @@ export function DocsPage() {
         <h2>Current scope</h2>
         <p>
           This build covers launches, token branding, recipient splits, vesting, creator claims,
-          indexed markets, charts and spot trading. The original project’s eight-module builder,
-          reflection and buyback modules, managed external LP positions, leveraged markets, and
-          transaction-capable MCP service remain separate backlog items.
+          indexed markets, charts and spot trading. Stage 2 includes an immutable custom-hook
+          builder with buy spacing, rising buy caps, price history, fee burning, USDC holder
+          rewards, buybacks and liquidity reinvestment. Each new recipe deploys its own hook and
+          router in one wallet transaction. Existing recipes can be reused without redeployment.
+          Market modules require 30 minutes of price history and a bounded price check. External LP
+          management, leveraged markets and transaction-capable agent services remain separate
+          backlog items.
         </p>
         <h2>Hosting</h2>
         <p>

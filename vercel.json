@@ -5,7 +5,7 @@
   "framework": null,
   "functions": {
     "api/[[...path]].js": {
-      "includeFiles": "{server/**,src/generated/**,public/protocol/**}",
+      "includeFiles": "{server/**,src/generated/**,src/lib/hookRecipe.js,public/protocol/**}",
       "memory": 1024,
       "maxDuration": 60
     }

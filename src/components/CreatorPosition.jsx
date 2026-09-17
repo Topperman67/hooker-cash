@@ -15,12 +15,13 @@ import { useTransaction } from '../lib/useTransaction'
 import { number, short } from '../lib/api'
 import { Button } from './UI'
 import TransactionStatus from './TransactionStatus'
-export default function CreatorPosition({ token }) {
+export default function CreatorPosition({ token, deployment }) {
   const wallet = useWallet(),
-    { deployment: d } = usePlatform(),
+    platform = usePlatform(),
     [position, setPosition] = useState(null),
     [error, setError] = useState(''),
     [version, setVersion] = useState(0)
+  const d = deployment || platform.deployment
   const tx = useTransaction(`rewards:${token.address.toLowerCase()}`, () =>
     setVersion((v) => v + 1),
   )
@@ -64,8 +65,20 @@ export default function CreatorPosition({ token }) {
             protocol = { tokenFees, quoteFees }
           }
         }
+        let modules = null
+        if (d.abiVersion === 'hookbrew-modular-v1') {
+          const [rewards, buyback, tokenLiquidity, quoteLiquidity] = await Promise.all([
+            wallet.account
+              ? read(token.address, abis.HookbrewRewardToken, 'pendingReward', [wallet.account])
+              : 0n,
+            read(d.factory, abis.HookbrewModularFactory, 'buybackReserve', [token.address]),
+            read(d.factory, abis.HookbrewModularFactory, 'liquidityTokens', [token.address]),
+            read(d.factory, abis.HookbrewModularFactory, 'liquidityQuote', [token.address]),
+          ])
+          modules = { rewards, buyback, tokenLiquidity, quoteLiquidity }
+        }
         if (active) {
-          setPosition({ recipients, personal, protocol })
+          setPosition({ recipients, personal, protocol, modules })
           setError('')
         }
       } catch (e) {
@@ -83,19 +96,26 @@ export default function CreatorPosition({ token }) {
     await tx.run(async (status) => {
       await verifyDeployment(d)
       const request =
-        kind === 'release'
+        kind === 'claimRewards'
           ? {
-              address: d.vesting,
-              abi: abis.HookbrewVesting,
-              functionName: 'release',
-              args: [token.address, wallet.account],
-            }
-          : {
-              address: d.factory,
-              abi: abis.HookbrewFactory,
+              address: token.address,
+              abi: abis.HookbrewRewardToken,
               functionName: kind,
-              args: kind === 'claim' ? [token.address, wallet.account] : [token.address],
+              args: [wallet.account],
             }
+          : kind === 'release'
+            ? {
+                address: d.vesting,
+                abi: abis.HookbrewVesting,
+                functionName: 'release',
+                args: [token.address, wallet.account],
+              }
+            : {
+                address: d.factory,
+                abi: kind === 'executeModules' ? abis.HookbrewModularFactory : abis.HookbrewFactory,
+                functionName: kind,
+                args: kind === 'claim' ? [token.address, wallet.account] : [token.address],
+              }
       const checked = await simulate(wallet, request)
       status('Confirm in your wallet.')
       return { hash: await send(wallet, checked.request), ...transactionIdentity(wallet, request) }
@@ -107,8 +127,10 @@ export default function CreatorPosition({ token }) {
     <div className="creator-position">
       <h3>Creator rewards & vesting</h3>
       <p>
-        70% of seed-position fees is shared between these recipients. Harvest first to move accrued
-        pool fees into claimable balances.
+        {d?.recipe
+          ? 'Your hook allocates modules from the 70% creator share, then routes the remainder to these recipients.'
+          : '70% of seed-position fees is shared between these recipients.'}{' '}
+        Harvest first to collect accrued pool fees.
       </p>
       <div className="recipient-chips">
         {position?.recipients.map((s) => (
@@ -166,6 +188,48 @@ export default function CreatorPosition({ token }) {
           Release vested tokens
         </Button>
       </div>
+      {position?.modules && (
+        <div className="trade-review">
+          <h3>Hook modules</h3>
+          {d.recipe.rewardBps > 0 && (
+            <>
+              <p>Your holder rewards: {number(formatUnits(position.modules.rewards, 6), 6)} USDC</p>
+              <Button
+                disabled={disabled || !position.modules.rewards}
+                onClick={() => action('claimRewards')}
+              >
+                Claim holder rewards
+              </Button>
+            </>
+          )}
+          {(d.recipe.buybackBps > 0 || d.recipe.liquidityBps > 0) && (
+            <>
+              <p>
+                Buyback reserve: {number(formatUnits(position.modules.buyback, 6), 6)} USDC.
+                Liquidity reserve: {number(formatUnits(position.modules.quoteLiquidity, 6), 6)} USDC
+                + {number(formatUnits(position.modules.tokenLiquidity, 18), 4)} {token.symbol}.
+              </p>
+              <p className="fine-print">
+                Execution requires 30 minutes of price history and spot price within the permitted
+                band. Unspent funds remain reserved for this token.
+              </p>
+              <Button
+                disabled={
+                  disabled ||
+                  !(
+                    position.modules.buyback ||
+                    position.modules.tokenLiquidity ||
+                    position.modules.quoteLiquidity
+                  )
+                }
+                onClick={() => action('executeModules')}
+              >
+                Execute funded modules
+              </Button>
+            </>
+          )}
+        </div>
+      )}
       {position?.protocol && (
         <div className="trade-review">
           <h3>Protocol treasury</h3>

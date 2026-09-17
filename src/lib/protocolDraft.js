@@ -1,3 +1,4 @@
+import { normalizeRecipe, recipeHash, recipeGuard } from './hookRecipe.js'
 import { getAddress, isAddress, parseUnits, zeroAddress } from 'viem'
 const same = (a, b) => String(a).toLowerCase() === String(b).toLowerCase()
 export const defaultDraft = {
@@ -13,6 +14,7 @@ export const defaultDraft = {
   initialBuy: '',
   slippage: '1',
   guarded: false,
+  hook: null,
   window: '300',
   startCap: '1',
   endCap: '10',
@@ -119,7 +121,13 @@ export function validateDraft(d, stage = 4) {
   if (mcap < 2000_000000n || mcap > 10000_000000n)
     throw Error('Opening market cap must be 2,000–10,000 USDC.')
   if (stage < 1) return
+  if (d.hook?.mode === 'custom') {
+    normalizeRecipe(d.hook.recipe)
+    if (!d.hook.deployment || d.hook.deployment.recipeHash !== recipeHash(d.hook.recipe))
+      throw Error('Build or select your custom hook before continuing to Token.')
+  }
   if (
+    d.hook?.mode !== 'custom' &&
     d.guarded &&
     (!Number.isInteger(Number(d.window)) ||
       Number(d.window) < 1 ||
@@ -193,14 +201,17 @@ export function launchParams(d, uri, salt, minTokensOut = 0n, creator) {
     targetMcap: amount(openingMarketCap(d)),
     initialBuy: Number(d.initialBuy) ? amount(d.initialBuy) : 0n,
     minTokensOut,
-    guard: d.guarded
-      ? {
-          window: Number(d.window),
-          startCapBps: Math.round(Number(d.startCap) * 100),
-          endCapBps: Math.round(Number(d.endCap) * 100),
-          interval: Number(d.interval),
-        }
-      : { window: 0, startCapBps: 0, endCapBps: 0, interval: 0 },
+    guard:
+      d.hook?.mode === 'custom'
+        ? recipeGuard(normalizeRecipe(d.hook.recipe))
+        : d.guarded
+          ? {
+              window: Number(d.window),
+              startCapBps: Math.round(Number(d.startCap) * 100),
+              endCapBps: Math.round(Number(d.endCap) * 100),
+              interval: Number(d.interval),
+            }
+          : { window: 0, startCapBps: 0, endCapBps: 0, interval: 0 },
     splits: splits.map((s) => ({
       wallet: getAddress(s.wallet),
       bps: Math.round(Number(s.percent) * 100),

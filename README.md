@@ -94,7 +94,7 @@ The browser lifecycle suite starts its own local Hardhat chain on port 8547, dep
 - `src/lib/protocol*`: transaction and validation adapters; `src/components/LaunchStudio.jsx` and `src/pages/TokenTerminal.jsx`: product workflows.
 - `src/config/launchDeployment.js`: separate, unset historical Hooker V10 adapter. It is not the Hookbrew v1 configuration.
 
-The original eight-module builder, reflections/buybacks, external LP position management, leveraged markets, and transaction-capable MCP service remain backlog work. See [the build notes](docs/HOOKBREW_V1.md), [reference audit](docs/FEATURE_PARITY_AUDIT.md) and [parity backlog](docs/FEATURE_BACKLOG.md). Historical original-contract research stays in `contracts/review`; those contracts and fee destinations are not adopted.
+Stage 2 now includes a seven-module custom-hook builder with one-transaction deployment, persistent recipe reuse, holder rewards, fee burning, buybacks and liquidity reinvestment. See [the builder contracts and flow](docs/HOOK_BUILDER.md). External LP position management, leveraged markets, and transaction-capable MCP service remain backlog work. See [the build notes](docs/HOOKBREW_V1.md), [reference audit](docs/FEATURE_PARITY_AUDIT.md) and [parity backlog](docs/FEATURE_BACKLOG.md). Historical original-contract research stays in `contracts/review`; those contracts and fee destinations are not adopted.
 
 ## Attribution
 

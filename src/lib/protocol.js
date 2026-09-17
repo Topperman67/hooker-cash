@@ -37,7 +37,7 @@ export async function checkWallet(wallet) {
   return createWalletClient({ chain: arc, account: wallet.account, transport: custom(provider) })
 }
 export async function verifyDeployment(d) {
-  if (!d || d.abiVersion !== 'hookbrew-v1' || d.chainId !== arc.id)
+  if (!d || !['hookbrew-v1', 'hookbrew-modular-v1'].includes(d.abiVersion) || d.chainId !== arc.id)
     throw Error('Deploy and activate Hookbrew v1 before submitting transactions.')
   if ((await publicClient.getChainId()) !== d.chainId) throw Error('RPC network mismatch.')
   const [fc, rc, treasury, quote, factory] = await Promise.all([

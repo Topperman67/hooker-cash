@@ -125,6 +125,21 @@ export function createIndexer({ client, config, abi, dataDir, store }) {
           }
         }
         const tokens = Object.values(batchState.tokens)
+        if (config.abiVersion === 'hookbrew-modular-v1') {
+          for (const token of tokens)
+            batchState.tokens[token.address.toLowerCase()] = {
+              ...token,
+              totalSupply: formatUnits(
+                await client.readContract({
+                  address: token.address,
+                  abi: erc20Abi,
+                  functionName: 'totalSupply',
+                  blockNumber: toBlock,
+                }),
+                18,
+              ),
+            }
+        }
         if (tokens.length) {
           const identities = new Map(tokens.map((t) => [t.poolId.toLowerCase(), t])),
             timestamps = new Map(),
