@@ -553,7 +553,11 @@ export function ReviewStep({ draft, platform, wallet, go }) {
             </button>
           </div>
           {group.title === 'Token' && draft.image && (
-            <img className="launch-flow-review-art" src={safeLink(draft.image)} alt="Token artwork" />
+            <img
+              className="launch-flow-review-art"
+              src={safeLink(draft.image)}
+              alt="Token artwork"
+            />
           )}
           <dl className="review-list">
             {group.rows.map(([label, value]) => (

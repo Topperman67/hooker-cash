@@ -592,3 +592,86 @@ test('wrong RPC chain is an error, not a connected Arc status', async ({ page })
   await expect(page.locator('.sidebar-network-block')).toContainText('—')
   await expect(page.getByRole('button', { name: 'Retry network' })).toBeVisible()
 })
+
+test('homepage and market render uploaded token icons with a safe missing-image fallback', async ({
+  page,
+}) => {
+  await unlock(page)
+  let restored = false
+  const artwork = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lWQAAAAASUVORK5CYII=',
+    'base64',
+  )
+  const tokens = [
+    {
+      address: tokenAddress,
+      name: 'Artwork Brew',
+      symbol: 'ART',
+      metadata: { image: 'http://127.0.0.1:4173/media/artwork-test.png' },
+    },
+    {
+      address: account,
+      name: 'Broken Artwork',
+      symbol: 'BAD',
+      metadata: { image: 'http://127.0.0.1:4173/media/missing-test.png' },
+    },
+    {
+      address: '0x3333333333333333333333333333333333333333',
+      name: 'No Artwork',
+      symbol: 'NONE',
+      metadata: null,
+    },
+    {
+      address: '0x4444444444444444444444444444444444444444',
+      name: 'Unsafe Artwork',
+      symbol: 'SAFE',
+      metadata: { image: 'javascript:alert(1)' },
+    },
+  ]
+  await page.route('**/api/market?**', (route) =>
+    route.fulfill({ json: { items: tokens, total: 4, deployment: true } }),
+  )
+  await page.route('**/media/artwork-test.png', (route) =>
+    route.fulfill({
+      contentType: 'image/png',
+      body: Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lWQAAAAASUVORK5CYII=',
+        'base64',
+      ),
+    }),
+  )
+  await page.route('**/media/missing-test.png', (route) =>
+    route.fulfill(
+      restored ? { contentType: 'image/png', body: artwork } : { status: 404, body: '' },
+    ),
+  )
+  for (const path of ['/', '/market']) {
+    await page.goto(path)
+    const good = page.getByRole('link', { name: 'Artwork Brew ART', exact: true })
+    await expect(good.locator('img')).toBeVisible()
+    await expect
+      .poll(() => good.locator('img').evaluate((image) => image.complete && image.naturalWidth > 0))
+      .toBe(true)
+    await expect(
+      page
+        .getByRole('link', { name: 'Broken Artwork BAD', exact: true })
+        .locator('.token-initials'),
+    ).toHaveText('BA')
+    await expect(
+      page.getByRole('link', { name: 'No Artwork NONE', exact: true }).locator('.token-initials'),
+    ).toHaveText('NO')
+    await expect(
+      page
+        .getByRole('link', { name: 'Unsafe Artwork SAFE', exact: true })
+        .locator('.token-initials'),
+    ).toHaveText('SA')
+  }
+  restored = true
+  const recovered = page
+    .getByRole('link', { name: 'Broken Artwork BAD', exact: true })
+    .locator('img')
+  await expect(recovered).toBeVisible({ timeout: 15000 })
+  await expect
+    .poll(() => recovered.evaluate((image) => image.complete && image.naturalWidth > 0))
+    .toBe(true)
+})

@@ -100,6 +100,61 @@ test('metadata remains accessible from another instance and after a cold start',
     for (let i = 0; i < 6; i++) assert.equal((await call(path)).data.name, 'Brew')
   })
 })
+
+test('market listings include stored token artwork and tolerate missing metadata', async () => {
+  await fixture(async ({ call, store, origin }) => {
+    await store.set('deployment', deployment)
+    const image = await call('/api/media', {
+      data: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lWQAAAAASUVORK5CYII=',
+    })
+    const metadata = await call('/api/metadata', {
+      name: 'Artwork Brew',
+      symbol: 'ART',
+      image: image.data.url,
+    })
+    assert.equal(metadata.status, 201)
+    const address = `0x${'55'.repeat(20)}`,
+      missing = `0x${'66'.repeat(20)}`
+    const token = {
+      address,
+      name: 'Artwork Brew',
+      symbol: 'ART',
+      creator: treasury,
+      metadataURI: metadata.data.uri,
+      initialPrice: 0.000005,
+      totalSupply: '1000000000',
+      createdAt: 1,
+      fee: 10000,
+    }
+    await store.set(`index:${deployment.chainId}:${deployment.factory.toLowerCase()}`, {
+      factory: deployment.factory,
+      chainId: deployment.chainId,
+      cursor: 1,
+      tokens: {
+        [address]: token,
+        [missing]: { ...token, address: missing, metadataURI: 'https://example.com/missing.json' },
+      },
+      trades: {},
+    })
+    const market = await call('/api/market')
+    assert.equal(market.status, 200)
+    assert.equal(
+      market.data.items.find((t) => t.address === address).metadata.image,
+      image.data.url,
+    )
+    assert.equal(market.data.items.find((t) => t.address === missing).metadata, null)
+    const detail = await call(`/api/tokens/${address}`)
+    assert.equal(detail.data.token.metadata.image, image.data.url)
+    assert.equal((await fetch(origin + new URL(image.data.url).pathname)).status, 200)
+    const deletedDraftImage = await call('/api/metadata', {
+      name: 'Missing',
+      symbol: 'MISS',
+      image: `${origin}/media/${'a'.repeat(64)}.png`,
+    })
+    assert.equal(deletedDraftImage.status, 400)
+    assert.match(deletedDraftImage.data.error, /Upload it again/)
+  })
+})
 test('unconfigured Vercel storage blocks activation and uploads before signatures or transactions', async () => {
   await fixture(
     async ({ call }) => {

@@ -1,7 +1,8 @@
-import { useEffect, useId, useRef } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { X } from 'lucide-react'
 import Glass from './Glass'
+import { safeLink } from '../lib/api'
 
 export function Button({ to, children, primary = false, className = '', ...props }) {
   return (
@@ -67,9 +68,26 @@ export function PageHeading({ title, description, action }) {
 }
 
 export function TokenAvatar({ token, small = false }) {
+  const [failedToken, setFailedToken] = useState(null)
+  const image = safeLink(token.metadata?.image || token.image)
+  // A refreshed market record retries artwork after a temporary delivery failure.
+  const hasImage = image && token !== failedToken
   return (
-    <span className={`token-avatar token-initials ${small ? 'small' : ''}`} aria-hidden="true">
-      {(token.symbol || token.name || '?').slice(0, 2).toUpperCase()}
+    <span
+      className={`token-avatar ${hasImage ? 'token-artwork' : 'token-initials'} ${small ? 'small' : ''}`}
+      aria-hidden="true"
+    >
+      {hasImage ? (
+        <img
+          key={image}
+          src={image}
+          alt=""
+          decoding="async"
+          onError={() => setFailedToken(token)}
+        />
+      ) : (
+        (token.symbol || token.name || '?').slice(0, 2).toUpperCase()
+      )}
     </span>
   )
 }

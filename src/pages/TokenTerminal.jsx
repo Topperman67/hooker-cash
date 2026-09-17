@@ -78,11 +78,7 @@ export default function TokenTerminal() {
       </Link>
       <div className="terminal-header">
         <div className="terminal-identity">
-          {safeLink(metadata.image) ? (
-            <img src={metadata.image} alt="" className="terminal-avatar" />
-          ) : (
-            <TokenAvatar token={token} />
-          )}
+          <TokenAvatar token={token} />
           <div>
             <div className="product-inline">
               <h1>{token.name}</h1>

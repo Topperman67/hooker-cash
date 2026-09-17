@@ -919,6 +919,10 @@ b {
   height: 100%;
   object-fit: contain;
 }
+.token-artwork {
+  overflow: hidden;
+  border-radius: 10px;
+}
 .token-avatar.small {
   width: 34px;
   height: 34px;

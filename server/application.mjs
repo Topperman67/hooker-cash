@@ -236,6 +236,18 @@ export async function createApplication(options = {}) {
     if (value === null) throw Object.assign(Error('Not found'), { code: 'ENOENT' })
     return Buffer.from(value, 'base64')
   }
+  async function tokenMetadata(token) {
+    try {
+      const url = new URL(token.metadataURI)
+      if (!/^\/media\/meta-[a-f0-9]{64}\.json$/.test(url.pathname)) return null
+      const metadata = JSON.parse(
+        (await readMedia(url.pathname.split('/').at(-1))).toString('utf8'),
+      )
+      return metadata && typeof metadata === 'object' && !Array.isArray(metadata) ? metadata : null
+    } catch {
+      return null
+    }
+  }
   async function middleware(req, res, next = () => json(res, 404, { error: 'Not found' })) {
     const url = new URL(req.url, 'http://hookbrew.local'),
       path = url.pathname
@@ -295,7 +307,12 @@ export async function createApplication(options = {}) {
         const offset = Math.max(0, Math.min(100000, Number(url.searchParams.get('offset')) || 0)),
           limit = 24
         return json(res, 200, {
-          items: tokens.slice(offset, offset + limit),
+          items: await Promise.all(
+            tokens.slice(offset, offset + limit).map(async (token) => ({
+              ...token,
+              metadata: await tokenMetadata(token),
+            })),
+          ),
           total: tokens.length,
           next: offset + limit < tokens.length ? offset + limit : null,
           deployment: !!config,
@@ -332,12 +349,7 @@ export async function createApplication(options = {}) {
             index: indexer.status(),
           })
         }
-        let metadata = null
-        try {
-          const u = new URL(token.metadataURI)
-          if (/^\/media\/meta-[a-f0-9]{64}\.json$/.test(u.pathname))
-            metadata = JSON.parse((await readMedia(u.pathname.split('/').at(-1))).toString('utf8'))
-        } catch {}
+        const metadata = await tokenMetadata(token)
         return json(res, 200, {
           token: { ...token, metadata },
           deployment: config,
@@ -394,6 +406,19 @@ export async function createApplication(options = {}) {
         for (const key of ['image', 'website', 'twitter', 'telegram'])
           if (data[key] && !/^https?:\/\//i.test(data[key]))
             throw Error('Links must use http or https.')
+        if (data.image) {
+          const uploaded = new URL(data.image).pathname.match(
+            /^\/media\/([a-f0-9]{64}\.(?:png|jpg|webp))$/,
+          )
+          if (uploaded) {
+            try {
+              await readMedia(uploaded[1])
+            } catch (error) {
+              if (error.code !== 'ENOENT') throw error
+              throw Error('Token artwork is no longer available. Upload it again before launching.')
+            }
+          }
+        }
         const bytes = Buffer.from(JSON.stringify(data)),
           name = 'meta-' + createHash('sha256').update(bytes).digest('hex') + '.json'
         await media(name, bytes)
