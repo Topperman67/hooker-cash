@@ -1,4 +1,5 @@
 import { test, expect } from '@playwright/test'
+import { defaultDraft } from '../src/lib/protocolDraft.js'
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem('hooker_vamp_access_v1', '1'))
@@ -73,8 +74,9 @@ test('five-step studio validates each stage, reviews exact choices and restores 
   )
   await shot(page, '05-review-desktop')
   await page.reload()
-  await expect(page.getByRole('heading', { name: 'Review your launch' })).toBeVisible()
-  await page.getByRole('button', { name: 'Edit token', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'The pool', exact: true })).toBeVisible()
+  await advance(page)
+  await advance(page)
   await expect(page.getByLabel('Token name', { exact: false })).toHaveValue('Moon Milk')
   expect(
     await page.evaluate(
@@ -83,6 +85,41 @@ test('five-step studio validates each stage, reviews exact choices and restores 
   ).toBe('30')
   expect(errors).toEqual([])
 })
+
+for (const [savedKey, savedStep] of [
+  ['hookbrew:launch-step:v1', '0'],
+  ['hookbrew:launch-step:v2', '2'],
+  ['hookbrew:launch-step:v2', '4'],
+]) {
+  test(`launch entry starts at Pool despite saved ${savedKey}=${savedStep}`, async ({ page }) => {
+    await page.addInitScript(
+      ({ savedKey, savedStep, draft }) => {
+        localStorage.setItem('hookbrew:launch-draft:v1', JSON.stringify(draft))
+        localStorage.setItem(savedKey, savedStep)
+      },
+      { savedKey, savedStep, draft: { ...defaultDraft, name: 'Saved Brew', symbol: 'BREW' } },
+    )
+    await page.goto('/')
+    await page.getByRole('link', { name: 'Launch a token', exact: true }).click()
+    await expect(page.getByRole('heading', { name: 'The pool', exact: true })).toBeVisible()
+    await expect(
+      page.getByRole('navigation', { name: 'Launch steps' }).locator('[aria-current="step"]'),
+    ).toHaveText('1Pool')
+    await advance(page)
+    await expect(page.getByRole('heading', { name: 'Your hook', exact: true })).toBeVisible()
+    await advance(page)
+    await expect(page.getByLabel('Token name', { exact: true })).toHaveValue('Saved Brew')
+    await page
+      .getByRole('navigation', { name: 'Quick navigation' })
+      .getByRole('link', { name: 'Create a token', exact: true })
+      .click()
+    await expect(page.getByRole('heading', { name: 'The pool', exact: true })).toBeVisible()
+    await advance(page)
+    await advance(page)
+    await page.reload()
+    await expect(page.getByRole('heading', { name: 'The pool', exact: true })).toBeVisible()
+  })
+}
 
 test('all five stages work on mobile, including a solo creator custom vesting schedule', async ({
   page,

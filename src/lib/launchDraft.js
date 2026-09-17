@@ -30,21 +30,13 @@ export function restoreDraft(storage = localStorage) {
     return { ...defaultDraft }
   }
 }
-export function restoreStep(draft, storage = localStorage) {
+export function restoreStep(draft, { resumeReview = false } = {}) {
+  // Saved field values may be reused, but opening the studio always starts at Pool.
+  // Only the explicit return from deployment setup can resume a valid review.
+  if (!resumeReview) return 0
   try {
-    const current = storage.getItem(stepKey)
-    const legacy = storage.getItem(legacyStepKey)
-    const requested =
-      current !== null ? Number(current) : legacy !== null ? [2, 0, 1, 3, 4][Number(legacy)] : 0
-    if (!Number.isInteger(requested) || requested < 0 || requested > 4) return 0
-    for (let step = 0; step < requested; step++) {
-      try {
-        validateDraft(draft, step)
-      } catch {
-        return step
-      }
-    }
-    return requested
+    validateDraft(draft)
+    return 4
   } catch {
     return 0
   }

@@ -16,7 +16,7 @@ Factory and router are immutable. Deployment setup mines a valid CREATE2 salt, e
 
 ## Economics and contract behavior
 
-The launch studio follows **Pool → Hook → Token → Payouts → Review**. New drafts default to a 1% pool fee and an optional $5,000 starting market-cap target. Existing drafts retain their selected economics and migrate their saved step to the new sequence. The active factory supports USDC and the open/guarded V1 presets; extra quote assets, reflection/burn hooks, custom module composition and scheduled launches are not offered as executable options.
+The launch studio follows **Pool → Hook → Token → Payouts → Review**. New drafts default to a 1% pool fee and an optional $5,000 starting market-cap target. Existing drafts retain their selected economics, but normal entry and reload always begin at Pool (step 1), ignoring saved step numbers. Only an explicit return from setup resumes a valid review. The active factory supports USDC and the open/guarded V1 presets; extra quote assets, reflection/burn hooks, custom module composition and scheduled launches are not offered as executable options.
 
 Payouts offers no lock, a one-hour cliff, 24-hour linear, one-hour cliff plus 24-hour linear, 30-day linear, quarter, year and custom schedules. Custom values use whole hours or days, encoded as exact contract seconds. Each split wallet inherits the global schedule unless it overrides it. A global lock with no split rows materializes one 100% recipient using the connected creator wallet. Old per-wallet day schedules are preserved. The existing approval, simulation, receipt-recovery and deployment-resume paths are retained.
 

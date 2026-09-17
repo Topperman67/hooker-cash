@@ -45,6 +45,13 @@ async function init(page) {
   })
 }
 
+async function reviewSavedDraft(page) {
+  await expect(page.getByRole('heading', { name: 'The pool', exact: true })).toBeVisible()
+  for (let step = 0; step < 3; step++)
+    await page.getByRole('button', { name: 'Continue', exact: false }).click()
+  await page.getByRole('button', { name: 'Review launch', exact: true }).click()
+}
+
 for (const outcome of ['activate', 'already active', 'conflict']) {
   test(`setup ${outcome} continues the saved review and never deploys twice`, async ({ page }) => {
     await init(page)
@@ -78,6 +85,7 @@ for (const outcome of ['activate', 'already active', 'conflict']) {
       return route.fulfill({ status: 201, json: { deployment } })
     })
     await page.goto('/create')
+    await reviewSavedDraft(page)
     await expect(page.getByRole('heading', { name: 'Review your launch' })).toBeVisible()
     await page.getByRole('link', { name: /Open deployment setup/ }).click()
     await page.getByRole('button', { name: 'Connect deployer wallet' }).click()
@@ -134,6 +142,7 @@ test('failed status and missing durable storage never send a creator back to dep
     ),
   )
   await page.goto('/create')
+  await reviewSavedDraft(page)
   await expect(page.getByRole('alert')).toContainText('Storage temporarily unavailable')
   await expect(page.getByRole('link', { name: /Open deployment setup/ })).toHaveCount(0)
   available = true
@@ -157,6 +166,7 @@ test('a later null status cannot turn an activated venue back into the deploymen
     route.fulfill({ json: { deployment: active ? deployment : null, treasury } }),
   )
   await page.goto('/create')
+  await reviewSavedDraft(page)
   await expect(page.getByRole('button', { name: 'Connect wallet to review' })).toBeVisible()
   active = false
   await page.clock.runFor(16000)

@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
-import { useNavigate, useOutletContext } from 'react-router-dom'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useLocation, useNavigate, useOutletContext } from 'react-router-dom'
 import { ArrowRight, ArrowLeft, Check, FlaskConical, LockKeyhole } from 'lucide-react'
 import { formatUnits, toHex } from 'viem'
 import Glass from './Glass'
@@ -34,8 +34,11 @@ import './launch-flow.css'
 const steps = ['Pool', 'Hook', 'Token', 'Payouts', 'Review']
 export { Field, Metric } from './StudioFields'
 export default function LaunchStudio() {
+  const location = useLocation()
+  const resumeReview = location.state?.resumeLaunchReview === true
+  const entryKey = useRef(location.key)
   const [draft, setDraft] = useState(restoreDraft),
-    [step, setStep] = useState(() => restoreStep(draft)),
+    [step, setStep] = useState(() => restoreStep(draft, { resumeReview })),
     [error, setError] = useState(''),
     [uploading, setUploading] = useState(false),
     [estimate, setEstimate] = useState(null),
@@ -64,12 +67,21 @@ export default function LaunchStudio() {
     navigate(`/token/${e.token}?launched=${receipt.transactionHash}`)
   })
   const locked = tx.busy || !!tx.pending
+  useLayoutEffect(() => {
+    if (entryKey.current === location.key) return
+    entryKey.current = location.key
+    // Clicking Create again is a new entry, without interrupting a submitted transaction.
+    if (!locked) {
+      setStep(restoreStep(draft, { resumeReview }))
+      setError('')
+      setEstimate(null)
+    }
+  }, [location.key, resumeReview, draft, locked])
   useEffect(() => {
     try {
       localStorage.setItem(draftKey, JSON.stringify(draft))
-      localStorage.setItem(stepKey, String(step))
     } catch {}
-  }, [draft, step])
+  }, [draft])
   useEffect(() => {
     revision.current++
     setEstimate(null)

@@ -11,12 +11,14 @@ const storage = (draft, step) => ({
   getItem: (key) =>
     key === draftKey ? JSON.stringify(draft) : key === stepKey ? String(step) : null,
 })
-test('restores review only when earlier steps are valid, without trusting corrupted storage', () => {
+test('normal entry ignores saved steps; only an explicit valid setup return resumes review', () => {
   const saved = storage({ name: 'Brew', symbol: 'BREW' }, 4)
   const draft = restoreDraft(saved)
-  assert.equal(restoreStep(draft, saved), 4)
+  assert.equal(restoreStep(draft, saved), 0)
+  assert.equal(restoreStep(draft, { resumeReview: true }), 4)
+  assert.equal(restoreStep({ ...draft, name: '' }, { resumeReview: true }), 0)
   assert.equal(restoreStep({ ...draft, targetMcap: '100' }, saved), 0)
-  assert.equal(restoreStep({ ...draft, name: '' }, saved), 2)
+  assert.equal(restoreStep({ ...draft, name: '' }, saved), 0)
   assert.equal(restoreStep(draft, storage(draft, 99)), 0)
   assert.equal(
     restoreStep(draft, {
@@ -28,14 +30,8 @@ test('restores review only when earlier steps are valid, without trusting corrup
   )
 })
 
-test('migrates the old step order and preserves existing wallet vesting', () => {
-  for (const [oldStep, expected] of [
-    [0, 2],
-    [1, 0],
-    [2, 1],
-    [3, 3],
-    [4, 4],
-  ]) {
+test('old step numbers never skip Pool while existing wallet vesting is preserved', () => {
+  for (const oldStep of [0, 1, 2, 3, 4]) {
     const saved = {
       getItem: (key) =>
         key === legacyStepKey
@@ -59,7 +55,7 @@ test('migrates the old step order and preserves existing wallet vesting', () => 
             : null,
     }
     const draft = restoreDraft(saved)
-    assert.equal(restoreStep(draft, saved), expected)
+    assert.equal(restoreStep(draft, saved), 0)
     assert.equal(draft.targetMcap, '4000')
     assert.equal(draft.fee, '20000')
     assert.deepEqual(draft.splits[0].vesting, {
