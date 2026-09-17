@@ -1,23 +1,32 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { execFile } from 'node:child_process'
-import { promisify } from 'node:util'
+import { promisify, parseEnv } from 'node:util'
+import { readFileSync } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { createRedisStore } from '../../server/storage.mjs'
 
 const container = process.env.HOOKBREW_REDIS_TEST_CONTAINER
+const remote = process.env.HOOKBREW_REDIS_TEST_ENV_FILE
+  ? parseEnv(readFileSync(process.env.HOOKBREW_REDIS_TEST_ENV_FILE, 'utf8'))
+  : null
 const exec = promisify(execFile)
 test(
   'Redis persistence, atomic activation, expiring authorization, quota and stale-writer fencing',
-  { skip: !container },
+  { skip: !container && !remote },
   async () => {
     const prefix = `hookbrew-test:${randomUUID()}`
     const options = {
-      url: 'https://redis-fixture.invalid',
-      token: 'local-test-only',
+      url: remote
+        ? remote.UPSTASH_REDIS_REST_URL || remote.KV_REST_API_URL
+        : 'https://redis-fixture.invalid',
+      token: remote
+        ? remote.UPSTASH_REDIS_REST_TOKEN || remote.KV_REST_API_TOKEN
+        : 'local-test-only',
       prefix,
       // Run the exact REST command payload against an isolated local Redis.
       async request(url, init) {
+        if (remote) return fetch(url, init)
         assert.equal(url, 'https://redis-fixture.invalid')
         assert.equal(init.headers.Authorization, 'Bearer local-test-only')
         const args = JSON.parse(init.body)
@@ -38,7 +47,7 @@ test(
       ])
       assert.equal(results.filter(Boolean).length, 1)
       assert.deepEqual(await first.get('deployment'), await second.get('deployment'))
-      await first.set('challenge', { message: 'authorization' }, { ttl: 1000 })
+      await first.set('challenge', { message: 'authorization' }, { ttl: 10000 })
       assert.equal((await second.get('challenge')).message, 'authorization')
       await first.set('expired', true, { ttl: 1 })
       await new Promise((resolve) => setTimeout(resolve, 10))
