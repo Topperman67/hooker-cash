@@ -1,0 +1,4 @@
+# Solidity metadata hashes the exact input bytes. Preserve the source used for
+# the existing immutable deployments, including historical line endings.
+# Normalize these only as part of a separately versioned contract build.
+contracts/protocol/contracts/*.sol -text whitespace=cr-at-eol
