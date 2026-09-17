@@ -177,7 +177,7 @@ export default function Shell({ onConnect, connected }) {
         <div className="sidebar-footer">
           <div className="sidebar-network" aria-label="Arc network status">
             <div className="sidebar-network-heading">
-              <BrandMark name="arc" />
+              <BrandMark name="arc-blue" />
               <div>
                 <strong>Arc mainnet</strong>
                 <span className="sidebar-network-state">
@@ -195,14 +195,14 @@ export default function Shell({ onConnect, connected }) {
             </div>
             <div className="sidebar-network-block">
               <span>Latest block</span>
-              <span>
+              <strong>
                 {chain.status === 'ready'
                   ? BigInt(chain.network.blockNumber).toLocaleString('en-US')
                   : '—'}
-              </span>
+              </strong>
             </div>
             <a href={arc.blockExplorers.default.url} target="_blank" rel="noreferrer">
-              Open explorer <ArrowUpRight size={12} />
+              View on explorer <ArrowUpRight size={13} />
             </a>
           </div>
           <Link to="/docs" className="sidebar-help">

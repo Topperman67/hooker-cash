@@ -161,6 +161,8 @@ test('sidebar uses distinct section icons and keeps the glass surface', async ({
   for (const viewport of [
     { width: 1440, height: 900 },
     { width: 939, height: 898 },
+    { width: 1024, height: 881 },
+    { width: 1024, height: 880 },
     { width: 1024, height: 861 },
     { width: 1024, height: 860 },
     { width: 1024, height: 821 },

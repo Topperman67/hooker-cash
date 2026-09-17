@@ -37,6 +37,7 @@ export function Logo({ compact = false }) {
 
 const brandAssets = {
   arc: '/brand/arc/arc-network.svg',
+  'arc-blue': '/brand/arc/arc-network-blue.svg',
   usdc: '/brand/usdc/usdc.svg',
   uniswap: '/brand/uniswap/uniswap.svg',
 }
