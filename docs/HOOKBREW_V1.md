@@ -16,6 +16,10 @@ Factory and router are immutable. Deployment setup mines a valid CREATE2 salt, e
 
 ## Economics and contract behavior
 
+The launch studio follows **Pool → Hook → Token → Payouts → Review**. New drafts default to a 1% pool fee and an optional $5,000 starting market-cap target. Existing drafts retain their selected economics and migrate their saved step to the new sequence. The active factory supports USDC and the open/guarded V1 presets; extra quote assets, reflection/burn hooks, custom module composition and scheduled launches are not offered as executable options.
+
+Payouts offers no lock, a one-hour cliff, 24-hour linear, one-hour cliff plus 24-hour linear, 30-day linear, quarter, year and custom schedules. Custom values use whole hours or days, encoded as exact contract seconds. Each split wallet inherits the global schedule unless it overrides it. A global lock with no split rows materializes one 100% recipient using the connected creator wallet. Old per-wallet day schedules are preserved. The existing approval, simulation, receipt-recovery and deployment-resume paths are retained.
+
 Arc USDC's native (18 decimals) and ERC20 (6 decimals) interfaces share one balance. The transaction adapter sums quote input, native launch value and a gas reserve in native units before sending. Buy MAX reserves gas instead of spending the full ERC20 view. See the [Arc stablecoin model](https://docs.arc.io/arc/concepts/stablecoin-native-model). Local tests use a standard ERC20 quote fixture, with separate unit coverage for this Arc-specific combined budget.
 
 All launches mint exactly one billion tokens. There are no later mint, freeze, ownership upgrade, or transfer-tax functions. The factory seeds a token-only V4 position, with no liquidity removal entry point. Integer rounding can leave token dust at the factory. Opening market cap is a price target rounded to a V4 tick; it is not deposited USDC liquidity.

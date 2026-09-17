@@ -8,16 +8,90 @@ export const defaultDraft = {
   website: '',
   twitter: '',
   telegram: '',
-  fee: '20000',
-  targetMcap: '4000',
+  fee: '10000',
+  targetMcap: '',
   initialBuy: '',
   slippage: '1',
-  guarded: true,
+  guarded: false,
   window: '300',
   startCap: '1',
   endCap: '10',
   interval: '0',
+  vesting: { cliff: '0', cliffUnit: 'days', duration: '0', durationUnit: 'days' },
   splits: [],
+}
+export const openingMarketCap = (draft) => String(draft.targetMcap).trim() || '5000'
+const schedule = (cliff, cliffUnit, duration, durationUnit) => ({
+  cliff: String(cliff),
+  cliffUnit,
+  duration: String(duration),
+  durationUnit,
+})
+export const vestingPresets = [
+  {
+    name: 'No lock',
+    description: 'Your allocation is available at launch.',
+    value: schedule(0, 'days', 0, 'days'),
+  },
+  {
+    name: '1h cliff',
+    description: 'Locked for one hour, then fully available.',
+    value: schedule(1, 'hours', 0, 'hours'),
+  },
+  {
+    name: 'Linear 24h',
+    description: 'Unlocks continuously over one day.',
+    value: schedule(0, 'hours', 24, 'hours'),
+  },
+  {
+    name: '1h cliff + 24h linear',
+    description: 'One-hour wait, then a 24-hour unlock.',
+    value: schedule(1, 'hours', 24, 'hours'),
+  },
+  {
+    name: 'Linear 30d',
+    description: 'Unlocks continuously over 30 days.',
+    value: schedule(0, 'days', 30, 'days'),
+  },
+  {
+    name: 'Quarter',
+    description: 'Seven-day wait, then a 90-day unlock.',
+    value: schedule(7, 'days', 90, 'days'),
+  },
+  {
+    name: 'Year',
+    description: '30-day wait, then a 365-day unlock.',
+    value: schedule(30, 'days', 365, 'days'),
+  },
+]
+export function vestingSeconds(value = defaultDraft.vesting) {
+  const seconds = (key) => {
+    const scale = { hours: 3600, days: 86400 }[value[`${key}Unit`]]
+    if (!scale || !/^\d+$/.test(String(value[key])))
+      throw Error('Vesting uses whole hours or days.')
+    return Number(value[key]) * scale
+  }
+  const cliff = seconds('cliff'),
+    duration = seconds('duration')
+  if (!Number.isSafeInteger(cliff + duration) || cliff + duration > 3650 * 86400)
+    throw Error('Vesting cannot exceed a combined period of 3,650 days.')
+  return { cliff, duration }
+}
+export function recipientVesting(draft, recipient) {
+  if (recipient?.vesting) return recipient.vesting
+  // Existing saved drafts used an independent schedule in whole days for every wallet.
+  if (recipient && ('cliffDays' in recipient || 'durationDays' in recipient))
+    return schedule(recipient.cliffDays ?? 0, 'days', recipient.durationDays ?? 0, 'days')
+  return draft.vesting || defaultDraft.vesting
+}
+export function vestingLabel(value) {
+  const { cliff, duration } = vestingSeconds(value)
+  const time = (seconds) => (seconds % 86400 === 0 ? `${seconds / 86400}d` : `${seconds / 3600}h`)
+  return !cliff && !duration
+    ? 'No lock'
+    : [cliff ? `${time(cliff)} cliff` : '', duration ? `${time(duration)} linear` : '']
+        .filter(Boolean)
+        .join(' + ')
 }
 export function amount(value, decimals = 6) {
   if (!/^\d+(\.\d+)?$/.test(String(value)) || (String(value).split('.')[1]?.length || 0) > decimals)
@@ -39,30 +113,12 @@ export function nativeBudget(gas, gasPrice, value = 0n, quoteSpend = 0n) {
   return value + quoteSpend * 10n ** 12n + (gas * gasPrice * 120n) / 100n
 }
 export function validateDraft(d, stage = 4) {
-  const bytes = (s) => new TextEncoder().encode(s.trim()).length
-  if (!bytes(d.name) || bytes(d.name) > 32) throw Error('Token name must use 1–32 UTF-8 bytes.')
-  if (!bytes(d.symbol) || bytes(d.symbol) > 12 || /\s/.test(d.symbol.trim()))
-    throw Error('Symbol must use 1–12 UTF-8 bytes without spaces.')
-  if (d.description.length > 280) throw Error('Description must be 280 characters or fewer.')
-  for (const key of ['website', 'twitter', 'telegram', 'image'])
-    if (d[key]) {
-      let url
-      try {
-        url = new URL(d[key])
-      } catch {
-        throw Error(`Enter a complete ${key} URL.`)
-      }
-      if (!['https:', 'http:'].includes(url.protocol)) throw Error(`${key} must use https or http.`)
-    }
-  if (stage < 1) return
   if (![10000, 20000, 30000, 40000, 50000].includes(Number(d.fee)))
     throw Error('Choose a fee from 1% to 5%.')
-  if (Number(d.targetMcap) < 2000 || Number(d.targetMcap) > 10000)
+  const mcap = amount(openingMarketCap(d))
+  if (mcap < 2000_000000n || mcap > 10000_000000n)
     throw Error('Opening market cap must be 2,000–10,000 USDC.')
-  amount(d.targetMcap)
-  if (d.initialBuy && Number(d.initialBuy) !== 0) amount(d.initialBuy)
-  slippageBps(d.slippage)
-  if (stage < 2) return
+  if (stage < 1) return
   if (
     d.guarded &&
     (!Number.isInteger(Number(d.window)) ||
@@ -78,7 +134,31 @@ export function validateDraft(d, stage = 4) {
       !/^\d+(\.\d{1,2})?$/.test(String(d.endCap)))
   )
     throw Error('Guard: 1–3,600 seconds, caps 0.01–50%, spacing 0–60 seconds.')
+  if (stage < 2) return
+  const bytes = (s) => new TextEncoder().encode(s.trim()).length
+  if (!bytes(d.name) || bytes(d.name) > 32) throw Error('Token name must use 1–32 UTF-8 bytes.')
+  if (!bytes(d.symbol) || bytes(d.symbol) > 12 || /\s/.test(d.symbol.trim()))
+    throw Error('Symbol must use 1–12 UTF-8 bytes without spaces.')
+  if (d.description.length > 280) throw Error('Description must be 280 characters or fewer.')
+  for (const key of ['website', 'twitter', 'telegram', 'image'])
+    if (d[key]) {
+      let url
+      try {
+        url = new URL(d[key])
+      } catch {
+        throw Error(`Enter a complete ${key} URL.`)
+      }
+      if (!['https:', 'http:'].includes(url.protocol)) throw Error(`${key} must use https or http.`)
+    }
   if (stage < 3) return
+  if (d.initialBuy && Number(d.initialBuy) !== 0) amount(d.initialBuy)
+  slippageBps(d.slippage)
+  const checkVesting = (value) => {
+    const { cliff, duration } = vestingSeconds(value)
+    if ((cliff || duration) && !Number(d.initialBuy))
+      throw Error('Add a founder buy before configuring vesting.')
+  }
+  checkVesting(recipientVesting(d))
   if (d.splits.length > 10) throw Error('Use at most ten recipients.')
   const addresses = new Set()
   let total = 0
@@ -91,25 +171,26 @@ export function validateDraft(d, stage = 4) {
     if (!(bps > 0) || bps > 10000 || !/^\d+(\.\d{1,2})?$/.test(String(s.percent)))
       throw Error('Recipient shares must be positive, with at most two decimal places.')
     total += bps
-    if (
-      ![s.cliffDays, s.durationDays].every((v) => Number.isInteger(Number(v)) && Number(v) >= 0) ||
-      Number(s.cliffDays) + Number(s.durationDays) > 3650
-    )
-      throw Error('Vesting uses whole days, with a maximum combined period of 3,650 days.')
-    if ((Number(s.cliffDays) || Number(s.durationDays)) && !Number(d.initialBuy))
-      throw Error('Add a founder buy before configuring vesting.')
+    checkVesting(recipientVesting(d, s))
   }
   if (d.splits.length && total !== 10000) throw Error('Recipient shares must total exactly 100%.')
 }
-export function launchParams(d, uri, salt, minTokensOut = 0n) {
+export function launchParams(d, uri, salt, minTokensOut = 0n, creator) {
   validateDraft(d)
+  let splits = d.splits
+  const vesting = vestingSeconds(recipientVesting(d))
+  if (!splits.length && (vesting.cliff || vesting.duration)) {
+    if (!isAddress(creator || '') || same(creator, zeroAddress))
+      throw Error('Connect your wallet to assign the founder vesting schedule.')
+    splits = [{ wallet: creator, percent: '100' }]
+  }
   return {
     name: d.name.trim(),
     symbol: d.symbol.trim(),
     metadataURI: uri,
     salt,
     fee: Number(d.fee),
-    targetMcap: amount(d.targetMcap),
+    targetMcap: amount(openingMarketCap(d)),
     initialBuy: Number(d.initialBuy) ? amount(d.initialBuy) : 0n,
     minTokensOut,
     guard: d.guarded
@@ -120,11 +201,10 @@ export function launchParams(d, uri, salt, minTokensOut = 0n) {
           interval: Number(d.interval),
         }
       : { window: 0, startCapBps: 0, endCapBps: 0, interval: 0 },
-    splits: d.splits.map((s) => ({
+    splits: splits.map((s) => ({
       wallet: getAddress(s.wallet),
       bps: Math.round(Number(s.percent) * 100),
-      cliff: Number(s.cliffDays) * 86400,
-      duration: Number(s.durationDays) * 86400,
+      ...vestingSeconds(recipientVesting(d, s)),
     })),
   }
 }

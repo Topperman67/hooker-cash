@@ -6,9 +6,10 @@ Open `/setup` to check the active venue or finish activation of existing deploym
 
 ## Implemented
 
+- Launch flow: **Pool → Hook → Token → Payouts → Review**, with purple glass styling, mobile layouts, per-step validation, review edit links, and saved-draft migration.
 - Token identity, uploaded artwork, description and social links; local draft persistence.
 - Fixed one-billion supply; USDC quote pool; 1–5% pool fee; opening valuation target of 2,000–10,000 USDC.
-- Optional founder buy, capped at 10% of supply; up to ten recipients with exact percentage splits and independent cliff/linear vesting schedules.
+- Optional founder buy, capped at 10% of supply; up to ten recipients with exact percentage splits. Vesting presets run from a one-hour cliff to a year, with custom hour/day schedules and per-wallet overrides. A solo creator's vesting is assigned to their connected launch wallet.
 - Optional time-limited buy caps and global buy spacing; sells remain open.
 - Permanent factory seed position. Harvested seed fees split 70% to creators and 30% to the protocol treasury.
 - Creator fee claims and vested token releases. Founder recipients retain their original allocation to qualify for creator fees, counting unreleased vesting.

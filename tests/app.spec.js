@@ -382,7 +382,7 @@ test('all routes show actual integration status without synthetic markets', asyn
   }
   expect(errors).toEqual([])
   await page.goto('/create')
-  await expect(page.getByRole('heading', { name: 'Make your first impression.' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'The pool' })).toBeVisible()
   await page.goto('/trade')
   await expect(page.getByRole('heading', { name: 'Find your next trade.' })).toBeVisible()
 })
@@ -479,7 +479,7 @@ test('home keeps an icon rail and navigation expands, collapses, and follows rou
   }
   await page.getByRole('link', { name: 'Launch a token', exact: true }).click()
   await expect(page).toHaveURL(/\/create$/)
-  await expect(page.getByRole('heading', { name: 'Make your first impression.' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'The pool' })).toBeVisible()
   expect(errors).toEqual([])
 })
 

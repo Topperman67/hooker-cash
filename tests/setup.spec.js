@@ -78,7 +78,7 @@ for (const outcome of ['activate', 'already active', 'conflict']) {
       return route.fulfill({ status: 201, json: { deployment } })
     })
     await page.goto('/create')
-    await expect(page.getByRole('heading', { name: 'Ready for the first pour?' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Review your launch' })).toBeVisible()
     await page.getByRole('link', { name: /Open deployment setup/ }).click()
     await page.getByRole('button', { name: 'Connect deployer wallet' }).click()
     await page.getByRole('button', { name: 'Browser wallet', exact: true }).click()
@@ -86,8 +86,10 @@ for (const outcome of ['activate', 'already active', 'conflict']) {
     await page.getByRole('button', { name: 'Authorize & activate Hookbrew' }).click()
     await expect(page.getByRole('heading', { name: 'Hookbrew is activated.' })).toBeVisible()
     await page.getByRole('link', { name: 'Continue your token launch' }).click()
-    await expect(page.getByRole('heading', { name: 'Ready for the first pour?' })).toBeVisible()
-    await expect(page.locator('.review-list')).toContainText('Saved Brew / BREW')
+    await expect(page.getByRole('heading', { name: 'Review your launch' })).toBeVisible()
+    await expect(page.getByRole('region', { name: 'Token review' })).toContainText(
+      'Saved Brew / $BREW',
+    )
     await expect(
       page.getByRole('button', { name: 'Simulate launch & refresh costs' }),
     ).toBeVisible()
@@ -97,7 +99,7 @@ for (const outcome of ['activate', 'already active', 'conflict']) {
     )
     expect(calls.some((call) => /sendTransaction|deploy/.test(call))).toBe(false)
     await page.reload()
-    await expect(page.getByRole('heading', { name: 'Ready for the first pour?' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: 'Review your launch' })).toBeVisible()
   })
 }
 
@@ -107,8 +109,10 @@ test('an existing draft from the older build resumes at review after setup', asy
   await page.goto('/setup')
   await page.evaluate(() => localStorage.removeItem('hookbrew:launch-step:v1'))
   await page.getByRole('link', { name: 'Continue your token launch' }).click()
-  await expect(page.getByRole('heading', { name: 'Ready for the first pour?' })).toBeVisible()
-  await expect(page.locator('.review-list')).toContainText('Saved Brew / BREW')
+  await expect(page.getByRole('heading', { name: 'Review your launch' })).toBeVisible()
+  await expect(page.getByRole('region', { name: 'Token review' })).toContainText(
+    'Saved Brew / $BREW',
+  )
 })
 
 test('failed status and missing durable storage never send a creator back to deployment', async ({
@@ -135,7 +139,7 @@ test('failed status and missing durable storage never send a creator back to dep
   available = true
   await page.getByRole('button', { name: 'Retry status' }).click()
   await expect(page.getByRole('alert')).toContainText('Persistent storage is not connected')
-  await expect(page.getByRole('heading', { name: 'Ready for the first pour?' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Review your launch' })).toBeVisible()
   await page.goto('/setup')
   await expect(page.getByRole('alert')).toContainText('Persistent storage is not connected')
   await expect(
@@ -158,6 +162,6 @@ test('a later null status cannot turn an activated venue back into the deploymen
   await page.clock.runFor(16000)
   await expect(page.getByRole('alert')).toContainText('temporarily lost its deployment record')
   await expect(page.getByRole('link', { name: /Open deployment setup/ })).toHaveCount(0)
-  await expect(page.getByRole('heading', { name: 'Ready for the first pour?' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Review your launch' })).toBeVisible()
   await page.screenshot({ path: 'artifacts/launch-recovery-status.png', fullPage: true })
 })

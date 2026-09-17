@@ -7,6 +7,8 @@ import {
   validateDraft,
   launchParams,
   nativeBudget,
+  vestingSeconds,
+  vestingPresets,
 } from '../../src/lib/protocolDraft.js'
 import { candlesFor, priceFromSqrt, decodeTrade } from '../../server/market-math.mjs'
 const draft = () => ({ ...defaultDraft, name: 'Moon Milk', symbol: 'MILK', splits: [] })
@@ -28,7 +30,7 @@ test('launch validation enforces byte limits, exact splits, vesting dependencies
   assert.throws(() => validateDraft({ ...draft(), name: '🧪'.repeat(9) }), /32/)
   assert.throws(() => validateDraft({ ...draft(), website: 'javascript:alert(1)' }), /http/)
   assert.throws(() => validateDraft({ ...draft(), targetMcap: '2000.0000001' }), /decimals/)
-  assert.throws(() => validateDraft({ ...draft(), endCap: '0.5' }), /Guard/)
+  assert.throws(() => validateDraft({ ...draft(), guarded: true, endCap: '0.5' }), /Guard/)
   assert.throws(
     () =>
       validateDraft({
@@ -71,6 +73,60 @@ test('launch validation enforces byte limits, exact splits, vesting dependencies
   assert.equal(p.splits[0].duration, 2592000)
   assert.equal(p.splits[0].bps, 10000)
   assert.equal(p.minTokensOut, 123n)
+})
+
+test('five-step validation permits pool and hook setup before token identity', () => {
+  validateDraft(defaultDraft, 0)
+  validateDraft(defaultDraft, 1)
+  assert.throws(() => validateDraft(defaultDraft, 2), /Token name/)
+  validateDraft({ ...draft(), initialBuy: '-1' }, 2)
+  assert.throws(() => validateDraft({ ...draft(), initialBuy: '-1' }, 3), /positive/)
+  const p = launchParams(draft(), 'https://example.com/token.json', '0x' + '1'.repeat(64))
+  assert.equal(p.targetMcap, 5000_000000n)
+  assert.equal(p.fee, 10000)
+  assert.deepEqual(p.guard, { window: 0, startCapBps: 0, endCapBps: 0, interval: 0 })
+})
+
+test('hour vesting assigns the connected creator and allows independent split schedules', () => {
+  const value = { cliff: '1', cliffUnit: 'hours', duration: '24', durationUnit: 'hours' }
+  const d = { ...draft(), initialBuy: '25', vesting: value }
+  const uri = 'https://example.com/meta.json',
+    salt = '0x' + '1'.repeat(64)
+  assert.throws(() => launchParams(d, uri, salt), /Connect your wallet/)
+  assert.deepEqual(launchParams(d, uri, salt, 0n, wallet).splits, [
+    { wallet, bps: 10000, cliff: 3600, duration: 86400 },
+  ])
+  const other = '0x2222222222222222222222222222222222222222'
+  const p = launchParams(
+    {
+      ...d,
+      splits: [
+        { wallet, percent: '70', vesting: null },
+        { wallet: other, percent: '30', vesting: defaultDraft.vesting },
+      ],
+    },
+    uri,
+    salt,
+  )
+  assert.deepEqual(p.splits, [
+    { wallet, bps: 7000, cliff: 3600, duration: 86400 },
+    { wallet: other, bps: 3000, cliff: 0, duration: 0 },
+  ])
+  assert.throws(() => validateDraft({ ...d, initialBuy: '' }), /founder buy/)
+  assert.throws(() => vestingSeconds({ ...value, cliff: '1.5' }), /whole hours/)
+  assert.throws(() => vestingSeconds({ ...value, duration: '3651', durationUnit: 'days' }), /3,650/)
+  assert.deepEqual(
+    vestingPresets.map((preset) => vestingSeconds(preset.value)),
+    [
+      { cliff: 0, duration: 0 },
+      { cliff: 3600, duration: 0 },
+      { cliff: 0, duration: 86400 },
+      { cliff: 3600, duration: 86400 },
+      { cliff: 0, duration: 2592000 },
+      { cliff: 604800, duration: 7776000 },
+      { cliff: 2592000, duration: 31536000 },
+    ],
+  )
 })
 test('OHLC orders same-time swaps by log index, preserves gaps and totals actual USDC volume', () => {
   const rows = [
