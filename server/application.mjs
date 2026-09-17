@@ -15,6 +15,7 @@ import { createIndexer } from './indexer.mjs'
 import { createHookRegistry } from './hooks.mjs'
 import { candlesFor } from './market-math.mjs'
 import { configuredStore } from './storage.mjs'
+import { createWriteGuard } from './request-limits.mjs'
 import abi from '../src/generated/protocol.json' with { type: 'json' }
 
 const json = (res, status, data) => {
@@ -86,17 +87,22 @@ export async function createApplication(options = {}) {
     )
   }
   async function syncAll() {
+    await refreshDeployment()
     await refreshHooks()
     const extra = [...hookIndexers.values()],
       selected = []
-    for (let n = 0; n < Math.min(3, extra.length); n++)
-      selected.push(extra[(syncOffset + n) % extra.length])
-    syncOffset = extra.length ? (syncOffset + 3) % extra.length : 0
+    const count = Math.min(3, extra.length)
+    // A shared atomic sequence keeps later recipes moving across cold starts.
+    // Per-index leases still prevent concurrent instances from duplicating work.
+    const offset =
+      count && store ? (await store.increment('hooks:sync-sequence', count)) - count : syncOffset
+    for (let n = 0; n < count; n++) selected.push(extra[(offset + n) % extra.length])
+    syncOffset = extra.length ? (offset + count) % extra.length : 0
     await Promise.all([indexer?.sync(), ...selected.map((i) => i.sync())])
   }
   const allTokens = () =>
     [indexer, ...hookIndexers.values()].filter(Boolean).flatMap((i) => i.tokens())
-  const limits = new Map()
+  const writeAllowed = createWriteGuard({ store, vercel: serverless && process.env.VERCEL === '1' })
   async function activateLocal(next) {
     const nextIndexer = createIndexer({ client, config: next, abi, dataDir, store })
     await nextIndexer.load()
@@ -215,21 +221,6 @@ export async function createApplication(options = {}) {
     } catch {
       throw Object.assign(Error('Invalid JSON.'), { status: 400 })
     }
-  }
-  function writeAllowed(req) {
-    const origin = req.headers.origin
-    if (!origin || new URL(origin).host !== req.headers.host)
-      throw Object.assign(Error('Open this action from the Hookbrew app.'), { status: 403 })
-    const ip = req.socket.remoteAddress || 'unknown',
-      now = Date.now(),
-      record = limits.get(ip) || { time: now, count: 0 }
-    if (now - record.time > 60000) {
-      record.time = now
-      record.count = 0
-    }
-    if (++record.count > 30)
-      throw Object.assign(Error('Too many requests. Try again shortly.'), { status: 429 })
-    limits.set(ip, record)
   }
   function baseUrl(req) {
     return (
@@ -398,7 +389,7 @@ export async function createApplication(options = {}) {
           index: tokenIndexer.status(),
         })
       }
-      if (req.method === 'POST') writeAllowed(req)
+      if (req.method === 'POST') await writeAllowed(req)
       if (req.method === 'POST' && !storage.ready)
         return json(res, 503, { error: storage.error, code: 'STORAGE_UNCONFIGURED' })
       if (req.method === 'POST' && path === '/api/hooks/register') {

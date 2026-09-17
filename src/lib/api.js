@@ -1,23 +1,48 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 export async function api(path, body, signal) {
-  const response = await fetch(path, {
-    signal,
-    cache: 'no-store',
-    ...(body === undefined
-      ? {}
-      : {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        }),
-  })
-  const data = await response.json()
-  if (!response.ok)
-    throw Object.assign(Error(data.error || 'The server could not complete this request.'), {
-      status: response.status,
-      data,
+  const controller = new AbortController()
+  const cancel = () => controller.abort(signal.reason)
+  if (signal?.aborted) cancel()
+  else signal?.addEventListener('abort', cancel, { once: true })
+  let timedOut = false
+  const timer = setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, 30000)
+  try {
+    const response = await fetch(path, {
+      signal: controller.signal,
+      cache: 'no-store',
+      ...(body === undefined
+        ? {}
+        : {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          }),
     })
-  return data
+    let data
+    try {
+      data = await response.json()
+    } catch (e) {
+      if (controller.signal.aborted) throw e
+      throw Error('Hookbrew returned an unreadable response. Retry shortly.')
+    }
+    if (!response.ok)
+      throw Object.assign(Error(data?.error || 'The server could not complete this request.'), {
+        status: response.status,
+        data,
+      })
+    return data
+  } catch (e) {
+    if (timedOut) throw Error('Hookbrew took too long to respond. Check your connection and retry.')
+    if (e instanceof TypeError && !controller.signal.aborted)
+      throw Error('Hookbrew could not be reached. Check your connection and retry.')
+    throw e
+  } finally {
+    clearTimeout(timer)
+    signal?.removeEventListener('abort', cancel)
+  }
 }
 export function useResource(path, interval = 15000) {
   const [state, setState] = useState({ data: null, error: '', loading: !!path })

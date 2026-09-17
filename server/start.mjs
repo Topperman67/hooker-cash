@@ -2,6 +2,7 @@ import { createServer } from 'node:http'
 import { readFile } from 'node:fs/promises'
 import { resolve, extname } from 'node:path'
 import { createApplication } from './application.mjs'
+import securityHeaders from './security-headers.json' with { type: 'json' }
 const app = await createApplication(),
   dist = resolve('dist')
 const types = {
@@ -13,7 +14,8 @@ const types = {
   '.json': 'application/json',
   '.woff2': 'font/woff2',
 }
-const server = createServer((req, res) =>
+const server = createServer((req, res) => {
+  for (const [name, value] of Object.entries(securityHeaders)) res.setHeader(name, value)
   app.middleware(req, res, async () => {
     try {
       const p = decodeURIComponent(new URL(req.url, 'http://local').pathname),
@@ -43,8 +45,8 @@ const server = createServer((req, res) =>
       res.writeHead(500)
       res.end('Could not serve page')
     }
-  }),
-)
+  })
+})
 server.listen(Number(process.env.PORT || 5173), process.env.HOST || '127.0.0.1', () =>
   console.log(`Hookbrew server listening on ${process.env.PORT || 5173}`),
 )

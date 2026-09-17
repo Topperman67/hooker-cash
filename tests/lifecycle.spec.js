@@ -368,6 +368,15 @@ for (const customHook of [false, true])
     })
     await page.getByRole('button', { name: 'Review buy', exact: true }).click()
     await expect(page.getByRole('button', { name: 'Confirm buy', exact: true })).toBeVisible()
+    // Identical venue data from the next ten-second market poll must preserve review.
+    await page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === `/api/tokens/${address}` && response.status() === 200,
+    )
+    await page.evaluate(
+      () => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))),
+    )
+    await expect(page.getByRole('button', { name: 'Confirm buy', exact: true })).toBeVisible()
     // Rejected signatures must leave balances unchanged and allow a deliberate retry.
     await page.evaluate(() => (window.__rejectNext = true))
     await page.getByRole('button', { name: 'Confirm buy', exact: true }).click()

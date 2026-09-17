@@ -10,10 +10,10 @@
     "start": "node server/start.mjs",
     "contracts:build": "npm run compile --prefix contracts/protocol && node scripts/export-protocol.mjs",
     "contracts:test": "npm run contracts:build && npm test --prefix contracts/protocol",
-    "test:e2e": "playwright test",
+    "test:e2e": "npm run build && playwright test",
     "test:unit": "node --test tests/unit/*.test.mjs",
     "format": "prettier --write src server tests vite.config.js playwright.config.js index.html package.json README.md DESIGN.md docs/HOOKBREW_V1.md",
-    "format:check": "prettier --check src server tests vite.config.js playwright.config.js index.html package.json README.md DESIGN.md docs/HOOKBREW_V1.md"
+    "format:check": "prettier --check src server tests vite.config.js playwright.config.js index.html package.json README.md DESIGN.md docs/HOOKBREW_V1.md vercel.json .github/workflows/verify.yml docs/RELIABILITY_REVIEW.md"
   },
   "dependencies": {
     "@fontsource-variable/dm-sans": "^5.3.0",

@@ -81,18 +81,34 @@ export function createIndexer({ client, config, abi, dataDir, store }) {
         const batchState = { ...state, tokens: { ...state.tokens }, trades: { ...state.trades } }
         const fromBlock = BigInt(state.cursor + 1),
           toBlock = BigInt(Math.min(state.cursor + 2000, tip))
+        const anchor = await client.getBlock({ blockNumber: toBlock })
+        const supplyChanged = new Set()
         const logs = await client.getLogs({ address: config.factory, fromBlock, toBlock })
         for (const log of logs) {
           let event
           try {
-            event = decodeEventLog({ abi: abi.HookbrewFactory, ...log })
+            event = decodeEventLog({
+              abi:
+                config.abiVersion === 'hookbrew-modular-v1'
+                  ? abi.HookbrewModularFactory
+                  : abi.HookbrewFactory,
+              ...log,
+            })
           } catch {
             continue
           }
+          if (
+            (event.eventName === 'ModulesFunded' && event.args.burned > 0n) ||
+            (event.eventName === 'ModulesExecuted' && event.args.tokensBurned > 0n)
+          )
+            supplyChanged.add(event.args.token.toLowerCase())
           if (event.eventName !== 'TokenLaunched') continue
           const a = event.args,
             address = a.token.toLowerCase(),
             block = await client.getBlock({ blockNumber: log.blockNumber })
+          if (log.blockHash && block.hash !== log.blockHash)
+            throw Error('Chain changed during indexing; retrying the batch.')
+          supplyChanged.add(address)
           const [name, symbol, totalSupply] = await Promise.all(
             ['name', 'symbol', 'totalSupply'].map((functionName) =>
               client.readContract({
@@ -126,7 +142,7 @@ export function createIndexer({ client, config, abi, dataDir, store }) {
         }
         const tokens = Object.values(batchState.tokens)
         if (config.abiVersion === 'hookbrew-modular-v1') {
-          for (const token of tokens)
+          for (const token of tokens.filter((t) => supplyChanged.has(t.address.toLowerCase())))
             batchState.tokens[token.address.toLowerCase()] = {
               ...token,
               totalSupply: formatUnits(
@@ -167,16 +183,21 @@ export function createIndexer({ client, config, abi, dataDir, store }) {
             for (const l of swaps) {
               const token = identities.get(l.args.id.toLowerCase())
               if (!token) continue
-              if (!timestamps.has(String(l.blockNumber)))
-                timestamps.set(
-                  String(l.blockNumber),
-                  Number((await client.getBlock({ blockNumber: l.blockNumber })).timestamp),
-                )
+              if (!timestamps.has(String(l.blockNumber))) {
+                const block = await client.getBlock({ blockNumber: l.blockNumber })
+                timestamps.set(String(l.blockNumber), {
+                  timestamp: Number(block.timestamp),
+                  hash: block.hash,
+                })
+              }
+              const block = timestamps.get(String(l.blockNumber))
+              if (l.blockHash && block.hash !== l.blockHash)
+                throw Error('Chain changed during indexing; retrying the batch.')
               const trade = decodeTrade(
                 l,
                 token,
                 config.quote,
-                timestamps.get(String(l.blockNumber)),
+                block.timestamp,
                 traders.get(`${l.transactionHash}:${token.address.toLowerCase()}`),
               )
               batchState.trades[trade.id] = { ...trade, token: token.address }
@@ -185,13 +206,36 @@ export function createIndexer({ client, config, abi, dataDir, store }) {
         }
         batchState.cursor = Number(toBlock)
         batchState.blockHash = (await client.getBlock({ blockNumber: toBlock })).hash
+        if (
+          batchState.blockHash !== anchor.hash ||
+          (state.blockHash &&
+            (await client.getBlock({ blockNumber: BigInt(state.cursor) })).hash !== state.blockHash)
+        )
+          throw Error('Chain changed during indexing; retrying the batch.')
         batchState.updatedAt = new Date().toISOString()
         batchState.error = null
         await save(batchState)
         state = batchState
       }
+      if (state.error) {
+        state = { ...state, error: null }
+        await save()
+      }
     } catch (e) {
-      state.error = e.shortMessage || e.message
+      state.error =
+        e.message === 'Chain changed during indexing; retrying the batch.'
+          ? e.message
+          : 'Market indexing is temporarily unavailable. The next sync will retry.'
+      console.error(
+        JSON.stringify({
+          event: 'hookbrew.index.failed',
+          factory: config.factory,
+          cursor: state.cursor,
+          code: e.code === 'STORAGE_UNAVAILABLE' ? e.code : 'INDEX_SYNC_FAILED',
+        }),
+      )
+      // Save only the last complete checkpoint and its safe diagnostic.
+      if (!store || (lease && loaded)) await save().catch(() => {})
     } finally {
       if (store && lease) await store.release(`${storeKey}:lock`, lease).catch(() => {})
       lease = null

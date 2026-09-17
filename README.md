@@ -8,7 +8,7 @@ Open `/setup` to check the active venue or finish activation of existing deploym
 
 - Launch flow: **Pool → Hook → Token → Payouts → Review**, with purple glass styling, mobile layouts, per-step validation, review edit links, and saved-draft migration.
 - Token identity, uploaded artwork, description and social links; local draft persistence.
-- Fixed one-billion supply; USDC quote pool; 1–5% pool fee; opening valuation target of 2,000–10,000 USDC.
+- Fixed initial one-billion supply (burn modules can reduce it); USDC quote pool; 1–5% pool fee; opening valuation target of 2,000–10,000 USDC.
 - Optional founder buy, capped at 10% of supply; up to ten recipients with exact percentage splits. Vesting presets run from a one-hour cliff to a year, with custom hour/day schedules and per-wallet overrides. A solo creator's vesting is assigned to their connected launch wallet.
 - Optional time-limited buy caps and global buy spacing; sells remain open.
 - Permanent factory seed position. Harvested seed fees split 70% to creators and 30% to the protocol treasury.
@@ -85,6 +85,10 @@ npm run build
 The contract suite uses real local Uniswap V4 PoolManager/Quoter contracts. It covers buys/sells in both currency orderings, slippage, vesting, guards, recipient validation, creator eligibility and treasury isolation. Its HTTP integration test covers signature/bytecode-bound activation, real event indexing, persistence and reorganization recovery.
 
 The browser lifecycle suite starts its own local Hardhat chain on port 8547, deploys real contracts and drives the actual launch/approve/buy/sell interface. It uses isolated test accounts and redirects RPC calls to that local node. Other browser tests cover wallet rejection, receipt verification, reload recovery, draft validation, mobile layout and unavailable services.
+
+GitHub Actions verifies every push to `main` and every pull request with the pinned compiler, contract-artifact comparison, a real Redis service, unit/browser tests, formatting and dependency checks. Browser tests also exercise the built production server and its content security policy. This workflow reports regressions; Vercel’s existing Git deployment remains independent of the check.
+
+The frontend dependency audit is clean. The isolated Hardhat development tree retains the low-severity `elliptic` advisory (13 affected dependency entries); patched transitive overrides remove the high/moderate advisories while keeping deployed bytecode reproducible. Do not use local test accounts for real funds. See [the reliability review](docs/RELIABILITY_REVIEW.md) for evidence and remaining limits.
 
 ## Architecture and scope
 

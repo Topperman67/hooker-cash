@@ -9,6 +9,18 @@ export function sharedStore() {
   }
   return {
     get,
+    async incrementExpiring(key, ttl) {
+      const row = values.get(key)
+      const current =
+        row && row.expires > Date.now() ? row : { value: 0, expires: Date.now() + ttl }
+      values.set(key, { ...current, value: current.value + 1 })
+      return current.value + 1
+    },
+    async increment(key, amount = 1) {
+      const next = (values.get(key)?.value || 0) + amount
+      values.set(key, { value: next, expires: 0 })
+      return next
+    },
     async set(key, value, { nx = false, ttl = 0 } = {}) {
       const row = values.get(key)
       if (nx && row && (!row.expires || row.expires > Date.now())) return false

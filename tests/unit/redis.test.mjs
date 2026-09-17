@@ -47,11 +47,28 @@ test(
       ])
       assert.equal(results.filter(Boolean).length, 1)
       assert.deepEqual(await first.get('deployment'), await second.get('deployment'))
+      const sequence = await Promise.all([
+        first.increment('sequence', 3),
+        second.increment('sequence', 3),
+      ])
+      assert.deepEqual(
+        sequence.sort((a, b) => a - b),
+        [3, 6],
+      )
+      assert.equal(await first.incrementExpiring('rate-test', 10000), 1)
+      assert.equal(await second.incrementExpiring('rate-test', 10000), 2)
       await first.set('challenge', { message: 'authorization' }, { ttl: 10000 })
       assert.equal((await second.get('challenge')).message, 'authorization')
-      await first.set('expired', true, { ttl: 1 })
-      await new Promise((resolve) => setTimeout(resolve, 10))
-      assert.equal(await second.get('expired'), null)
+      // Remote replicas/expiration checks are not guaranteed within 10 milliseconds.
+      async function waitForExpiry(name) {
+        const deadline = Date.now() + 5000
+        while ((await second.get(name)) !== null) {
+          assert.ok(Date.now() < deadline, `${name} did not expire within five seconds`)
+          await new Promise((resolve) => setTimeout(resolve, 100))
+        }
+      }
+      await first.set('expired', true, { ttl: 100 })
+      await waitForExpiry('expired')
 
       await first.putMedia('one', Buffer.from('abc'), 5)
       await second.putMedia('one', Buffer.from('abc'), 5)
@@ -59,8 +76,8 @@ test(
       await assert.rejects(() => second.putMedia('two', Buffer.from('def'), 5), /storage is full/)
       assert.equal(await first.get('media:bytes'), 3)
 
-      await first.set('index:lock', 'old-owner', { ttl: 1 })
-      await new Promise((resolve) => setTimeout(resolve, 10))
+      await first.set('index:lock', 'old-owner', { ttl: 100 })
+      await waitForExpiry('index:lock')
       assert.equal(await second.set('index:lock', 'new-owner', { nx: true, ttl: 10000 }), true)
       await first.release('index:lock', 'old-owner')
       assert.equal(await second.get('index:lock'), 'new-owner')
@@ -82,6 +99,8 @@ test(
         'media:bytes',
         'index',
         'index:lock',
+        'sequence',
+        'rate-test',
       ])
         await first.delete(key)
     }
@@ -89,15 +108,45 @@ test(
 )
 
 test('Redis errors never expose credentials or upstream response bodies', async () => {
+  for (const request of [
+    async () =>
+      new Response(JSON.stringify({ error: 'upstream details secret-fixture' }), { status: 401 }),
+    async () => new Response('secret-fixture: broken response'),
+    async () => {
+      throw Error('connection failed: secret-fixture')
+    },
+    async () => Response.json({ unexpected: 'secret-fixture' }),
+  ]) {
+    const store = createRedisStore({
+      url: 'https://redis-fixture.invalid',
+      token: 'secret-fixture',
+      request,
+    })
+    await assert.rejects(
+      () => store.get('deployment'),
+      (error) =>
+        error.status === 503 &&
+        /storage is unavailable/.test(error.message) &&
+        !error.message.includes('secret-fixture'),
+    )
+  }
+})
+
+test('Redis carries the server sync token into subsequent reads', async () => {
+  const calls = []
   const store = createRedisStore({
     url: 'https://redis-fixture.invalid',
-    token: 'secret-fixture',
-    request: async () =>
-      new Response(JSON.stringify({ error: 'upstream details secret-fixture' }), { status: 401 }),
+    token: 'test',
+    request: async (_, init) => {
+      calls.push(init.headers)
+      return Response.json(
+        { result: calls.length === 1 ? 'OK' : JSON.stringify({ ready: true }) },
+        { headers: { 'upstash-sync-token': 'opaque-checkpoint' } },
+      )
+    },
   })
-  await assert.rejects(
-    () => store.get('deployment'),
-    (error) =>
-      /storage is unavailable/.test(error.message) && !error.message.includes('secret-fixture'),
-  )
+  await store.set('deployment', { ready: true })
+  assert.deepEqual(await store.get('deployment'), { ready: true })
+  assert.equal(calls[0]['upstash-sync-token'], undefined)
+  assert.equal(calls[1]['upstash-sync-token'], 'opaque-checkpoint')
 })

@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useParams, Link, useSearchParams } from 'react-router-dom'
 import { isAddress } from 'viem'
 import { ArrowUpRight, Copy, Globe } from 'lucide-react'
@@ -23,8 +23,10 @@ export default function TokenTerminal() {
       valid ? `/api/tokens/${id}/trades?side=${side}&offset=${offset}` : null,
       10000,
     )
-  const token = detail.data?.token,
-    deployment = detail.data?.deployment
+  const token = detail.data?.token
+  // An unchanged polling response must not invalidate a reviewed trade.
+  const serializedDeployment = JSON.stringify(detail.data?.deployment || null)
+  const deployment = useMemo(() => JSON.parse(serializedDeployment), [serializedDeployment])
   if (!token)
     return (
       <>
@@ -242,8 +244,9 @@ export default function TokenTerminal() {
                     ))}
                   </div>
                   <p>
-                    Fixed supply. No additional minting, token freeze, or transfer tax. Seed
-                    liquidity stays in the factory; its fees are harvested separately.
+                    Fixed initial supply; optional burn modules can reduce it. No additional
+                    minting, token freeze, or transfer tax. Seed liquidity stays in the factory; its
+                    fees are harvested separately.
                   </p>
                 </div>
               )}

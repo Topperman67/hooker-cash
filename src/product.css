@@ -1488,3 +1488,22 @@
     transition: none;
   }
 }
+
+.app-recovery {
+  max-width: 620px;
+  margin: 12vh auto;
+  padding: 32px;
+  color: var(--text-primary, #f3edff);
+}
+.app-recovery h1 {
+  font-family: 'Outfit Variable', sans-serif;
+  font-size: clamp(28px, 5vw, 42px);
+  line-height: 1.15;
+}
+.app-recovery p {
+  color: #c4b8d6;
+  line-height: 1.7;
+}
+.app-recovery .btn {
+  margin-top: 16px;
+}

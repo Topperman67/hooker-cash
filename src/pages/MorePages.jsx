@@ -121,9 +121,10 @@ export function DocsPage() {
       <Glass as="article" className="docs-body">
         <h2>Launch studio</h2>
         <p>
-          Set a name, ticker, artwork and socials. Every token has a fixed one-billion supply, an
-          ERC20 USDC market, and a 1–5% pool fee. Opening valuation targets 2,000–10,000 USDC and
-          rounds to a V4 price tick. This valuation is not deposited liquidity or funds raised.
+          Set a name, ticker, artwork and socials. Every token starts with one billion tokens; burn
+          modules can reduce the supply. Choose an ERC20 USDC market, and a 1–5% pool fee. Opening
+          valuation targets 2,000–10,000 USDC and rounds to a V4 price tick. This valuation is not
+          deposited liquidity or funds raised.
         </p>
         <h2>Founder buys and vesting</h2>
         <p>
@@ -160,8 +161,8 @@ export function DocsPage() {
           The server indexes confirmed TokenLaunched and PoolManager Swap events, including external
           routes into these pools. Own-router events identify traders; external routes are labeled
           separately. Candles use actual observed swaps and do not fill gaps with invented activity.
-          The index follows two blocks behind the head, persists to disk, and rebuilds after a
-          detected reorganization.
+          The index follows two blocks behind the head, persists to shared Redis in production (disk
+          locally), and rebuilds after a detected reorganization.
         </p>
         <h2>Deployment and contract source</h2>
         <p>

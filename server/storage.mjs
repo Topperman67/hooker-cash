@@ -2,19 +2,46 @@
 export function createRedisStore({ url, token, prefix = 'hookbrew:v1', request = fetch }) {
   if (!url?.startsWith('https://') || !token) throw Error('Configure both Redis REST credentials.')
   const key = (name) => `${prefix}:${name}`
+  let syncToken
   async function command(...args) {
-    const response = await request(url.replace(/\/$/, ''), {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify(args),
-      signal: AbortSignal.timeout(10000),
-    })
-    const data = await response.json()
-    if (!response.ok || data.error)
-      throw Error('Persistent storage is unavailable. Try again shortly.')
-    return data.result
+    try {
+      const response = await request(url.replace(/\/$/, ''), {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          ...(syncToken ? { 'upstash-sync-token': syncToken } : {}),
+        },
+        body: JSON.stringify(args),
+        signal: AbortSignal.timeout(10000),
+      })
+      const data = await response.json()
+      if (!response.ok || !data || data.error || !Object.hasOwn(data, 'result')) throw Error()
+      syncToken = response.headers.get('upstash-sync-token') || syncToken
+      return data.result
+    } catch {
+      // Transport and JSON errors can contain upstream URLs or echoed credentials.
+      throw Object.assign(Error('Persistent storage is unavailable. Try again shortly.'), {
+        status: 503,
+        code: 'STORAGE_UNAVAILABLE',
+      })
+    }
   }
   return {
+    async incrementExpiring(name, ttl) {
+      return Number(
+        await command(
+          'EVAL',
+          "local n = redis.call('INCR', KEYS[1]); if n == 1 then redis.call('PEXPIRE', KEYS[1], ARGV[1]) end; return n",
+          1,
+          key(name),
+          ttl,
+        ),
+      )
+    },
+    async increment(name, amount = 1) {
+      return Number(await command('INCRBY', key(name), amount))
+    },
     async get(name) {
       const value = await command('GET', key(name))
       return value === null ? null : JSON.parse(value)

@@ -675,3 +675,32 @@ test('homepage and market render uploaded token icons with a safe missing-image 
     .poll(() => recovered.evaluate((image) => image.complete && image.naturalWidth > 0))
     .toBe(true)
 })
+
+test('a failed route chunk offers reload and preserves drafts and pending receipts', async ({
+  page,
+}) => {
+  await unlock(page)
+  const draft = JSON.stringify({ name: 'Retained draft' })
+  const pending = JSON.stringify({ scope: 'launch', hash: '0x' + 'b'.repeat(64) })
+  await page.goto('/')
+  await page.evaluate(
+    ({ draft, pending }) => {
+      localStorage.setItem('hookbrew:recovery-test-draft', draft)
+      sessionStorage.setItem('hookbrew:pending-transaction:v1', pending)
+    },
+    { draft, pending },
+  )
+  await page.route('**/src/pages/SetupPage*', (route) => route.abort('failed'))
+  await page.goto('/setup')
+  await expect(page.getByRole('heading', { name: 'Let’s get you back to Hookbrew.' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Reload page' })).toBeVisible()
+  await page.unroute('**/src/pages/SetupPage*')
+  await page.getByRole('button', { name: 'Reload page' }).click()
+  await expect(page.getByRole('heading', { name: 'Bring the brewery on-chain.' })).toBeVisible()
+  expect(await page.evaluate(() => localStorage.getItem('hookbrew:recovery-test-draft'))).toBe(
+    draft,
+  )
+  expect(await page.evaluate(() => sessionStorage.getItem('hookbrew:pending-transaction:v1'))).toBe(
+    pending,
+  )
+})

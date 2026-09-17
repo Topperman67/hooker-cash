@@ -46,8 +46,16 @@ describe('Immutable modular hooks', function () {
     await assert.rejects(() => creator.sendTransaction({ to: proxy, data: built.mined.data }))
   })
   it('rejects over-allocation, missing price dependencies and invalid timing at the contract boundary', async () => {
-    for(const recipe of [{...helpers.emptyRecipe,burnBps:6000,rewardBps:6000},{...helpers.emptyRecipe,buybackBps:100},{...helpers.emptyRecipe,liquidityBps:100},{...helpers.emptyRecipe,window:3601,interval:1},{...helpers.emptyRecipe,interval:1},{...helpers.emptyRecipe,window:1,startCapBps:100,endCapBps:0}]) {
-      await assert.rejects(()=>hre.viem.deployContract('HookbrewHookPackage',[manager.address,quote.address,owner.account.address,parseUnits('1',18),recipe]))
+    for (const [extra, reason] of [
+      [{burnBps:6000,rewardBps:6000}, /allocation exceeds 100%/],
+      [{buybackBps:100}, /price history required/],
+      [{liquidityBps:100}, /price history required/],
+      [{window:3601,interval:1}, /invalid timing/],
+      [{interval:1}, /invalid window/],
+      [{window:1,startCapBps:100,endCapBps:0}, /invalid caps/],
+      [{window:300,startCapBps:0,endCapBps:100}, /incomplete caps/],
+    ]) {
+      await assert.rejects(()=>hre.viem.deployContract('HookbrewHookPackage',[manager.address,quote.address,owner.account.address,parseUnits('1',18),{...helpers.emptyRecipe,...extra}]), reason)
     }
   })
   it('burns allocated fees, funds modules and preserves protocol, creator and holder claims', async () => {
@@ -108,6 +116,41 @@ describe('Immutable modular hooks', function () {
       await built.factory.write.harvest([token.address]); await time.increase(1900); await built.factory.write.executeModules([token.address]); directions.add(direction)
     }
     assert.equal(directions.size,2)
+  })
+  it('conserves holder rewards across queued distributions, transfers, claims and burns', async () => {
+    const token = await hre.viem.deployContract('HookbrewRewardToken', ['Rewards', 'RWD', creator.account.address, 1000000n, '', quote.address, manager.address, other.account.address, owner.account.address])
+    await quote.write.mint([owner.account.address, 1000000n]); await quote.write.approve([token.address, 1000000n])
+    await token.write.distribute([100n]); assert.equal(await token.read.queuedRewards(), 100n)
+    assert.equal(await token.read.eligibleSupply(), 0n)
+    await token.write.transfer([creator.account.address, 500000n]); await token.write.distribute([0n])
+    assert.equal(await token.read.pendingReward([creator.account.address]), 100n)
+    assert.equal(await token.read.queuedRewards(), 0n)
+    await token.write.transfer([trader.account.address, 200000n], { account: creator.account })
+    assert.equal(await token.read.pendingReward([trader.account.address]), 0n)
+    const holders = [creator, trader]
+    const initial = await Promise.all(holders.map(w => quote.read.balanceOf([w.account.address])))
+    let funded = 100n, burned = 0n, seed = 71
+    for (let i=0; i<48; i++) {
+      seed = (seed * 1664525 + 1013904223) >>> 0
+      const from = holders[i % 2], to = holders[(i + 1) % 2], balance = await token.read.balanceOf([from.account.address])
+      await token.write.transfer([i % 5 === 0 ? from.account.address : to.account.address, balance * BigInt(seed % 90) / 100n], { account: from.account })
+      const amount = BigInt(seed % 1000 + 1); funded += amount; await token.write.distribute([amount])
+      if (i % 3 === 0) await token.write.claimRewards([from.account.address], {account:other.account})
+      if (i % 7 === 0) { await token.write.burn([1n]); burned++ }
+      const eligible = (await token.read.balanceOf([creator.account.address])) + (await token.read.balanceOf([trader.account.address]))
+      assert.equal(await token.read.eligibleSupply(), eligible)
+      assert.equal(await token.read.totalSupply(), 1000000n - burned)
+      const paid = (await quote.read.balanceOf([creator.account.address])) - initial[0] + (await quote.read.balanceOf([trader.account.address])) - initial[1]
+      const outstanding = (await token.read.pendingReward([creator.account.address])) + (await token.read.pendingReward([trader.account.address]))
+      const reserve = await quote.read.balanceOf([token.address])
+      assert.equal(paid + reserve, funded); assert.ok(outstanding <= reserve)
+      assert.equal(await token.read.pendingReward([owner.account.address]), 0n)
+    }
+    for (const w of holders) await token.write.claimRewards([w.account.address])
+    assert.equal(await token.read.pendingReward([creator.account.address]), 0n)
+    assert.equal(await token.read.pendingReward([trader.account.address]), 0n)
+    // Integer rounding may leave dust, but it must never create excess claims.
+    assert.ok((await quote.read.balanceOf([token.address])) < 200n)
   })
   it('registers only exact builds and serves custom markets across API instances', async () => {
     const {createApplication}=await import('../../../server/application.mjs'), {sharedStore}=await import('../../../tests/fixtures/shared-store.mjs'), {createServer}=require('node:http'), {mkdtemp,rm}=require('node:fs/promises'), {tmpdir}=require('node:os'), {join}=require('node:path')
