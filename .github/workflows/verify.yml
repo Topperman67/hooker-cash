@@ -21,8 +21,6 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
-    env:
-      HOOKBREW_REDIS_TEST_CONTAINER: ${{ job.services.redis.id }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -42,6 +40,8 @@ jobs:
       - name: Verify committed contract artifacts match the pinned compiler
         run: git diff --exit-code -- public/protocol src/generated/protocol.json
       - run: npm run test:unit
+        env:
+          HOOKBREW_REDIS_TEST_CONTAINER: ${{ job.services.redis.id }}
       - run: npm run format:check
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
