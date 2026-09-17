@@ -1,166 +1,200 @@
-import { ArrowUpRight, Blocks, Droplets, Plus } from 'lucide-react'
-import Glass from '../components/Glass'
-import { BrandMark, Button, Logo } from '../components/UI'
-import ChainStatus from '../components/ChainStatus'
-import { usePlatform } from '../context/PlatformContext'
-import { useResource, compact } from '../lib/api'
+import { ArrowRight, ArrowUpRight, FlaskConical, RefreshCw } from 'lucide-react'
 import { Link } from 'react-router-dom'
-import { TokenAvatar } from '../components/UI'
-
-function PoolSculpture() {
-  return (
-    <div
-      className="pool-sculpture"
-      aria-label="Architecture diagram: swaps, custom hooks, and Uniswap V4 pools"
-    >
-      <div className="sculpture-halo" />
-      <div className="sculpture-orbit orbit-one" />
-      <div className="sculpture-orbit orbit-two" />
-      <span className="sculpture-caption">The launch architecture</span>
-      <div className="slab-wrap slab-core">
-        <Glass variant="clear" tone="cyan" radius={38} className="glass-slab">
-          <div className="slab-label">
-            <BrandMark name="uniswap" />
-            <span>Uniswap V4</span>
-            <span className="slab-detail">The pool</span>
-          </div>
-        </Glass>
-      </div>
-      <div className="slab-wrap slab-hook">
-        <Glass variant="clear" tone="violet" radius={38} className="glass-slab">
-          <div className="slab-label">
-            <Logo compact />
-            <span>Your hook</span>
-            <span className="slab-detail">Programmable rules</span>
-          </div>
-        </Glass>
-      </div>
-      <div className="slab-wrap slab-swap">
-        <Glass variant="clear" radius={38} className="glass-slab">
-          <div className="slab-label">
-            <Droplets size={29} />
-            <span>Every swap</span>
-            <span className="slab-detail">On-chain execution</span>
-          </div>
-        </Glass>
-      </div>
-      <span className="sculpture-footnote">The Hookbrew launch engine</span>
-    </div>
-  )
-}
+import Glass from '../components/Glass'
+import { BrandMark, Button, TokenAvatar } from '../components/UI'
+import { useChain } from '../context/ChainContext'
+import { useResource, compact } from '../lib/api'
 
 export default function HomePage() {
-  const { deployment } = usePlatform()
   const market = useResource('/api/market?sort=newest', 15000)
+  const chain = useChain()
+  const tokens = market.data?.items || []
+
   return (
-    <>
-      <section className="home-hero">
-        <div className="hero-copy">
-          <span className="hero-kicker">
-            <BrandMark name="arc" />
-            Hookbrew on Arc
+    <div className="landing">
+      <Glass
+        as="section"
+        tone="slate"
+        radius={28}
+        className="landing-hero"
+        aria-labelledby="landing-title"
+      >
+        <div className="landing-stage">
+          <div className="landing-copy">
+            <div className="landing-eyebrow">
+              <span>Hookbrew</span>
+              <i />
+              The token launchpad on Arc
+            </div>
+            <h1 id="landing-title">
+              Brew something
+              <br />
+              <span>worth trading.</span>
+            </h1>
+            <p>
+              A new idea deserves its own market. Create your token, set the opening rules, and
+              bring it to life on Arc.
+            </p>
+            <div className="landing-actions">
+              <Button to="/create" primary>
+                Launch a token <ArrowUpRight size={18} />
+              </Button>
+              <Link to="/market" className="landing-text-link">
+                Explore the market <ArrowRight size={17} />
+              </Link>
+            </div>
+            <span className="landing-note">Your token. Your recipe.</span>
+          </div>
+          <div className="brew-object" aria-hidden="true">
+            <div className="brew-orbit" />
+            <div className="brew-orbit brew-orbit-inner" />
+            <div className="brew-plinth" />
+            <img
+              className="brew-flask"
+              src="/brand/hookbrew/hookbrew-icon.png"
+              alt=""
+              width="1254"
+              height="1254"
+              fetchPriority="high"
+            />
+            <span className="brew-object-caption">
+              <i />A little hook. A lot of possibility.
+            </span>
+          </div>
+        </div>
+        <div className="landing-foundations" aria-label="Built with">
+          <span>
+            <BrandMark name="arc-blue" />
+            Built on Arc
           </span>
-          <h1>
-            Your token.
-            <br />
-            Your rules.
-          </h1>
-          <p>
-            Give your next idea a market. Launch a token, shape its opening rules, and trade in one
-            place — powered by Uniswap V4.
-          </p>
-          <div className="hero-ctas">
-            <Button to="/create" primary className="btn-lg">
-              <Plus size={18} />
-              Create a token
-            </Button>
-            <Button to="/market" className="btn-lg">
-              Explore markets
-              <ArrowUpRight size={17} />
-            </Button>
-          </div>
+          <span>
+            <BrandMark name="uniswap" />
+            Uniswap V4 pools
+          </span>
+          <span>
+            <BrandMark name="usdc" />
+            Paired with USDC
+          </span>
+          <Link to="/docs">
+            Get to know Hookbrew <ArrowUpRight size={14} />
+          </Link>
         </div>
-        <PoolSculpture />
-      </section>
-      <ChainStatus />
-      <section className="floor-section">
-        <div className="section-head">
-          <div>
-            <h2>The market</h2>
-            <p>Launches and pool activity will appear here from verified on-chain sources.</p>
-          </div>
+      </Glass>
+      {chain.status === 'error' && (
+        <div className="landing-network-error" role="status">
+          <span>Arc connection unavailable. Network data may be out of date.</span>
+          <button onClick={chain.retry}>
+            Retry network <RefreshCw size={14} />
+          </button>
         </div>
-        {market.data?.items.length ? (
-          <Glass className="market-table-panel">
-            <div className="table-scroll">
+      )}
+      <div className="landing-bottom">
+        <section className="landing-market" aria-labelledby="fresh-launches-title">
+          <div className="landing-section-heading">
+            <div>
+              <span className="landing-overline">Discover</span>
+              <h2 id="fresh-launches-title">Freshly brewed.</h2>
+            </div>
+            <Link to="/market" className="landing-text-link">
+              All tokens <ArrowUpRight size={16} />
+            </Link>
+          </div>
+          {market.error && (
+            <div className="landing-market-error" role="status">
+              <span>
+                {tokens.length
+                  ? 'Market updates are unavailable. Showing the last loaded data.'
+                  : 'The market is temporarily unavailable.'}
+              </span>
+              <button onClick={market.refresh}>
+                Try again <RefreshCw size={14} />
+              </button>
+            </div>
+          )}
+          {tokens.length > 0 ? (
+            <div className="table-scroll landing-market-table">
               <table className="product-table">
                 <thead>
                   <tr>
-                    <th>Newest tokens</th>
+                    <th>Token</th>
                     <th>Market cap / USDC</th>
                     <th>24h volume / USDC</th>
-                    <th>Market</th>
+                    <th>Trade</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {market.data.items.slice(0, 5).map((t) => (
-                    <tr key={t.address}>
+                  {tokens.slice(0, 4).map((token) => (
+                    <tr key={token.address}>
                       <td>
-                        <Link className="market-token" to={`/token/${t.address}`}>
-                          <TokenAvatar token={t} />
+                        <Link className="market-token" to={`/token/${token.address}`}>
+                          <TokenAvatar token={token} />
                           <span>
-                            <strong>{t.name}</strong>
-                            <small>{t.symbol}</small>
+                            <strong>{token.name}</strong>
+                            <small>{token.symbol}</small>
                           </span>
                         </Link>
                       </td>
-                      <td>{compact(t.marketCap)}</td>
-                      <td>{compact(t.volume24h)}</td>
+                      <td>{compact(token.marketCap)}</td>
+                      <td>{compact(token.volume24h)}</td>
                       <td>
-                        <Link to={`/token/${t.address}`}>Trade ↗</Link>
+                        <Link to={`/token/${token.address}`} aria-label={`Trade ${token.symbol}`}>
+                          <ArrowUpRight size={18} />
+                        </Link>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          </Glass>
-        ) : (
-          <Glass className="empty-state">
-            <Blocks size={30} />
-            <h2>
-              {market.error
-                ? 'Market temporarily unavailable'
-                : deployment
-                  ? 'The next launch could be yours.'
-                  : 'Build your first brew.'}
-            </h2>
-            <p>
-              {market.error ||
-                (deployment
-                  ? 'Your launch appears here with a chart and trading terminal after confirmation.'
-                  : 'The launch studio is ready. Configure your token while your Hookbrew contracts await deployment.')}
-            </p>
-            <Button to="/market">
-              Open the market
-              <ArrowUpRight size={16} />
-            </Button>
-          </Glass>
-        )}
-      </section>
-      <Glass className="bottom-cta" tone="violet">
-        <span className="bottom-cta-icon">
-          <Logo compact />
-        </span>
-        <div>
-          <h2>A little hook. A lot of possibility.</h2>
-          <p>Review the contract integration and the hook architecture.</p>
-        </div>
-        <Button to="/docs">
-          Read the project status
-          <ArrowUpRight size={16} />
-        </Button>
-      </Glass>
-    </>
+          ) : (
+            !market.error && (
+              <div className="landing-market-empty" role="status" aria-busy={market.loading}>
+                <span className="landing-empty-icon">
+                  <FlaskConical size={25} strokeWidth={1.3} />
+                </span>
+                <div>
+                  <h3>
+                    {market.loading
+                      ? 'Checking the latest launches…'
+                      : 'The next launch could be yours.'}
+                  </h3>
+                  <p>
+                    {market.loading
+                      ? 'Fetching markets from Hookbrew.'
+                      : 'New tokens land here, ready to discover and trade.'}
+                  </p>
+                </div>
+                {!market.loading && (
+                  <Link to="/create" aria-label="Create the first token">
+                    <ArrowUpRight size={20} />
+                  </Link>
+                )}
+              </div>
+            )
+          )}
+        </section>
+        <Glass
+          as="section"
+          tone="slate"
+          radius={20}
+          className="landing-studio"
+          aria-labelledby="studio-title"
+        >
+          <span className="landing-overline">The launch studio</span>
+          <h2 id="studio-title">
+            An idea to a market.
+            <br />
+            All in one place.
+          </h2>
+          <p>
+            Set your supply. Shape your launch. Then follow the chart and trade from your token’s
+            own terminal.
+          </p>
+          <Link to="/create" className="landing-text-link">
+            Start your recipe <ArrowRight size={16} />
+          </Link>
+        </Glass>
+      </div>
+    </div>
   )
 }

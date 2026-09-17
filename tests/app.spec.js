@@ -112,7 +112,7 @@ test('gate requires all acknowledgements and remembers entry', async ({ page }) 
   await expect(page.getByRole('button', { name: 'Confirm all four to continue' })).toBeDisabled()
   for (const rule of await page.locator('.rule').all()) await rule.click()
   await page.getByRole('button', { name: 'Step onto the floor' }).click()
-  await expect(page.getByRole('heading', { name: 'Your token. Your rules.' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Brew something worth trading.' })).toBeVisible()
   await page.reload()
   await expect(page.locator('.gate-screen')).toHaveCount(0)
 })
@@ -121,6 +121,7 @@ test('sidebar uses distinct section icons and keeps the glass surface', async ({
   await unlock(page)
   await page.addInitScript(() => localStorage.setItem('hooker_glass_lightweight_v1', '1'))
   await page.goto('/')
+  await page.getByRole('button', { name: 'Open navigation' }).click()
   const artwork = page.locator('.nav-artwork')
   await expect(artwork).toHaveCount(9)
   await expect(page.locator('a[href="/trade"] .nav-artwork')).toHaveAttribute(
@@ -177,9 +178,8 @@ test('sidebar uses distinct section icons and keeps the glass surface', async ({
     { width: 320, height: 480 },
   ]) {
     await page.setViewportSize(viewport)
-    if (viewport.width <= 900) {
-      await page.getByRole('button', { name: 'Open navigation' }).click()
-    }
+    await page.keyboard.press('Escape')
+    await page.getByRole('button', { name: 'Open navigation' }).click()
     const layout = await page.locator('.sidebar').evaluate((sidebar) => {
       const bounds = sidebar.getBoundingClientRect()
       const rows = [
@@ -208,6 +208,7 @@ test('sidebar uses distinct section icons and keeps the glass surface', async ({
     })
     await page.locator('.sidebar').screenshot({
       path: `artifacts/sidebar-platinum/${viewport.width}x${viewport.height}.png`,
+      animations: 'disabled',
     })
     if (viewport.width <= 900) await page.keyboard.press('Escape')
   }
@@ -392,9 +393,131 @@ test('mobile navigation preserves focus and does not overflow', async ({ page })
   await page.goto('/')
   await page.getByRole('button', { name: 'Open navigation' }).click()
   await expect(page.getByRole('dialog', { name: 'Site navigation' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Collapse navigation' })).toBeFocused()
+  await page.keyboard.press('Shift+Tab')
+  await expect(page.getByRole('link', { name: 'Help & resources' })).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(page.getByRole('button', { name: 'Collapse navigation' })).toBeFocused()
+  await expect(page.locator('.main-col')).toHaveAttribute('inert', '')
   await page.screenshot({ path: 'artifacts/hookbrew-real-mobile-nav.png', fullPage: true })
   await page.keyboard.press('Escape')
   await expect(page.getByRole('button', { name: 'Open navigation' })).toBeFocused()
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+})
+
+test('home starts with only the logo and navigation expands, collapses, and follows routes', async ({
+  page,
+}) => {
+  await unlock(page)
+  const errors = []
+  page.on('pageerror', (error) => errors.push(error.message))
+  await page.route('**/api/market?sort=newest', (route) =>
+    route.fulfill({ json: { items: [], total: 0 } }),
+  )
+  await page.goto('/')
+  const launcher = page.getByRole('button', { name: 'Open navigation' })
+  await expect(launcher).toBeVisible()
+  await expect(page.getByRole('navigation', { name: 'Primary navigation' })).toHaveCount(0)
+  await expect(page.locator('.sidebar')).toHaveAttribute('inert', '')
+  await expect(page.getByRole('link', { name: 'Launch a token', exact: true })).toHaveAttribute(
+    'href',
+    '/create',
+  )
+  await expect(page.getByRole('link', { name: 'Explore the market' })).toHaveAttribute(
+    'href',
+    '/market',
+  )
+  await expect(page.getByRole('heading', { name: 'The next launch could be yours.' })).toBeVisible()
+  await page.evaluate(() => document.fonts.ready)
+  await expect
+    .poll(() => page.locator('.brew-flask').evaluate((img) => img.complete && img.naturalWidth > 0))
+    .toBe(true)
+  await page.screenshot({
+    path: 'artifacts/hookbrew-home-redesign-desktop.png',
+    fullPage: true,
+    animations: 'disabled',
+  })
+  await launcher.focus()
+  await page.keyboard.press('Enter')
+  await expect(page.getByRole('navigation', { name: 'Primary navigation' })).toBeVisible()
+  await expect(page.locator('.main-col')).not.toHaveAttribute('inert', '')
+  await expect(page.getByRole('button', { name: 'Collapse navigation' })).toBeFocused()
+  await page.screenshot({
+    path: 'artifacts/hookbrew-home-redesign-expanded.png',
+    fullPage: true,
+    animations: 'disabled',
+  })
+  await page.getByRole('button', { name: 'Collapse navigation' }).click()
+  await expect(launcher).toBeFocused()
+  await launcher.click()
+  await page.getByRole('link', { name: 'Market', exact: true }).click()
+  await expect(page).toHaveURL(/\/market$/)
+  await expect(launcher).toBeVisible()
+  await expect(page.locator('.sidebar')).toHaveAttribute('inert', '')
+  await page.goto('/')
+  for (const viewport of [
+    { width: 390, height: 844 },
+    { width: 320, height: 600 },
+    { width: 768, height: 1024 },
+  ]) {
+    await page.setViewportSize(viewport)
+    await expect(page.getByRole('heading', { name: 'Brew something worth trading.' })).toBeVisible()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+    await page.screenshot({
+      path: `artifacts/hookbrew-home-redesign-${viewport.width}.png`,
+      fullPage: true,
+    })
+  }
+  await page.getByRole('link', { name: 'Launch a token', exact: true }).click()
+  await expect(page).toHaveURL(/\/create$/)
+  await expect(page.getByRole('heading', { name: 'Make your first impression.' })).toBeVisible()
+  expect(errors).toEqual([])
+})
+
+test('home distinguishes loading, errors, and real market data with retry', async ({ page }) => {
+  await unlock(page)
+  let release
+  const pending = new Promise((resolve) => {
+    release = resolve
+  })
+  let recovered = false
+  await page.route('**/api/market?sort=newest', async (route) => {
+    await pending
+    await route.fulfill(
+      recovered
+        ? {
+            json: {
+              items: [
+                {
+                  address: tokenAddress,
+                  name: 'Fixture Token',
+                  symbol: 'TEST',
+                  marketCap: 12345,
+                  volume24h: null,
+                },
+              ],
+              total: 1,
+            },
+          }
+        : { status: 503, json: { error: 'Test service unavailable' } },
+    )
+  })
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: 'Checking the latest launches…' })).toBeVisible()
+  await expect(page.getByText('The next launch could be yours.')).toHaveCount(0)
+  release()
+  await expect(page.getByText('The market is temporarily unavailable.')).toBeVisible()
+  recovered = true
+  await page.getByRole('button', { name: 'Try again' }).click()
+  await expect(page.getByRole('table')).toContainText('Fixture Token')
+  await expect(page.getByRole('table')).toContainText('12.35K')
+  await expect(page.getByRole('table')).toContainText('—')
+  await expect(page.getByRole('link', { name: 'Trade TEST' })).toHaveAttribute(
+    'href',
+    `/token/${tokenAddress}`,
+  )
+  await expect(page.locator('.landing-market-error')).toHaveCount(0)
+  await page.setViewportSize({ width: 390, height: 844 })
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
 })
 
@@ -403,10 +526,9 @@ test('wrong RPC chain is an error, not a connected Arc status', async ({ page })
   await rpc(page, { wrongChain: true })
   await unlock(page)
   await page.goto('/')
-  await expect(page.getByLabel('Network and deployment status')).toContainText(
-    'Connection unavailable',
-  )
+  await expect(page.locator('.landing-network-error')).toContainText('Arc connection unavailable')
   await expect(page.locator('.network-chip .status-dot')).toHaveClass(/status-offline/)
+  await page.getByRole('button', { name: 'Open navigation' }).click()
   await expect(page.getByLabel('Arc network status')).toContainText('Connection unavailable')
   await expect(page.locator('.sidebar-network-block')).toContainText('—')
   await expect(page.getByRole('button', { name: 'Retry network' })).toBeVisible()

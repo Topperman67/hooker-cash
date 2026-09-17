@@ -4,7 +4,6 @@ import {
   ArrowUpRight,
   CircleHelp,
   ExternalLink,
-  Menu,
   Search,
   ShieldCheck,
   Wallet,
@@ -35,6 +34,7 @@ export default function Shell({ onConnect, connected }) {
   const navigation = useRef(null)
   const [query, setQuery] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
+  const [mobile, setMobile] = useState(() => matchMedia('(max-width: 900px)').matches)
   const chain = useChain()
 
   useEffect(() => {
@@ -62,12 +62,16 @@ export default function Shell({ onConnect, connected }) {
   }, [])
 
   useEffect(() => {
-    const desktop = matchMedia('(min-width: 901px)')
-    const closeOnDesktop = () => {
-      if (desktop.matches) setMenuOpen(false)
+    const media = matchMedia('(max-width: 900px)')
+    let previousMobile = media.matches
+    const resize = () => {
+      if (media.matches === previousMobile) return
+      previousMobile = media.matches
+      setMobile(media.matches)
+      setMenuOpen(false)
     }
-    desktop.addEventListener('change', closeOnDesktop)
-    return () => desktop.removeEventListener('change', closeOnDesktop)
+    media.addEventListener('change', resize)
+    return () => media.removeEventListener('change', resize)
   }, [])
 
   useEffect(() => {
@@ -76,9 +80,9 @@ export default function Shell({ onConnect, connected }) {
     const focusable = [...drawer.querySelectorAll('a[href], button')].filter(
       (element) => element.getClientRects().length,
     )
-    focusable[0]?.focus()
+    const focusFrame = requestAnimationFrame(() => focusable[0]?.focus({ preventScroll: true }))
     function containFocus(event) {
-      if (event.key !== 'Tab') return
+      if (!mobile || event.key !== 'Tab') return
       const first = focusable[0]
       const last = focusable[focusable.length - 1]
       if (event.shiftKey && document.activeElement === first) {
@@ -91,13 +95,14 @@ export default function Shell({ onConnect, connected }) {
     }
     drawer.addEventListener('keydown', containFocus)
     const previousOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
+    if (mobile) document.body.style.overflow = 'hidden'
     return () => {
+      cancelAnimationFrame(focusFrame)
       drawer.removeEventListener('keydown', containFocus)
       document.body.style.overflow = previousOverflow
       menuButton.current?.focus()
     }
-  }, [menuOpen])
+  }, [menuOpen, mobile])
 
   function submitSearch(event) {
     event.preventDefault()
@@ -107,7 +112,9 @@ export default function Shell({ onConnect, connected }) {
   }
 
   return (
-    <div className="app-shell">
+    <div
+      className={`app-shell ${menuOpen ? 'navigation-open' : 'navigation-collapsed'} ${location.pathname === '/' ? 'is-home' : ''}`}
+    >
       <a className="skip-link" href="#main">
         Skip to content
       </a>
@@ -115,7 +122,20 @@ export default function Shell({ onConnect, connected }) {
         <div className="ambient-ribbon ribbon-one" />
         <div className="ambient-ribbon ribbon-two" />
       </div>
-      {menuOpen && (
+      <button
+        ref={menuButton}
+        className="navigation-launcher"
+        type="button"
+        hidden={menuOpen}
+        onClick={() => setMenuOpen(true)}
+        aria-label="Open navigation"
+        title="Open navigation"
+        aria-expanded={menuOpen}
+        aria-controls="site-sidebar"
+      >
+        <Logo compact />
+      </button>
+      {menuOpen && mobile && (
         <button
           className="nav-backdrop"
           onClick={() => setMenuOpen(false)}
@@ -126,27 +146,34 @@ export default function Shell({ onConnect, connected }) {
       <Glass
         as="aside"
         className={`sidebar ${menuOpen ? 'is-open' : ''}`}
+        id="site-sidebar"
+        inert={!menuOpen ? true : undefined}
+        aria-hidden={!menuOpen ? true : undefined}
         radius={28}
-        role={menuOpen ? 'dialog' : undefined}
-        aria-modal={menuOpen ? true : undefined}
+        role={menuOpen && mobile ? 'dialog' : undefined}
+        aria-modal={menuOpen && mobile ? true : undefined}
         aria-label="Site navigation"
       >
-        <button
-          type="button"
-          className="sidebar-close icon-button"
-          onClick={() => setMenuOpen(false)}
-          aria-label="Close navigation"
-        >
-          <X size={18} />
-        </button>
-        <Link
-          to="/"
-          className="sidebar-brand"
-          aria-label="Hookbrew overview"
-          onClick={() => setMenuOpen(false)}
-        >
-          <Logo />
-        </Link>
+        <div className="sidebar-header">
+          <button
+            type="button"
+            className="sidebar-brand"
+            aria-label="Collapse navigation"
+            onClick={() => setMenuOpen(false)}
+            aria-expanded={menuOpen}
+            aria-controls="site-sidebar"
+          >
+            <Logo />
+          </button>
+          <button
+            type="button"
+            className="sidebar-close icon-button"
+            onClick={() => setMenuOpen(false)}
+            aria-label="Close navigation"
+          >
+            <X size={18} />
+          </button>
+        </div>
         <div className="sidebar-caption">Token launchpad on Arc</div>
         <nav ref={navigation} aria-label="Primary navigation" id="primary-navigation">
           {NAV.map(({ to, label, image }) => (
@@ -213,22 +240,8 @@ export default function Shell({ onConnect, connected }) {
         </div>
       </Glass>
 
-      <div className="main-col" inert={menuOpen ? true : undefined}>
+      <div className="main-col" inert={menuOpen && mobile ? true : undefined}>
         <header className="topbar">
-          <button
-            ref={menuButton}
-            className="mobile-menu icon-button"
-            type="button"
-            onClick={() => setMenuOpen(!menuOpen)}
-            aria-label={menuOpen ? 'Close navigation' : 'Open navigation'}
-            aria-expanded={menuOpen}
-            aria-controls="primary-navigation"
-          >
-            {menuOpen ? <X size={23} /> : <Menu size={23} />}
-          </button>
-          <Link className="mobile-brand" to="/" aria-label="Hookbrew overview">
-            <Logo compact />
-          </Link>
           <Glass
             as="form"
             variant="control"
@@ -256,7 +269,7 @@ export default function Shell({ onConnect, connected }) {
                   : 'Arc RPC unavailable or still connecting'
               }
             >
-              <BrandMark name="arc" />
+              <BrandMark name="arc-blue" />
               Arc
               <span className={`status-dot ${chain.status !== 'ready' ? 'status-offline' : ''}`} />
             </Glass>

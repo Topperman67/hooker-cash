@@ -9,6 +9,7 @@ import '@fontsource-variable/outfit'
 import '@fontsource-variable/dm-sans'
 import './index.css'
 import './product.css'
+import './landing.css'
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>

@@ -21,7 +21,14 @@ export default function Glass({
       appearance: 'dark',
       borderRadius: radius ?? (variant === 'pill' ? 999 : variant === 'control' ? 14 : 24),
       blur: variant === 'clear' ? 2 : variant === 'panel' ? 12 : 7,
-      tint: tone === 'violet' ? '79, 30, 126' : tone === 'cyan' ? '61, 135, 152' : '55, 25, 83',
+      tint:
+        tone === 'slate'
+          ? '30, 43, 65'
+          : tone === 'violet'
+            ? '79, 30, 126'
+            : tone === 'cyan'
+              ? '61, 135, 152'
+              : '55, 25, 83',
       tintOpacity: tone === 'neutral' ? 0.1 : 0.16,
       refractionStrength: variant === 'clear' ? 32 : variant === 'panel' ? 18 : 12,
       bezelWidth: variant === 'panel' || variant === 'clear' ? 24 : 12,

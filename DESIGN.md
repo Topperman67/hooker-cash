@@ -1,5 +1,11 @@
 # Hookbrew — midnight liquid glass
 
+## Home and navigation
+
+The home screen uses a quieter midnight slate canvas (#090c13), frost text (#edf3fc), and restrained Arc blue (#a3c7f7). Keep the large Outfit headline and transparent glass flask as the central composition, with a single prominent launch action and a secondary market link. QuickLiquid remains active on the hero and supporting studio surface. The supporting market section displays actual recent launches, distinct loading and empty states, and an explicit retry when data is unavailable. Never fill the space with invented market statistics.
+
+Navigation starts collapsed to the flask logo alone, with no empty sidebar rail. Clicking the logo opens the full navigation; clicking the expanded logo or close button collapses it. On desktop the content resizes beside the sidebar. On mobile it opens as a modal drawer with a backdrop, focus containment, Escape dismissal, and focus restoration. Hidden navigation is inert. Preserve all nine distinct platinum icons and the responsive no-scroll navigation layout.
+
 ## Launch studio and terminal
 
 Keep midnight #090411, plum #12081f, porcelain #f6f3ff, lavender #b4a1ff, mint #a5e7d2 and ice #b9edff. Outfit carries headings and token identity; DM Sans carries controls and data. The creator workspace uses an actual five-step sequence, a wide editing surface, and a sticky token/economics preview. The terminal makes the price chart the dominant surface, with a fixed-width trade ticket and a tabular activity/rewards area below. Align inputs, prices and transaction amounts consistently; reserve mint/pink for trade direction and lavender for primary actions.
