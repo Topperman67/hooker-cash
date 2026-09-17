@@ -143,6 +143,8 @@ test('sidebar uses distinct section icons and keeps the glass surface', async ({
   ).toBe(9)
   await expect(page.locator('.sidebar')).not.toContainText('A little hook.')
   await expect(page.getByRole('link', { name: 'Help & resources' })).toBeVisible()
+  await expect(page.getByLabel('Arc network status')).toContainText('Network connected')
+  await expect(page.getByLabel('Arc network status')).toContainText('4,660')
   await expect(page.locator('.glass-mode')).toHaveCount(0)
   await expect(page.getByRole('button', { name: /liquid glass|light glass/i })).toHaveCount(0)
   await expect(page.locator('.ql-lens').first()).toBeAttached()
@@ -159,9 +161,15 @@ test('sidebar uses distinct section icons and keeps the glass surface', async ({
   for (const viewport of [
     { width: 1440, height: 900 },
     { width: 939, height: 898 },
+    { width: 1024, height: 861 },
+    { width: 1024, height: 860 },
+    { width: 1024, height: 821 },
+    { width: 1024, height: 820 },
     { width: 1024, height: 600 },
     { width: 1024, height: 500 },
     { width: 390, height: 844 },
+    { width: 390, height: 861 },
+    { width: 390, height: 821 },
     { width: 844, height: 390 },
     { width: 390, height: 500 },
     { width: 320, height: 480 },
@@ -172,7 +180,9 @@ test('sidebar uses distinct section icons and keeps the glass surface', async ({
     }
     const layout = await page.locator('.sidebar').evaluate((sidebar) => {
       const bounds = sidebar.getBoundingClientRect()
-      const rows = [...sidebar.querySelectorAll('.nav-item, .sidebar-help')]
+      const rows = [
+        ...sidebar.querySelectorAll('.nav-item, .sidebar-network, .sidebar-help'),
+      ].filter((row) => row.getClientRects().length)
       return {
         fits: rows.every((row) => {
           const rect = row.getBoundingClientRect()
@@ -185,7 +195,7 @@ test('sidebar uses distinct section icons and keeps the glass surface', async ({
         }),
         scrolls: sidebar.scrollHeight > sidebar.clientHeight,
         footerOverlaps:
-          sidebar.querySelector('.sidebar-help').getBoundingClientRect().top <
+          sidebar.querySelector('.sidebar-footer').getBoundingClientRect().top <
           sidebar.querySelector('nav').getBoundingClientRect().bottom,
       }
     })
@@ -323,5 +333,7 @@ test('wrong RPC chain is an error, not a connected Arc status', async ({ page })
     'Connection unavailable',
   )
   await expect(page.locator('.network-chip .status-dot')).toHaveClass(/status-offline/)
+  await expect(page.getByLabel('Arc network status')).toContainText('Connection unavailable')
+  await expect(page.locator('.sidebar-network-block')).toContainText('—')
   await expect(page.getByRole('button', { name: 'Retry network' })).toBeVisible()
 })

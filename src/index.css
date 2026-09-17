@@ -316,6 +316,10 @@ b {
   height: 42px;
   object-fit: contain;
 }
+.brand-lockup,
+.brand-icon {
+  filter: grayscale(1) brightness(0.9);
+}
 .brand-mark {
   display: block;
   flex-shrink: 0;
@@ -345,13 +349,13 @@ b {
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
-  gap: 2px;
+  gap: 8px;
 }
 .nav-item {
   position: relative;
   display: flex;
   align-items: center;
-  min-height: 44px;
+  min-height: 46px;
   padding: 0 10px;
   gap: 9px;
   color: #b9b5c3;
@@ -398,8 +402,71 @@ b {
 }
 .sidebar-footer {
   margin-top: auto;
-  padding-top: 14px;
+  padding-top: 20px;
   flex-shrink: 0;
+}
+.sidebar-network {
+  margin-bottom: 12px;
+  padding: 13px;
+  border: 1px solid #d0d6df1a;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #e0e3ed08, #c8d1d303);
+  font-size: 10px;
+}
+.sidebar-network-heading {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.sidebar-network .brand-mark {
+  width: 27px;
+  height: 27px;
+  filter: grayscale(1);
+  opacity: 0.75;
+}
+.sidebar-network-heading strong {
+  display: block;
+  color: #d9d6e1;
+  font-size: 11px;
+}
+.sidebar-network-state {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 2px;
+  color: #a8a3b4;
+  font-size: 9px;
+}
+.sidebar-network-state i {
+  width: 4px;
+  height: 4px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: #8e879b;
+}
+.sidebar-network-state i.is-connected {
+  background: #b9cec8;
+}
+.sidebar-network-block,
+.sidebar-network > a {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 11px;
+}
+.sidebar-network-block {
+  color: #aaa4b8;
+  font-variant-numeric: tabular-nums;
+}
+.sidebar-network-block span:last-child {
+  color: #d9d6e1;
+}
+.sidebar-network > a {
+  color: #cbc7d6;
+}
+.sidebar-network > a:hover {
+  color: var(--text-h);
 }
 .sidebar-help {
   display: flex;
@@ -2962,7 +3029,23 @@ code {
     margin-top: 13px;
   }
 }
+@media (max-height: 860px) {
+  .sidebar nav {
+    gap: 5px;
+  }
+  .nav-item {
+    min-height: 44px;
+  }
+}
+@media (max-height: 820px) {
+  .sidebar-network {
+    display: none;
+  }
+}
 @media (max-height: 680px) {
+  .sidebar nav {
+    gap: 2px;
+  }
   .sidebar {
     top: 12px;
     bottom: 12px;

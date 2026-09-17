@@ -12,7 +12,7 @@ import {
 } from 'lucide-react'
 import Glass from './Glass'
 import { BrandMark, Button, Logo } from './UI'
-import { shortenAddress } from '../config/network'
+import { arc, shortenAddress } from '../config/network'
 import { useChain } from '../context/ChainContext'
 
 const NAV = [
@@ -175,6 +175,36 @@ export default function Shell({ onConnect, connected }) {
           ))}
         </nav>
         <div className="sidebar-footer">
+          <div className="sidebar-network" aria-label="Arc network status">
+            <div className="sidebar-network-heading">
+              <BrandMark name="arc" />
+              <div>
+                <strong>Arc mainnet</strong>
+                <span className="sidebar-network-state">
+                  <i
+                    className={chain.status === 'ready' ? 'is-connected' : ''}
+                    aria-hidden="true"
+                  />
+                  {chain.status === 'ready'
+                    ? 'Network connected'
+                    : chain.status === 'loading'
+                      ? 'Connecting…'
+                      : 'Connection unavailable'}
+                </span>
+              </div>
+            </div>
+            <div className="sidebar-network-block">
+              <span>Latest block</span>
+              <span>
+                {chain.status === 'ready'
+                  ? BigInt(chain.network.blockNumber).toLocaleString('en-US')
+                  : '—'}
+              </span>
+            </div>
+            <a href={arc.blockExplorers.default.url} target="_blank" rel="noreferrer">
+              Open explorer <ArrowUpRight size={12} />
+            </a>
+          </div>
           <Link to="/docs" className="sidebar-help">
             <CircleHelp size={17} />
             <span>Help & resources</span>
