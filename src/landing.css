@@ -1,4 +1,138 @@
-/* The navigation opens from the brand, leaving the canvas clear by default. */
+/* A compact icon rail expands into the full navigation. */
+.navigation-rail {
+  /* Lens layers clip themselves; labels must be able to extend past the rail. */
+  overflow: visible !important;
+  position: fixed;
+  z-index: 37;
+  top: 20px;
+  bottom: 20px;
+  left: 20px;
+  width: 64px;
+  padding: 73px 8px 12px;
+  background: #12081fbf;
+  border-color: #bb91f32b;
+}
+.navigation-rail[hidden] {
+  display: none;
+}
+.navigation-rail > .ql-content {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.navigation-rail nav {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.rail-link {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  min-height: 44px;
+  padding: 5px;
+  border-radius: 12px;
+  border: 1px solid transparent;
+  color: #aaa4b8;
+  transition:
+    background 0.2s,
+    border-color 0.2s;
+}
+.rail-link:hover,
+.rail-link.active {
+  background: #d7dedc0c;
+  border-color: #c5d4d124;
+  color: #f0edf4;
+}
+.rail-artwork {
+  width: 30px;
+  height: 30px;
+  object-fit: contain;
+  opacity: 0.8;
+}
+.rail-link:hover .rail-artwork,
+.rail-link.active .rail-artwork {
+  opacity: 1;
+}
+.rail-link.active::after {
+  content: '';
+  position: absolute;
+  left: -7px;
+  height: 14px;
+  width: 2px;
+  border-radius: 3px;
+  background: #b4a1ff;
+}
+.rail-tooltip {
+  pointer-events: none;
+  position: absolute;
+  left: calc(100% + 16px);
+  top: 50%;
+  transform: translateY(-50%);
+  white-space: nowrap;
+  padding: 7px 11px;
+  background: #20122f;
+  border: 1px solid #c4a2f333;
+  border-radius: 8px;
+  color: #eee7fa;
+  font-size: 11px;
+  opacity: 0;
+}
+.rail-link:is(:hover, :focus-visible) .rail-tooltip {
+  opacity: 1;
+}
+.rail-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: auto;
+  padding-top: 14px;
+}
+.rail-network .brand-mark {
+  width: 27px;
+  height: 27px;
+}
+@media (max-height: 680px) {
+  .navigation-rail {
+    padding-top: 63px;
+  }
+  .navigation-rail nav {
+    gap: 3px;
+  }
+  .rail-link {
+    min-height: 37px;
+  }
+  .rail-artwork {
+    width: 27px;
+    height: 27px;
+  }
+  .rail-footer {
+    gap: 2px;
+    padding-top: 8px;
+  }
+}
+@media (max-height: 600px) {
+  .navigation-rail {
+    padding-top: 58px;
+    padding-bottom: 8px;
+  }
+  .navigation-rail nav {
+    gap: 1px;
+  }
+  .rail-link {
+    min-height: 32px;
+    padding: 3px;
+  }
+  .rail-artwork {
+    width: 26px;
+    height: 26px;
+  }
+  .rail-network {
+    display: none;
+  }
+}
 .navigation-launcher {
   position: fixed;
   z-index: 38;
@@ -18,12 +152,12 @@
   display: none;
 }
 .navigation-launcher:hover {
-  background: #9dbcef0c;
+  background: #bb91f30c;
   transform: translateY(-2px);
 }
 .navigation-launcher .brand-icon {
-  width: 52px;
-  height: 52px;
+  width: 43px;
+  height: 43px;
 }
 .app-shell .sidebar {
   transform: translateX(calc(-100% - 30px));
@@ -69,39 +203,25 @@
   flex-shrink: 0;
 }
 
-/* A quiet slate canvas and one sculptural brand object. Other routes keep their palette. */
+/* Keep Hookbrew's original midnight plum and lavender palette. */
 .app-shell.is-home {
-  background: radial-gradient(ellipse at 70% 20%, #17243933, transparent 55%), #090c13;
-  --text-h: #edf3fc;
-  --text: #b6c0d1;
-  --text-dim: #95a2b8;
-  --hairline: #a2bade1b;
+  background: radial-gradient(ellipse at 70% 20%, #42256322, transparent 55%), #090411;
 }
 .is-home .ambient-scene {
   display: none;
-}
-.is-home .top-search,
-.is-home .network-chip {
-  background: #111824;
-  border-color: #b4c7eb1c;
-}
-.is-home .connect-button {
-  background: #23324e;
-  border-color: #8fbaff44;
-  box-shadow: inset 0 1px 0 #d8e9ff16;
 }
 .landing {
   padding-top: 10px;
 }
 .landing-hero.glass {
   overflow: hidden;
-  border-color: #9ebbe22e;
+  border-color: #bb91f32b;
   background:
-    radial-gradient(ellipse at 85% 45%, #28436728, transparent 55%),
-    linear-gradient(120deg, #111823, #0d1420 68%, #13192a);
+    radial-gradient(ellipse at 85% 45%, #61308928, transparent 55%),
+    linear-gradient(120deg, #1c0c30, #160a27 68%, #231036);
   box-shadow:
-    inset 0 1px 0 #dbe8ff08,
-    0 20px 90px #02050a22;
+    inset 0 1px 0 #e4d4ff08,
+    0 20px 90px #05010b22;
 }
 .landing-stage {
   display: grid;
@@ -120,18 +240,18 @@
   align-items: center;
   gap: 12px;
   font-size: 11px;
-  color: #99a7bc;
+  color: #a49eb8;
   margin-bottom: 30px;
 }
 .landing-eyebrow > span {
   font: 500 21px var(--font-display);
-  color: #e2ebf8;
+  color: #f6f3ff;
   letter-spacing: -0.6px;
 }
 .landing-eyebrow > i {
   width: 1px;
   height: 15px;
-  background: #acc5eb30;
+  background: #c4a2f330;
 }
 .landing-copy h1 {
   font-size: clamp(48px, 5.6vw, 86px);
@@ -141,10 +261,10 @@
   margin: 0 0 26px;
 }
 .landing-copy h1 > span {
-  color: #a3c7f7;
+  color: #b4a1ff;
 }
 .landing-copy > p {
-  color: #a2b0c5;
+  color: #bcb1ce;
   max-width: 410px;
   font-size: 14px;
   line-height: 1.85;
@@ -160,12 +280,12 @@
 .landing .landing-actions .btn-primary {
   min-height: 49px;
   padding: 0 22px;
-  color: #0a172b;
-  background: linear-gradient(120deg, #c8e0ff, #8bb8f0);
-  border-color: #d7eaff88;
+  color: #210e36;
+  background: linear-gradient(120deg, #d4c6ff, #ad91ed);
+  border-color: #eadbff88;
   box-shadow:
-    inset 0 1px 0 #eff8ff88,
-    0 5px 25px #73aaff16;
+    inset 0 1px 0 #f4eaff88,
+    0 5px 25px #b491ff16;
   font-weight: 650;
   font-size: 13px;
 }
@@ -177,10 +297,10 @@
   align-items: center;
   gap: 10px;
   font-size: 12px;
-  color: #c0cfe4;
+  color: #c5bfd7;
 }
 .landing-text-link:hover {
-  color: #e4f0ff;
+  color: #f6f3ff;
 }
 .landing-text-link svg {
   transition: transform 0.2s;
@@ -192,83 +312,15 @@
 .landing-note {
   display: block;
   margin-top: 21px;
-  color: #8190a6;
+  color: #a49eb8;
   font-size: 11px;
-}
-.brew-object {
-  position: relative;
-  display: grid;
-  place-items: center;
-  height: 420px;
-  min-width: 0;
-  isolation: isolate;
-}
-.brew-object::before {
-  content: '';
-  position: absolute;
-  width: 85%;
-  aspect-ratio: 1;
-  border-radius: 50%;
-  background: radial-gradient(circle, #74aaff19, transparent 68%);
-}
-.brew-flask {
-  display: block;
-  width: 91%;
-  max-width: 355px;
-  height: auto;
-  position: relative;
-  z-index: 2;
-  transform: rotate(-8deg) translateY(-14px);
-  filter: hue-rotate(38deg) saturate(0.55) brightness(0.94) drop-shadow(0 24px 30px #0a111c88);
-}
-.brew-orbit {
-  position: absolute;
-  width: 98%;
-  aspect-ratio: 1;
-  border-radius: 50%;
-  border: 1px solid #afcfff0b;
-  transform: rotate(-27deg) scaleY(0.66);
-}
-.brew-orbit-inner {
-  width: 78%;
-  transform: rotate(25deg) scaleY(0.8);
-  border-color: #b2caff0a;
-}
-.brew-plinth {
-  position: absolute;
-  width: 62%;
-  height: 32px;
-  bottom: 54px;
-  border: 1px solid #9cc7ff30;
-  border-radius: 50%;
-  background: radial-gradient(ellipse, #9dbfff1a, #23344e12 70%);
-  box-shadow:
-    0 10px 30px #6298e511,
-    inset 0 1px 0 #bdd5ff12;
-}
-.brew-object-caption {
-  position: absolute;
-  bottom: 6px;
-  font-size: 10px;
-  letter-spacing: 0.02em;
-  color: #97aac5;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.brew-object-caption i {
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: #a1c1ed;
-  box-shadow: 0 0 7px #9cbef87a;
 }
 .landing-foundations {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 28px;
-  border-top: 1px solid #abc3e416;
+  border-top: 1px solid #c4a2f31c;
   padding: 22px 5%;
 }
 .landing-foundations > span {
@@ -276,7 +328,7 @@
   align-items: center;
   gap: 9px;
   font-size: 11px;
-  color: #a7b4c8;
+  color: #b7abc8;
 }
 .landing-foundations .brand-mark {
   width: 21px;
@@ -290,11 +342,11 @@
   display: flex;
   gap: 8px;
   align-items: center;
-  color: #92a5c0;
+  color: #a49eb8;
   font-size: 10px;
 }
 .landing-foundations > a:hover {
-  color: #deebff;
+  color: #f6f3ff;
 }
 .landing-bottom {
   display: grid;
@@ -311,7 +363,7 @@
 }
 .landing-overline {
   display: block;
-  color: #98a7bf;
+  color: #a49eb8;
   font-size: 10px;
   letter-spacing: 0.08em;
   margin-bottom: 8px;
@@ -334,8 +386,8 @@
   display: flex;
   align-items: center;
   gap: 18px;
-  border-top: 1px solid #a2bade1b;
-  border-bottom: 1px solid #a2bade1b;
+  border-top: 1px solid #c4a2f31c;
+  border-bottom: 1px solid #c4a2f31c;
   padding: 29px 0;
   min-height: 120px;
 }
@@ -346,9 +398,9 @@
   display: grid;
   place-items: center;
   border-radius: 14px;
-  background: #aacaff08;
-  color: #a4c0e6;
-  border: 1px solid #9abcff15;
+  background: #c4a2f308;
+  color: #bba8df;
+  border: 1px solid #c4a2f31c;
 }
 .landing-market-empty h3 {
   font-size: 15px;
@@ -356,7 +408,7 @@
   letter-spacing: 0;
 }
 .landing-market-empty p {
-  color: #96a4ba;
+  color: #a49eb8;
   font-size: 11px;
   margin: 0;
 }
@@ -364,13 +416,13 @@
   margin-left: auto;
   padding: 10px;
   border-radius: 8px;
-  color: #9bbbe9;
+  color: #c5afe9;
 }
 .landing-market-empty > a:hover {
-  background: #9bbbe910;
+  background: #c5afe910;
 }
 .landing-market-table {
-  border-top: 1px solid #a2bade1b;
+  border-top: 1px solid #c4a2f31c;
 }
 .landing-market-table .product-table {
   min-width: 480px;
@@ -397,8 +449,8 @@
 }
 .landing-studio.glass {
   padding: 25px 28px;
-  background: linear-gradient(125deg, #151f3066, #14182766);
-  border-color: #a2bade1b;
+  background: linear-gradient(125deg, #26113966, #180c2966);
+  border-color: #c4a2f31c;
   box-shadow: none;
 }
 .landing-studio h2 {
@@ -406,14 +458,14 @@
   margin: 10px 0 12px;
 }
 .landing-studio p {
-  color: #99a8bd;
+  color: #b1a4c3;
   font-size: 12px;
   line-height: 1.8;
   margin: 0 0 19px;
   max-width: 35ch;
 }
 .landing-studio .landing-text-link {
-  color: #a5c6f3;
+  color: #b4a1ff;
   font-size: 11px;
 }
 .landing-market-error,
@@ -436,12 +488,12 @@
   align-items: center;
   flex-shrink: 0;
   gap: 7px;
-  color: #b3ccef;
+  color: #c4b3ef;
   padding: 8px 0;
 }
 .is-home .footer-note {
-  border-color: #a2bade1b;
-  color: #8b9ab0;
+  border-color: #c4a2f31c;
+  color: #a49eb8;
 }
 
 @media (min-width: 901px) {
@@ -451,9 +503,6 @@
   }
   .navigation-open .landing-copy h1 {
     font-size: clamp(46px, 4.6vw, 75px);
-  }
-  .navigation-open .brew-object {
-    height: 380px;
   }
 }
 @media (max-width: 1150px) and (min-width: 901px) {
@@ -467,9 +516,6 @@
   .landing-eyebrow {
     gap: 8px;
     font-size: 10px;
-  }
-  .brew-object {
-    height: 360px;
   }
   .landing-foundations {
     gap: 20px;
@@ -486,12 +532,6 @@
   }
   .navigation-open .landing-actions {
     gap: 17px;
-  }
-  .navigation-open .brew-object-caption {
-    font-size: 8px;
-  }
-  .navigation-open .brew-plinth {
-    bottom: 82px;
   }
 }
 @media (max-width: 900px) {
@@ -531,12 +571,6 @@
   }
   .landing-actions .landing-text-link {
     font-size: 11px;
-  }
-  .brew-object {
-    height: 330px;
-  }
-  .brew-object-caption {
-    font-size: 8px;
   }
   .landing-foundations {
     gap: 20px;
@@ -599,31 +633,6 @@
   .landing-note {
     margin-top: 17px;
     font-size: 10px;
-  }
-  .brew-object {
-    height: 258px;
-    max-width: 360px;
-    width: 100%;
-    margin: 15px auto 0;
-  }
-  .brew-flask {
-    width: 230px;
-    transform: rotate(-8deg) translateY(-7px);
-  }
-  .brew-plinth {
-    width: 60%;
-    bottom: 30px;
-    height: 24px;
-  }
-  .brew-object-caption {
-    bottom: 0;
-    font-size: 9px;
-  }
-  .brew-orbit {
-    width: 84%;
-  }
-  .brew-orbit-inner {
-    width: 65%;
   }
   .landing-foundations {
     padding: 19px 20px;

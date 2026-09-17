@@ -405,7 +405,7 @@ test('mobile navigation preserves focus and does not overflow', async ({ page })
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
 })
 
-test('home starts with only the logo and navigation expands, collapses, and follows routes', async ({
+test('home keeps an icon rail and navigation expands, collapses, and follows routes', async ({
   page,
 }) => {
   await unlock(page)
@@ -417,6 +417,8 @@ test('home starts with only the logo and navigation expands, collapses, and foll
   await page.goto('/')
   const launcher = page.getByRole('button', { name: 'Open navigation' })
   await expect(launcher).toBeVisible()
+  await expect(page.getByRole('navigation', { name: 'Quick navigation' })).toBeVisible()
+  await expect(page.locator('.rail-artwork')).toHaveCount(9)
   await expect(page.getByRole('navigation', { name: 'Primary navigation' })).toHaveCount(0)
   await expect(page.locator('.sidebar')).toHaveAttribute('inert', '')
   await expect(page.getByRole('link', { name: 'Launch a token', exact: true })).toHaveAttribute(
@@ -429,9 +431,13 @@ test('home starts with only the logo and navigation expands, collapses, and foll
   )
   await expect(page.getByRole('heading', { name: 'The next launch could be yours.' })).toBeVisible()
   await page.evaluate(() => document.fonts.ready)
-  await expect
-    .poll(() => page.locator('.brew-flask').evaluate((img) => img.complete && img.naturalWidth > 0))
-    .toBe(true)
+  await expect(page.locator('.hook-layer')).toHaveCount(3)
+  await expect(page.locator('.brew-flask')).toHaveCount(0)
+  const railTrade = page
+    .getByRole('navigation', { name: 'Quick navigation' })
+    .getByRole('link', { name: 'Trade', exact: true })
+  await railTrade.hover()
+  await expect(railTrade.locator('.rail-tooltip')).toHaveCSS('opacity', '1')
   await page.screenshot({
     path: 'artifacts/hookbrew-home-redesign-desktop.png',
     fullPage: true,
@@ -442,6 +448,7 @@ test('home starts with only the logo and navigation expands, collapses, and foll
   await expect(page.getByRole('navigation', { name: 'Primary navigation' })).toBeVisible()
   await expect(page.locator('.main-col')).not.toHaveAttribute('inert', '')
   await expect(page.getByRole('button', { name: 'Collapse navigation' })).toBeFocused()
+  await expect(page.getByRole('navigation', { name: 'Quick navigation' })).toHaveCount(0)
   await page.screenshot({
     path: 'artifacts/hookbrew-home-redesign-expanded.png',
     fullPage: true,
@@ -449,8 +456,10 @@ test('home starts with only the logo and navigation expands, collapses, and foll
   })
   await page.getByRole('button', { name: 'Collapse navigation' }).click()
   await expect(launcher).toBeFocused()
-  await launcher.click()
-  await page.getByRole('link', { name: 'Market', exact: true }).click()
+  await page
+    .getByRole('navigation', { name: 'Quick navigation' })
+    .getByRole('link', { name: 'Market', exact: true })
+    .click()
   await expect(page).toHaveURL(/\/market$/)
   await expect(launcher).toBeVisible()
   await expect(page.locator('.sidebar')).toHaveAttribute('inert', '')
@@ -472,6 +481,56 @@ test('home starts with only the logo and navigation expands, collapses, and foll
   await expect(page).toHaveURL(/\/create$/)
   await expect(page.getByRole('heading', { name: 'Make your first impression.' })).toBeVisible()
   expect(errors).toEqual([])
+})
+
+test('glass layers respond to the pointer and respect reduced motion', async ({ page }) => {
+  await unlock(page)
+  await page.goto('/')
+  const stack = page.locator('.hook-stack')
+  const layer = page.locator('.hook-layer-swap')
+  const bounds = await stack.boundingBox()
+  const resting = await layer.evaluate((el) => getComputedStyle(el).transform)
+  await page.mouse.move(bounds.x + bounds.width * 0.85, bounds.y + bounds.height * 0.3)
+  await expect(stack).toHaveAttribute('data-active', 'true')
+  await expect.poll(() => layer.evaluate((el) => getComputedStyle(el).transform)).not.toBe(resting)
+  await page.screenshot({
+    path: 'artifacts/hookbrew-glass-hover.png',
+    fullPage: true,
+    animations: 'disabled',
+  })
+  await page.mouse.move(500, 40)
+  await expect(stack).toHaveAttribute('data-active', 'false')
+  await expect.poll(() => layer.evaluate((el) => getComputedStyle(el).transform)).toBe(resting)
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.mouse.move(bounds.x + bounds.width * 0.9, bounds.y + bounds.height * 0.6)
+  await expect(stack).toHaveAttribute('data-active', 'false')
+  expect(await layer.evaluate((el) => getComputedStyle(el).transform)).toBe(resting)
+})
+
+test('compact icon rail fits short desktop windows and expands from its arrow', async ({
+  page,
+}) => {
+  await unlock(page)
+  await page.goto('/')
+  for (const height of [900, 680, 600, 500]) {
+    await page.setViewportSize({ width: 1024, height })
+    await expect(page.getByRole('navigation', { name: 'Quick navigation' })).toBeVisible()
+    expect(
+      await page.locator('.navigation-rail').evaluate((el) => {
+        const bounds = el.getBoundingClientRect()
+        return (
+          el.scrollHeight <= el.clientHeight &&
+          [...el.querySelectorAll('.rail-link')]
+            .filter((link) => link.getClientRects().length)
+            .every((link) => link.getBoundingClientRect().bottom <= bounds.bottom)
+        )
+      }),
+    ).toBe(true)
+  }
+  await page.getByRole('button', { name: 'Expand navigation' }).click()
+  await expect(page.getByRole('navigation', { name: 'Primary navigation' })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(page.getByRole('navigation', { name: 'Quick navigation' })).toBeVisible()
 })
 
 test('home distinguishes loading, errors, and real market data with retry', async ({ page }) => {

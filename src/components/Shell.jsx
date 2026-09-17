@@ -3,6 +3,7 @@ import { Link, NavLink, Outlet, useLocation, useNavigate } from 'react-router-do
 import {
   ArrowUpRight,
   CircleHelp,
+  ChevronRight,
   ExternalLink,
   Search,
   ShieldCheck,
@@ -122,6 +123,57 @@ export default function Shell({ onConnect, connected }) {
         <div className="ambient-ribbon ribbon-one" />
         <div className="ambient-ribbon ribbon-two" />
       </div>
+      <Glass
+        as="aside"
+        className="navigation-rail"
+        radius={22}
+        hidden={menuOpen || mobile}
+        aria-label="Compact navigation"
+      >
+        <nav aria-label="Quick navigation">
+          {NAV.map(({ to, label, image }) => (
+            <NavLink
+              key={to}
+              to={to}
+              end={to === '/'}
+              aria-label={label}
+              title={label}
+              className={({ isActive }) => `rail-link ${isActive ? 'active' : ''}`}
+            >
+              <img
+                className="rail-artwork"
+                src={`/brand/navigation/platinum/${image}.png`}
+                alt=""
+                width="30"
+                height="30"
+              />
+              <span className="rail-tooltip" aria-hidden="true">
+                {label}
+              </span>
+            </NavLink>
+          ))}
+        </nav>
+        <div className="rail-footer">
+          <button
+            className="rail-link"
+            onClick={() => setMenuOpen(true)}
+            aria-label="Expand navigation"
+            title="Expand navigation"
+          >
+            <ChevronRight size={18} />
+          </button>
+          <a
+            className="rail-link rail-network"
+            href={arc.blockExplorers.default.url}
+            target="_blank"
+            rel="noreferrer"
+            aria-label="Arc block explorer"
+            title="Arc block explorer"
+          >
+            <BrandMark name="arc-blue" />
+          </a>
+        </div>
+      </Glass>
       <button
         ref={menuButton}
         className="navigation-launcher"

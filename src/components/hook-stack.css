@@ -1,0 +1,191 @@
+.hook-stack {
+  --tilt-x: 0deg;
+  --tilt-y: 0deg;
+  --drift-x: 0px;
+  --drift-y: 0px;
+  --light-x: 50%;
+  --light-y: 30%;
+  position: relative;
+  width: 100%;
+  height: 420px;
+  margin: 0;
+  min-width: 0;
+}
+.hook-stack-halo {
+  position: absolute;
+  inset: 8% -5%;
+  background: radial-gradient(ellipse, #9460ca22, #6130890a 50%, transparent 70%);
+  border-radius: 50%;
+  pointer-events: none;
+}
+.hook-stack-scene {
+  position: absolute;
+  inset: 0;
+  perspective: 1000px;
+}
+.hook-layer {
+  position: absolute;
+  width: 266px;
+  height: 166px;
+  left: 50%;
+  top: var(--layer-top);
+  transform-style: preserve-3d;
+  transform: translateX(calc(-50% + var(--drift-x))) translateY(var(--drift-y))
+    rotateX(calc(48deg + var(--tilt-x))) rotateY(var(--tilt-y)) rotateZ(-24deg);
+  transition:
+    transform 0.45s cubic-bezier(0.2, 0.8, 0.2, 1),
+    top 0.45s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+.hook-layer-pool {
+  --layer-top: 231px;
+  z-index: 1;
+}
+.hook-layer-hook {
+  --layer-top: 138px;
+  z-index: 2;
+}
+.hook-layer-swap {
+  --layer-top: 45px;
+  z-index: 3;
+}
+.hook-stack[data-active='true'] .hook-layer-swap {
+  top: 29px;
+}
+.hook-stack[data-active='true'] .hook-layer-pool {
+  top: 247px;
+}
+.hook-layer-glass.glass {
+  height: 100%;
+  background:
+    radial-gradient(ellipse at var(--light-x) var(--light-y), #d7b7ff25, transparent 65%),
+    linear-gradient(135deg, #8752aa33, #210c394f 60%, #9161b933);
+  border: 1px solid #e2c8ff70;
+  box-shadow:
+    2px 5px 0 #c0a4e236,
+    4px 10px 0 #9875c31c,
+    10px 28px 35px #09041177 !important;
+  transition:
+    box-shadow 0.3s,
+    border-color 0.3s;
+}
+.hook-layer-hook .hook-layer-glass {
+  background-color: #632ba736;
+  border-color: #d5b1ff99;
+}
+.hook-layer-pool .hook-layer-glass {
+  background-color: #32164130;
+}
+.hook-layer-glass > .ql-content {
+  height: 100%;
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+.hook-layer-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: #e4d2ff;
+}
+.hook-layer-top > span:last-child {
+  font-size: 9px;
+  color: #d6c4e9;
+}
+.hook-layer-top .brand-icon {
+  width: 37px;
+  height: 37px;
+  margin: -3px;
+}
+.hook-layer-top .brand-mark {
+  width: 27px;
+  height: 27px;
+}
+.hook-layer-title {
+  font: 500 26px var(--font-display);
+  letter-spacing: -0.6px;
+  color: #f2eaff;
+}
+.hook-layer-edge {
+  position: absolute;
+  left: 26px;
+  right: 26px;
+  bottom: 10px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, #eddbff66, transparent);
+}
+.hook-stack figcaption {
+  position: absolute;
+  bottom: -12px;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: #afa0c3;
+  font-size: 10px;
+}
+.hook-stack figcaption > span {
+  width: 4px;
+  height: 4px;
+  background: #b4a1ff;
+  border-radius: 50%;
+}
+@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
+  .hook-layer:hover {
+    transform: translateX(calc(-50% + var(--drift-x))) translateY(calc(var(--drift-y) - 9px))
+      rotateX(calc(43deg + var(--tilt-x))) rotateY(var(--tilt-y)) rotateZ(-21deg);
+  }
+  .hook-layer:hover .hook-layer-glass {
+    border-color: #eddbffaa;
+    box-shadow:
+      2px 6px 0 #c0a4e245,
+      4px 12px 0 #9875c323,
+      10px 32px 40px #09041188 !important;
+  }
+}
+@media (max-width: 1150px) and (min-width: 901px) {
+  .hook-stack-scene {
+    transform: scale(0.85);
+  }
+  .navigation-open .hook-stack-scene {
+    transform: scale(0.7);
+  }
+  .navigation-open .hook-stack figcaption {
+    font-size: 8px;
+  }
+}
+@media (min-width: 701px) and (max-width: 900px) {
+  .hook-stack-scene {
+    transform: scale(0.82);
+  }
+}
+@media (max-width: 700px) {
+  .hook-stack {
+    height: 365px;
+    max-width: 360px;
+    margin: 8px auto 22px;
+  }
+  .hook-stack-scene {
+    transform: scale(0.85);
+    transform-origin: 50% 0;
+  }
+  .hook-stack figcaption {
+    bottom: 0;
+    font-size: 9px;
+  }
+}
+@media (max-width: 380px) {
+  .hook-stack-scene {
+    transform: scale(0.73);
+  }
+  .hook-stack {
+    height: 320px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hook-layer,
+  .hook-layer-glass {
+    transition: none;
+  }
+}

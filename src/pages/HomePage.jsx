@@ -1,6 +1,7 @@
 import { ArrowRight, ArrowUpRight, FlaskConical, RefreshCw } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import Glass from '../components/Glass'
+import HookStack from '../components/HookStack'
 import { BrandMark, Button, TokenAvatar } from '../components/UI'
 import { useChain } from '../context/ChainContext'
 import { useResource, compact } from '../lib/api'
@@ -14,7 +15,7 @@ export default function HomePage() {
     <div className="landing">
       <Glass
         as="section"
-        tone="slate"
+        tone="violet"
         radius={28}
         className="landing-hero"
         aria-labelledby="landing-title"
@@ -45,22 +46,7 @@ export default function HomePage() {
             </div>
             <span className="landing-note">Your token. Your recipe.</span>
           </div>
-          <div className="brew-object" aria-hidden="true">
-            <div className="brew-orbit" />
-            <div className="brew-orbit brew-orbit-inner" />
-            <div className="brew-plinth" />
-            <img
-              className="brew-flask"
-              src="/brand/hookbrew/hookbrew-icon.png"
-              alt=""
-              width="1254"
-              height="1254"
-              fetchPriority="high"
-            />
-            <span className="brew-object-caption">
-              <i />A little hook. A lot of possibility.
-            </span>
-          </div>
+          <HookStack />
         </div>
         <div className="landing-foundations" aria-label="Built with">
           <span>
@@ -175,7 +161,7 @@ export default function HomePage() {
         </section>
         <Glass
           as="section"
-          tone="slate"
+          tone="violet"
           radius={20}
           className="landing-studio"
           aria-labelledby="studio-title"
