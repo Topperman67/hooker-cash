@@ -2,6 +2,8 @@
 
 Assets are stored locally; the UI does not hotlink remote logos.
 
+Wallet picker logos and their official download sources are documented in [wallet assets](wallets/README.md).
+
 | Asset                      | Source                                                                                                                                                                                                                    | Treatment                                                                                                                                   |
 | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | Arc network icon           | [Circle pressroom brand kit](https://www.circle.com/pressroom), [official Arc ZIP](https://6778953.fs1.hubspotusercontent-na1.net/hubfs/6778953/Brand/Arc/Arc_Logos.zip), `Arc Network Icon/Arc_network.svg`              | Original SVG, unchanged                                                                                                                     |

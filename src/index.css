@@ -2169,6 +2169,34 @@ code {
   background: #c696ef14;
   margin: 15px 0;
 }
+.wallet-option {
+  min-height: 54px;
+  padding: 8px 14px;
+}
+.wallet-option > .ql-content {
+  justify-content: flex-start;
+  gap: 12px;
+  text-align: left;
+}
+.wallet-option > .ql-content > svg:last-child {
+  margin-left: auto;
+  color: #a69bb9;
+}
+.wallet-logo {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  color: #bdb5ce;
+}
+.wallet-logo img {
+  display: block;
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+  border-radius: 8px;
+}
 /* Responsive layouts retain all routes and controls. */
 @media (min-width: 1550px) {
   .main-col {

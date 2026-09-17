@@ -264,6 +264,78 @@ test('wallet connects, adds Arc, reads balance, tracks account events and discon
   await expect(page.locator('.wallet-address')).toHaveCount(0)
 })
 
+test('wallet picker loads every official logo and handles broken extension icons', async ({
+  page,
+}) => {
+  await unlock(page)
+  await page.addInitScript(() => {
+    const names = ['Rabby Wallet', 'Coinbase Wallet', 'MetaMask', 'Phantom', 'TronLink']
+    const wallets = names.map((name) => ({
+      info: { uuid: name, name },
+      provider: {
+        request: async () => {
+          throw Error('Unexpected connection request')
+        },
+      },
+    }))
+    wallets.push({
+      info: {
+        uuid: 'broken-icon',
+        name: 'Broken icon wallet',
+        icon: 'data:image/png;base64,broken',
+      },
+      provider: {
+        request: async () => {
+          throw Error('Unexpected connection request')
+        },
+      },
+    })
+    window.ethereum = {
+      isMetaMask: true,
+      request: async () => {
+        throw Error('Unexpected connection request')
+      },
+    }
+    window.addEventListener('eip6963:requestProvider', () => {
+      wallets.forEach((detail) =>
+        window.dispatchEvent(new CustomEvent('eip6963:announceProvider', { detail })),
+      )
+    })
+  })
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Connect wallet', exact: true }).click()
+  const dialog = page.getByRole('dialog')
+  await expect(dialog.locator('.wallet-option')).toHaveCount(7)
+  await expect(
+    dialog
+      .getByRole('button', { name: 'Broken icon wallet', exact: true })
+      .locator('.wallet-logo svg'),
+  ).toBeVisible()
+  const images = dialog.locator('.wallet-option img')
+  await expect(images).toHaveCount(6)
+  await expect
+    .poll(() =>
+      images.evaluateAll((items) =>
+        items.every((image) => image.complete && image.naturalWidth > 0),
+      ),
+    )
+    .toBe(true)
+  for (const name of [
+    'Rabby Wallet',
+    'Coinbase Wallet',
+    'MetaMask',
+    'Phantom',
+    'TronLink',
+    'Browser wallet',
+  ]) {
+    await expect(dialog.getByRole('button', { name, exact: true })).toBeEnabled()
+  }
+  await dialog.screenshot({ path: 'artifacts/wallet-logos-desktop.png' })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await dialog.screenshot({ path: 'artifacts/wallet-logos-mobile.png' })
+  expect(await dialog.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true)
+})
+
 test('rejected and missing wallet connections never manufacture an account', async ({ page }) => {
   await injectWallet(page, { reject: true })
   await unlock(page)

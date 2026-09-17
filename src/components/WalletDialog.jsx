@@ -1,8 +1,9 @@
 import { formatUnits } from 'viem'
-import { Wallet } from 'lucide-react'
+import { ChevronRight } from 'lucide-react'
 import { arc, explorerAddress } from '../config/network'
 import { useWallet } from '../context/WalletContext'
 import { Button, Modal } from './UI'
+import WalletIcon from './WalletIcon'
 
 export default function WalletDialog({ open, onClose }) {
   const wallet = useWallet()
@@ -13,7 +14,7 @@ export default function WalletDialog({ open, onClose }) {
       title={wallet.account ? 'Your wallet' : 'Connect a wallet'}
     >
       <div className="dialog-icon">
-        <Wallet size={30} />
+        <WalletIcon wallet={wallet.selected} />
       </div>
       {wallet.account ? (
         <>
@@ -59,11 +60,13 @@ export default function WalletDialog({ open, onClose }) {
           {wallet.wallets.map((item) => (
             <Button
               key={item.info.uuid}
-              className="full-width"
+              className="full-width wallet-option"
               disabled={wallet.busy}
               onClick={() => wallet.connect(item)}
             >
-              {wallet.busy ? 'Check your wallet…' : item.info.name}
+              <WalletIcon wallet={item} />
+              <span>{wallet.busy ? 'Check your wallet…' : item.info.name}</span>
+              <ChevronRight size={16} aria-hidden="true" />
             </Button>
           ))}
           {!wallet.wallets.length && (
