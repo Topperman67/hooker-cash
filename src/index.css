@@ -333,8 +333,11 @@ b {
   margin-left: 6px;
   flex-shrink: 0;
 }
+.sidebar .brand-lockup {
+  width: 176px;
+}
 .sidebar-caption {
-  margin: 10px 0 20px 9px;
+  margin: 8px 0 20px 10px;
   color: var(--text-dim);
   font-size: 10px;
 }
@@ -350,7 +353,7 @@ b {
   align-items: center;
   min-height: 44px;
   padding: 0 10px;
-  gap: 10px;
+  gap: 9px;
   color: #b9b5c3;
   font-size: 12px;
   border: 1px solid transparent;
@@ -366,24 +369,19 @@ b {
   border-color: #c5d4d124;
   box-shadow: inset 0 1px 0 #ffffff08;
 }
-.nav-icon {
-  display: grid;
-  place-items: center;
-  width: 28px;
-  height: 28px;
+.nav-artwork {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
   flex-shrink: 0;
-  color: #aaa8b6;
-  border: 1px solid #d6d9e20a;
-  border-radius: 8px;
-  background: #dde0ec04;
+  opacity: 0.8;
 }
-.nav-item:hover .nav-icon {
-  color: #d5d3dd;
+.nav-label {
+  white-space: nowrap;
 }
-.nav-item.active .nav-icon {
-  color: #b9cec8;
-  border-color: #c5d4d119;
-  background: #c5d4d107;
+.nav-item:hover .nav-artwork,
+.nav-item.active .nav-artwork {
+  opacity: 1;
 }
 .nav-active-dot {
   height: 5px;
@@ -398,10 +396,30 @@ b {
   font-size: 15px;
   color: #aaa8b6;
 }
-.sidebar-bottom {
+.sidebar-footer {
   margin-top: auto;
-  padding-top: 12px;
+  padding-top: 14px;
   flex-shrink: 0;
+}
+.sidebar-help {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 42px;
+  padding: 10px;
+  border-top: 1px solid #cec6da14;
+  color: #aaa4b8;
+  font-size: 11px;
+  line-height: 1.4;
+}
+.sidebar-help:hover {
+  color: var(--text-h);
+}
+.sidebar-help svg {
+  flex-shrink: 0;
+}
+.sidebar-help svg:last-child {
+  margin-left: auto;
 }
 .switch {
   width: 28px;
@@ -432,17 +450,6 @@ b {
 .mod-toggle.on .switch::after {
   transform: translateX(12px);
   background: #e4d8ff;
-}
-.help-link {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 11px 7px 0;
-  font-size: 10px;
-  color: var(--text-dim);
-}
-.help-link svg:last-child {
-  margin-left: auto;
 }
 .main-col {
   margin-left: calc(var(--sidebar-w) + 28px);
@@ -2114,7 +2121,7 @@ code {
 }
 @media (max-width: 1250px) {
   :root {
-    --sidebar-w: 200px;
+    --sidebar-w: 216px;
   }
   .app-shell {
     padding-right: 20px;
@@ -2971,13 +2978,17 @@ code {
   .sidebar-caption {
     display: none;
   }
-  .sidebar-bottom {
+  .sidebar-footer {
     padding-top: 6px;
   }
 }
 @media (max-height: 600px) and (min-width: 901px) {
   .nav-item {
     min-height: 36px;
+  }
+  .nav-artwork {
+    width: 30px;
+    height: 30px;
   }
 }
 @media (max-height: 560px) and (max-width: 900px) {
@@ -3002,9 +3013,12 @@ code {
     padding: 0 6px;
     gap: 6px;
   }
-  .nav-icon {
-    width: 24px;
-    height: 24px;
+  .nav-artwork {
+    width: 26px;
+    height: 26px;
+  }
+  .nav-item {
+    font-size: 11px;
   }
   .nav-item:last-child {
     grid-column: 1 / -1;

@@ -121,9 +121,28 @@ test('sidebar uses distinct section icons and keeps the glass surface', async ({
   await unlock(page)
   await page.addInitScript(() => localStorage.setItem('hooker_glass_lightweight_v1', '1'))
   await page.goto('/')
-  await expect(page.locator('.nav-icon svg')).toHaveCount(9)
-  await expect(page.locator('a[href="/trade"] .lucide-arrow-left-right')).toBeVisible()
-  await expect(page.locator('a[href="/agents"] .lucide-bot')).toBeVisible()
+  const artwork = page.locator('.nav-artwork')
+  await expect(artwork).toHaveCount(9)
+  await expect(page.locator('a[href="/trade"] .nav-artwork')).toHaveAttribute(
+    'src',
+    '/brand/navigation/platinum/trade.png',
+  )
+  await expect(page.locator('a[href="/agents"] .nav-artwork')).toHaveAttribute(
+    'src',
+    '/brand/navigation/platinum/agents.png',
+  )
+  await expect
+    .poll(() =>
+      artwork.evaluateAll((images) =>
+        images.every((image) => image.complete && image.naturalWidth > 0),
+      ),
+    )
+    .toBe(true)
+  expect(
+    await artwork.evaluateAll((images) => new Set(images.map((image) => image.src)).size),
+  ).toBe(9)
+  await expect(page.locator('.sidebar')).not.toContainText('A little hook.')
+  await expect(page.getByRole('link', { name: 'Help & resources' })).toBeVisible()
   await expect(page.locator('.glass-mode')).toHaveCount(0)
   await expect(page.getByRole('button', { name: /liquid glass|light glass/i })).toHaveCount(0)
   await expect(page.locator('.ql-lens').first()).toBeAttached()
@@ -137,6 +156,49 @@ test('sidebar uses distinct section icons and keeps the glass surface', async ({
     )
     .toContain('url(')
   await page.screenshot({ path: 'artifacts/hookbrew-real-home.png', fullPage: true })
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 939, height: 898 },
+    { width: 1024, height: 600 },
+    { width: 1024, height: 500 },
+    { width: 390, height: 844 },
+    { width: 844, height: 390 },
+    { width: 390, height: 500 },
+    { width: 320, height: 480 },
+  ]) {
+    await page.setViewportSize(viewport)
+    if (viewport.width <= 900) {
+      await page.getByRole('button', { name: 'Open navigation' }).click()
+    }
+    const layout = await page.locator('.sidebar').evaluate((sidebar) => {
+      const bounds = sidebar.getBoundingClientRect()
+      const rows = [...sidebar.querySelectorAll('.nav-item, .sidebar-help')]
+      return {
+        fits: rows.every((row) => {
+          const rect = row.getBoundingClientRect()
+          return (
+            rect.top >= bounds.top &&
+            rect.bottom <= bounds.bottom &&
+            rect.bottom <= innerHeight &&
+            row.scrollWidth <= row.clientWidth
+          )
+        }),
+        scrolls: sidebar.scrollHeight > sidebar.clientHeight,
+        footerOverlaps:
+          sidebar.querySelector('.sidebar-help').getBoundingClientRect().top <
+          sidebar.querySelector('nav').getBoundingClientRect().bottom,
+      }
+    })
+    expect(layout, `${viewport.width}x${viewport.height}`).toEqual({
+      fits: true,
+      scrolls: false,
+      footerOverlaps: false,
+    })
+    await page.locator('.sidebar').screenshot({
+      path: `artifacts/sidebar-platinum/${viewport.width}x${viewport.height}.png`,
+    })
+    if (viewport.width <= 900) await page.keyboard.press('Escape')
+  }
 })
 
 test('real address lookup decodes metadata and preserves full precision', async ({ page }) => {

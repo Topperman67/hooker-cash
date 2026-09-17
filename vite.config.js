@@ -14,5 +14,14 @@ export default defineConfig({
       },
     },
   ],
-  server: { port: 5173, host: true },
+  server: {
+    port: 5173,
+    host: true,
+    // Windows can miss atomic file replacements and keep stale transformed components.
+    watch: {
+      usePolling: process.platform === 'win32',
+      interval: 500,
+      ignored: ['**/.hookbrew-data/**', '**/artifacts/**'],
+    },
+  },
 })
