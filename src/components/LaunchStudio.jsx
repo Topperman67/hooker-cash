@@ -13,7 +13,6 @@ import {
   approval,
   amount,
   balances,
-  defaultDraft,
   eventFrom,
   launchParams,
   minimum,
@@ -27,17 +26,9 @@ import {
 } from '../lib/protocol'
 import { useTransaction } from '../lib/useTransaction'
 import { readableError } from '../lib/chain'
+import { draftKey, stepKey, restoreDraft, restoreStep } from '../lib/launchDraft'
 
 const steps = ['Identity', 'Pool & supply', 'Launch rules', 'Recipients', 'Review & launch']
-const draftKey = 'hookbrew:launch-draft:v1'
-function initial() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(draftKey))
-    return { ...defaultDraft, ...saved, splits: Array.isArray(saved?.splits) ? saved.splits : [] }
-  } catch {
-    return { ...defaultDraft }
-  }
-}
 export function Field({ label, hint, children }) {
   const id = useId()
   return (
@@ -64,8 +55,8 @@ export function Metric({ label, value }) {
   )
 }
 export default function LaunchStudio() {
-  const [draft, setDraft] = useState(initial),
-    [step, setStep] = useState(0),
+  const [draft, setDraft] = useState(restoreDraft),
+    [step, setStep] = useState(() => restoreStep(draft)),
     [error, setError] = useState(''),
     [uploading, setUploading] = useState(false),
     [estimate, setEstimate] = useState(null),
@@ -86,15 +77,19 @@ export default function LaunchStudio() {
     if (!same(e.creator, record.account) || !same(e.token, record.token))
       throw Error('Receipt does not match your reviewed launch.')
     await api('/api/sync', {}).catch(() => {})
-    localStorage.removeItem(draftKey)
+    try {
+      localStorage.removeItem(draftKey)
+      localStorage.removeItem(stepKey)
+    } catch {}
     navigate(`/token/${e.token}?launched=${receipt.transactionHash}`)
   })
   const locked = tx.busy || !!tx.pending
   useEffect(() => {
     try {
       localStorage.setItem(draftKey, JSON.stringify(draft))
+      localStorage.setItem(stepKey, String(step))
     } catch {}
-  }, [draft])
+  }, [draft, step])
   useEffect(() => {
     revision.current++
     setEstimate(null)
@@ -148,6 +143,7 @@ export default function LaunchStudio() {
     const version = revision.current
     try {
       validateDraft(draft)
+      await currentDeployment()
       await verifyDeployment(deployment)
       if (!wallet.account) throw Error('Connect a wallet to simulate your launch.')
       const initialBuy = Number(draft.initialBuy) ? amount(draft.initialBuy) : 0n
@@ -204,8 +200,25 @@ export default function LaunchStudio() {
       setChecking(false)
     }
   }
+  async function currentDeployment() {
+    const current = await platform.refresh()
+    if (!current)
+      throw Error(
+        'Could not verify launch availability. Your draft is saved. Retry status before signing.',
+      )
+    if (current.storage?.ready === false) throw Error(current.storage.error)
+    if (
+      !current.deployment ||
+      !same(current.deployment.factory, deployment?.factory) ||
+      !same(current.deployment.router, deployment?.router)
+    )
+      throw Error(
+        'The active deployment changed. Your draft is saved; refresh the simulation before signing.',
+      )
+  }
   async function approve() {
     await tx.run(async (status) => {
+      await currentDeployment()
       await verifyDeployment(deployment)
       const request = approval(deployment.quote, deployment.factory, estimate.value)
       const checked = await simulate(wallet, request)
@@ -222,6 +235,7 @@ export default function LaunchStudio() {
         Date.now() - estimate.at > 60000
       )
         throw Error('Refresh the launch simulation before confirming.')
+      await currentDeployment()
       await verifyDeployment(deployment)
       const checked = await simulate(wallet, estimate.request)
       if (!same(checked.result[0], estimate.token))
@@ -605,7 +619,26 @@ export default function LaunchStudio() {
                       </div>
                     ))}
                   </div>
-                  {!deployment ? (
+                  {platform.loading || platform.error || platform.storage?.ready === false ? (
+                    <div className="product-note" role={platform.loading ? 'status' : 'alert'}>
+                      <div>
+                        <h3>
+                          {platform.loading
+                            ? 'Checking launch availability…'
+                            : 'Launch temporarily unavailable'}
+                        </h3>
+                        <p>
+                          {platform.error ||
+                            platform.storage?.error ||
+                            'Checking the active contracts before continuing.'}
+                        </p>
+                        <p>Your token draft and review step are saved.</p>
+                        {!platform.loading && (
+                          <Button onClick={platform.refresh}>Retry status</Button>
+                        )}
+                      </div>
+                    </div>
+                  ) : !deployment ? (
                     <div className="product-note">
                       <FlaskConical size={23} />
                       <div>
@@ -614,7 +647,7 @@ export default function LaunchStudio() {
                           Your draft is saved. Deploy the new factory and router with your treasury
                           to open live launches.
                         </p>
-                        <Button to="/setup">
+                        <Button to="/setup?returnTo=launch">
                           Open deployment setup <ArrowRight size={16} />
                         </Button>
                       </div>

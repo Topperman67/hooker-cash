@@ -1,12 +1,15 @@
 import { readFile, writeFile, mkdir, rename } from 'node:fs/promises'
 import { resolve } from 'node:path'
+import { randomUUID } from 'node:crypto'
 import { decodeEventLog, erc20Abi, parseAbiItem, formatUnits } from 'viem'
 import { priceFromSqrt, decodeTrade } from './market-math.mjs'
 const swapEvent = parseAbiItem(
   'event Swap(bytes32 indexed id,address indexed sender,int128 amount0,int128 amount1,uint160 sqrtPriceX96,uint128 liquidity,int24 tick,uint24 fee)',
 )
-export function createIndexer({ client, config, abi, dataDir }) {
+export function createIndexer({ client, config, abi, dataDir, store }) {
   const file = resolve(dataDir, `index-${config.chainId}-${config.factory.toLowerCase()}.json`)
+  const storeKey = `index:${config.chainId}:${config.factory.toLowerCase()}`
+  let lease = null
   let state = {
       cursor: Number(config.startBlock) - 1,
       blockHash: null,
@@ -17,15 +20,27 @@ export function createIndexer({ client, config, abi, dataDir }) {
     },
     running = false,
     loaded = false
-  async function load() {
-    if (loaded) return
+  async function load(refresh = false) {
+    if ((loaded && !refresh) || (running && refresh)) return
     loaded = true
     try {
-      const s = JSON.parse(await readFile(file, 'utf8'))
-      if (s.factory === config.factory && s.chainId === config.chainId) state = s
-    } catch {}
+      const s = store ? await store.get(storeKey) : JSON.parse(await readFile(file, 'utf8'))
+      if (refresh && running) return
+      if (s?.factory === config.factory && s.chainId === config.chainId) state = s
+    } catch (e) {
+      if (store) {
+        loaded = false
+        throw e
+      }
+    }
   }
   async function save(snapshot = state) {
+    if (store)
+      return store.saveIndex(
+        storeKey,
+        { ...snapshot, factory: config.factory, chainId: config.chainId },
+        lease,
+      )
     await mkdir(dataDir, { recursive: true })
     const temp = file + '.tmp'
     await writeFile(
@@ -38,6 +53,12 @@ export function createIndexer({ client, config, abi, dataDir }) {
     if (running) return
     running = true
     try {
+      if (store) {
+        lease = randomUUID()
+        if (!(await store.set(`${storeKey}:lock`, lease, { nx: true, ttl: 55000 }))) return
+        // Reload while holding the lease, so an older instance cannot overwrite newer progress.
+        loaded = false
+      }
       await load()
       if ((await client.getChainId()) !== config.chainId)
         throw Error('Indexer RPC is on the wrong chain')
@@ -157,6 +178,8 @@ export function createIndexer({ client, config, abi, dataDir }) {
     } catch (e) {
       state.error = e.shortMessage || e.message
     } finally {
+      if (store && lease) await store.release(`${storeKey}:lock`, lease).catch(() => {})
+      lease = null
       running = false
     }
   }

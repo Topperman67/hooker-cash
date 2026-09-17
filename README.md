@@ -2,7 +2,7 @@
 
 An Arc / Uniswap V4 launch venue with its own contracts, a five-stage launch studio, event indexer, and in-site trading terminal. The midnight liquid-glass interface uses QuickLiquid and the original Hookbrew logo assets.
 
-**The implementation is available locally. A live Hookbrew deployment has not been broadcast.** Open `/setup` to review and deploy the factory and router using your wallet. The configured protocol treasury is `0x2e01dD8dF4A4fb06Ea62a944a658E9ae01DB2ac4`.
+Open `/setup` to check the active venue or finish activation of existing deployment receipts. The configured protocol treasury is `0x2e01dD8dF4A4fb06Ea62a944a658E9ae01DB2ac4`.
 
 ## Implemented
 
@@ -43,6 +43,19 @@ Set `HOST=0.0.0.0` when required by your host, `PORT` (default 5173), `HOOKBREW_
 
 `npm run preview` is a frontend-only Vite preview; use `npm start` for the complete application. Static-only hosting does not run this indexer/API.
 
+### Vercel hosting
+
+Vercel function memory and `/tmp` are disposable and are not shared between instances. The Vercel adapter requires shared Redis storage for deployment state, short-lived authorizations, token artwork/metadata, and index checkpoints. It refuses activation and uploads when storage is missing, before any wallet transaction is requested.
+
+1. In the **hooker-cash** Vercel project's **Storage** tab, connect an **Upstash Redis** database to **Production**. The integration should supply `UPSTASH_REDIS_REST_URL` and `UPSTASH_REDIS_REST_TOKEN` (the older `KV_REST_API_URL` and `KV_REST_API_TOKEN` names also work). These are server-only secrets; never use a `VITE_` prefix or commit them.
+2. Set `HOOKBREW_PUBLIC_URL=https://hooker-cash.vercel.app` and redeploy the latest `main` commit. The adapter can also use Vercel's production URL when no explicit URL is supplied.
+3. Confirm `/api/status` reports `storage.mode: "redis"` and `storage.ready: true`.
+4. Return to `/setup` in the browser used to deploy. Its saved factory/router transaction hashes are preserved. Finish the gas-free treasury activation using those receipts, then choose **Continue your token launch**. Do not redeploy contracts already shown as confirmed.
+
+Use a persistent database with eviction disabled; activation and metadata must not expire. `HOOKBREW_STORAGE_PREFIX` defaults to `hookbrew:v1`. Do not share production storage with previews; use a separate database/prefix if enabling writes in previews. Media is content-addressed and capped by `HOOKBREW_MEDIA_LIMIT_MB`; choose a Redis plan that supports the app's maximum 2.2 MB upload request size. The index is rebuildable from chain events and uses expiring leases plus conditional writes to prevent stale instances from overwriting newer checkpoints. Vercel `waitUntil` keeps each bounded index pass alive after the HTTP response.
+
+If an older deployment used `/tmp`, its temporary activation record may already be gone. The public receipts saved by the setup page are enough to re-verify the existing contracts and authorize the venue again. Previously lost artwork/metadata needs to be restored from backups; on-chain metadata URLs cannot be changed.
+
 ## Activate your venue
 
 1. Run the public HTTPS application with durable storage and a stable public URL. Metadata URLs written on-chain are immutable.
@@ -51,7 +64,7 @@ Set `HOST=0.0.0.0` when required by your host, `PORT` (default 5173), `HOOKBREW_
 4. Connect the configured treasury wallet and sign the deployment-specific activation message. This authorization costs no gas. Server verification also supports ERC-1271 signatures.
 5. The server verifies both transactions against this exact compiled build and starts indexing your factory. Open `/create` to launch.
 
-The setup page stores public transaction hashes and can export a deployment record. Back up `.hookbrew-data` (or the configured directory), especially `deployment.json` and `media/`. Index files can be rebuilt from chain events. Run one server process per data directory; JSON persistence is intended for a single-instance venue, not a distributed indexer.
+The setup page stores public transaction hashes and can export a deployment record. For filesystem hosting, back up `.hookbrew-data` (or the configured directory), especially `deployment.json` and `media/`, and run one server process per directory. For Vercel, back up the connected Redis database. Index files can be rebuilt from chain events. Activation is idempotent for the same transaction hashes; different receipts cannot overwrite the active venue. The launch studio saves both the draft and current step, and rechecks server availability before every launch or approval.
 
 Native USDC pays launch fees and gas. ERC20 USDC at `0x3600000000000000000000000000000000000000` is the pool’s trading asset. A live launch requires a public HTTPS metadata origin. The flat launch fee is 1 native USDC, paid directly to the configured treasury.
 

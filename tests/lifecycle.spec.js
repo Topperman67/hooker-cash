@@ -16,12 +16,14 @@ import {
   erc20Abi,
 } from 'viem'
 import { createApplication } from '../server/application.mjs'
+import { sharedStore } from './fixtures/shared-store.mjs'
 
 // Real Uniswap V4 contracts, isolated local chain and unlocked TEST accounts only.
 // No mainnet RPC is contacted, no user's wallet is used, and no fixture data enters production.
 let node,
   server,
   app,
+  secondApp,
   dataDir,
   origin,
   client,
@@ -151,8 +153,9 @@ test.beforeAll(async () => {
   await rpcCall('hardhat_mine', ['0x3'])
   await rpcCall('evm_setIntervalMining', [500])
   process.env.HOOKBREW_PUBLIC_URL = 'https://fixture.hookbrew.test'
-  app = await createApplication({
+  const applicationOptions = {
     dataDir,
+    store: sharedStore(),
     client,
     treasury: accounts[0],
     infrastructure: {
@@ -164,8 +167,11 @@ test.beforeAll(async () => {
       create2: proxy,
       rpcUrl: rpc,
     },
-  })
-  server = createServer((req, res) => app.middleware(req, res))
+  }
+  app = await createApplication(applicationOptions)
+  secondApp = await createApplication(applicationOptions)
+  let requestNumber = 0
+  server = createServer((req, res) => (requestNumber++ % 2 ? secondApp : app).middleware(req, res))
   await new Promise((r) => server.listen(0, '127.0.0.1', r))
   origin = `http://127.0.0.1:${server.address().port}`
   const challenge = await apiCall('/api/deployment/challenge', {
@@ -181,9 +187,15 @@ test.beforeAll(async () => {
       routerTx: router.hash,
     })
   ).deployment
+  // A lost response can be retried on either instance without another signature.
+  expect(
+    (await apiCall('/api/deployment/activate', { factoryTx, routerTx: router.hash })).alreadyActive,
+  ).toBe(true)
+  expect((await apiCall('/api/status')).deployment.factory).toBe(config.factory)
 })
 test.afterAll(async () => {
   app?.close()
+  secondApp?.close()
   if (server) await new Promise((r) => server.close(r))
   node?.kill()
   if (dataDir) {

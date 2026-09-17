@@ -40,6 +40,8 @@ test('studio validates identity, economics, splits and vesting, and restores the
   await expect(page.getByRole('link', { name: /Open deployment setup/ })).toBeVisible()
   await expect(page.locator('.review-list')).toContainText('vesting enabled')
   await page.reload()
+  await expect(page.getByRole('heading', { name: 'Ready for the first pour?' })).toBeVisible()
+  await page.getByRole('button', { name: /Identity/ }).click()
   await expect(page.getByLabel('Token name', { exact: false })).toHaveValue('Moon Milk')
   expect(
     await page.evaluate(

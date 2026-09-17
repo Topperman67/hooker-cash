@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { useOutletContext } from 'react-router-dom'
+import { useOutletContext, useSearchParams } from 'react-router-dom'
 import {
   encodeDeployData,
   getCreate2Address,
@@ -29,6 +29,7 @@ function restore() {
   }
 }
 export default function SetupPage() {
+  const [search] = useSearchParams()
   const platform = usePlatform(),
     wallet = useWallet(),
     { onConnect } = useOutletContext()
@@ -45,6 +46,24 @@ export default function SetupPage() {
     },
     [],
   )
+  useEffect(() => {
+    generation.current++
+    setPrepared(null)
+  }, [wallet.account, wallet.chainId, platform.deployment])
+  async function needsDeployment() {
+    const current = await platform.refresh()
+    if (!current)
+      throw Error(
+        'Could not check the active deployment. Retry status before sending any transaction.',
+      )
+    if (current.storage?.ready === false) throw Error(current.storage.error)
+    if (current.deployment) {
+      setPrepared(null)
+      setStatus('Your contracts are already active. Continue to your saved token draft.')
+      return false
+    }
+    return true
+  }
   const tx = useTransaction('deployment', (receipt, record) => {
     const next =
       record.kind === 'factory'
@@ -69,6 +88,7 @@ export default function SetupPage() {
     setPrepared(null)
     const version = ++generation.current
     try {
+      if (!(await needsDeployment())) return
       await checkWallet(wallet)
       if ((await publicClient.getChainId()) !== i.chainId)
         throw Error('Deployment RPC is on the wrong chain.')
@@ -182,6 +202,10 @@ export default function SetupPage() {
     await tx.run(async (setTxStatus) => {
       if (!prepared || Date.now() - prepared.at > 120000 || !same(prepared.account, wallet.account))
         throw Error('Prepare the deployment again to refresh its estimate.')
+      if (!(await needsDeployment()))
+        throw Error(
+          'Hookbrew is already active. Continue to your token draft; no deployment was sent.',
+        )
       const client = await checkWallet(wallet)
       await publicClient.estimateGas({ ...prepared.request, account: wallet.account })
       setTxStatus(`Confirm ${prepared.kind} deployment in your wallet.`)
@@ -204,6 +228,7 @@ export default function SetupPage() {
     setError('')
     setStatus('Requesting treasury authorization…')
     try {
+      if (!(await needsDeployment())) return
       const client = await checkWallet(wallet)
       if (!same(wallet.account, platform.treasury))
         throw Error(`Connect the treasury wallet ${platform.treasury} to activate this venue.`)
@@ -211,16 +236,24 @@ export default function SetupPage() {
         factoryTx: progress.factoryTx,
         routerTx: progress.routerTx,
       })
+      if (challenge.deployment) {
+        platform.acceptDeployment(challenge.deployment)
+        setStatus('Your contracts are already active. Continue to your saved token draft.')
+        return
+      }
       const signature = await client.signMessage({ message: challenge.message })
-      await api('/api/deployment/activate', {
+      const result = await api('/api/deployment/activate', {
         ...challenge,
         signature,
         factoryTx: progress.factoryTx,
         routerTx: progress.routerTx,
       })
-      platform.refresh()
+      if (!result.deployment)
+        throw Error('Activation returned no deployment. Check status before retrying.')
+      platform.acceptDeployment(result.deployment)
       setStatus('Hookbrew is active. The indexer is following your factory.')
     } catch (e) {
+      if (e.data?.deployment) platform.acceptDeployment(e.data.deployment)
       setError(readableError(e))
       setStatus('')
     } finally {
@@ -228,6 +261,7 @@ export default function SetupPage() {
     }
   }
   const locked = busy || tx.busy || !!tx.pending
+  const unavailable = platform.loading || platform.error || platform.storage?.ready === false
   return (
     <>
       <PageHeading
@@ -280,7 +314,9 @@ export default function SetupPage() {
                 </div>
               </div>
               <Button primary to="/create">
-                Launch your first token
+                {search.get('returnTo') === 'launch'
+                  ? 'Continue your token launch'
+                  : 'Open token launch studio'}
               </Button>
             </>
           ) : (
@@ -317,7 +353,24 @@ export default function SetupPage() {
                   </div>
                 ))}
               </div>
-              {!wallet.account ? (
+              {unavailable ? (
+                <div className="product-note" role={platform.loading ? 'status' : 'alert'}>
+                  <div>
+                    <h3>
+                      {platform.loading
+                        ? 'Checking deployment status…'
+                        : 'Deployment temporarily unavailable'}
+                    </h3>
+                    <p>
+                      {platform.error ||
+                        platform.storage?.error ||
+                        'Checking the active contracts before continuing.'}
+                    </p>
+                    <p>Your saved transaction receipts are preserved.</p>
+                    {!platform.loading && <Button onClick={platform.refresh}>Retry status</Button>}
+                  </div>
+                </div>
+              ) : !wallet.account ? (
                 <Button primary onClick={onConnect}>
                   Connect deployer wallet
                 </Button>
@@ -336,7 +389,7 @@ export default function SetupPage() {
                     : `Prepare ${progress.factoryTx ? 'router' : 'factory'} deployment`}
                 </Button>
               )}
-              {prepared && (
+              {prepared && !unavailable && (
                 <div className="deployment-review">
                   <h3>Review {prepared.kind} deployment</h3>
                   <p>
@@ -355,13 +408,6 @@ export default function SetupPage() {
                   </Button>
                 </div>
               )}
-              {status && <p role="status">{status}</p>}
-              {error && (
-                <p className="form-error" role="alert">
-                  {error}
-                </p>
-              )}
-              <TransactionStatus tx={tx} />
               {
                 <details>
                   <summary>Deployment records</summary>
@@ -417,6 +463,13 @@ export default function SetupPage() {
               }
             </>
           )}
+          {status && <p role="status">{status}</p>}
+          {error && (
+            <p className="form-error" role="alert">
+              {error}
+            </p>
+          )}
+          <TransactionStatus tx={tx} />
         </Glass>
         <aside>
           <Glass className="setup-aside" radius={24}>
@@ -434,9 +487,8 @@ export default function SetupPage() {
               </p>
             </div>
             <p className="fine-print">
-              Before launching tokens, run this app on a persistent HTTPS host with
-              HOOKBREW_PUBLIC_URL set. Keep its data directory backed up for token artwork and
-              metadata.
+              Activation registers your existing contracts. It does not launch a token or charge
+              gas. After activation, return directly to your saved launch review.
             </p>
           </Glass>
         </aside>

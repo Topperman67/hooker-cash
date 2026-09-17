@@ -1,4 +1,5 @@
 import { createApplication } from '../server/application.mjs'
+import { waitUntil } from '@vercel/functions'
 
 let appPromise
 
@@ -6,6 +7,10 @@ async function getApp() {
   if (!appPromise) {
     appPromise = createApplication({
       dataDir: process.env.HOOKBREW_DATA_DIR || '/tmp/hookbrew-data',
+      serverless: true,
+    }).catch((error) => {
+      appPromise = null
+      throw error
     })
   }
   return appPromise
@@ -44,6 +49,11 @@ export default async function handler(req, res) {
       res.end(JSON.stringify({ error: 'Not found' }))
     })
     await done
+    // Serverless instances can stop as soon as the response ends. Register the
+    // bounded index pass with the platform instead of relying on setInterval.
+    waitUntil(
+      Promise.resolve(app.sync()).catch((error) => console.error('Hookbrew index:', error.message)),
+    )
   } catch (e) {
     if (!res.headersSent) {
       res.statusCode = e.status || 500

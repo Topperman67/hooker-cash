@@ -18,6 +18,7 @@
   "dependencies": {
     "@fontsource-variable/dm-sans": "^5.3.0",
     "@fontsource-variable/outfit": "^5.3.0",
+    "@vercel/functions": "^3.9.8",
     "lightweight-charts": "^5.2.0",
     "lucide-react": "^1.46.0",
     "quick-liquid": "^0.1.2",

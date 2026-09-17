@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 export async function api(path, body, signal) {
   const response = await fetch(path, {
     signal,
+    cache: 'no-store',
     ...(body === undefined
       ? {}
       : {
@@ -11,7 +12,11 @@ export async function api(path, body, signal) {
         }),
   })
   const data = await response.json()
-  if (!response.ok) throw Error(data.error || 'The server could not complete this request.')
+  if (!response.ok)
+    throw Object.assign(Error(data.error || 'The server could not complete this request.'), {
+      status: response.status,
+      data,
+    })
   return data
 }
 export function useResource(path, interval = 15000) {

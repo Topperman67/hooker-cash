@@ -1,4 +1,4 @@
-import { readFile, writeFile, mkdir, rename, readdir, stat } from 'node:fs/promises'
+import { readFile, writeFile, mkdir, link, unlink, readdir, stat } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { randomBytes, createHash } from 'node:crypto'
@@ -13,6 +13,7 @@ import {
 import { treasury as configuredTreasury, arcInfrastructure } from './settings.mjs'
 import { createIndexer } from './indexer.mjs'
 import { candlesFor } from './market-math.mjs'
+import { configuredStore } from './storage.mjs'
 import abi from '../src/generated/protocol.json' with { type: 'json' }
 
 const json = (res, status, data) => {
@@ -30,6 +31,18 @@ export async function createApplication(options = {}) {
   let activating = false
   const dataDir = resolve(options.dataDir || process.env.HOOKBREW_DATA_DIR || '.hookbrew-data')
   const deploymentFile = resolve(dataDir, 'deployment.json')
+  const store = options.store || configuredStore()
+  const serverless = options.serverless === true
+  const storage = {
+    mode: store ? 'redis' : serverless ? 'unconfigured' : 'filesystem',
+    ready: !!store || !serverless,
+    ...(!store && serverless
+      ? {
+          error:
+            'Persistent storage is not connected. Connect an Upstash Redis database to this Vercel project before activating or launching. Your saved deployment receipts can be reused; no redeployment is needed.',
+        }
+      : {}),
+  }
   const mediaLimit =
     options.mediaLimitBytes || Number(process.env.HOOKBREW_MEDIA_LIMIT_MB || 256) * 1024 * 1024
   let mediaBytes = 0,
@@ -52,26 +65,113 @@ export async function createApplication(options = {}) {
         retryCount: 1,
       }),
     })
-  const challenges = new Map(),
-    limits = new Map()
+  const limits = new Map()
   async function activateLocal(next) {
+    const nextIndexer = createIndexer({ client, config: next, abi, dataDir, store })
+    await nextIndexer.load()
     config = next
-    indexer = createIndexer({ client, config, abi, dataDir })
-    await indexer.load()
-    indexer.sync()
+    indexer = nextIndexer
     if (timer) clearInterval(timer)
-    timer = setInterval(() => indexer.sync(), 10000)
-    timer.unref()
+    if (!serverless) {
+      indexer.sync()
+      timer = setInterval(() => indexer.sync(), 10000)
+      timer.unref()
+    }
   }
-  try {
-    const saved = JSON.parse(await readFile(deploymentFile, 'utf8'))
+  async function storedDeployment() {
+    if (!storage.ready) return null
+    if (store) return store.get('deployment')
+    try {
+      return JSON.parse(await readFile(deploymentFile, 'utf8'))
+    } catch (e) {
+      if (e.code === 'ENOENT') return null
+      throw e
+    }
+  }
+  async function refreshDeployment() {
+    const saved = await storedDeployment()
+    if (!saved) {
+      if (config)
+        throw Error(
+          'The active deployment record is unavailable. Restore persistent storage before continuing.',
+        )
+      return
+    }
     if (saved.chainId !== infrastructure.chainId || !same(saved.treasury, treasury))
       throw Error('Stored deployment differs from configured chain/treasury')
-    await activateLocal(saved)
-  } catch (e) {
-    if (e.code !== 'ENOENT') console.warn('Hookbrew deployment:', e.message)
+    if (JSON.stringify(saved) !== JSON.stringify(config)) await activateLocal(saved)
+  }
+  // Read on each request: warm instances must observe activation by another instance.
+  async function saveDeployment(value) {
+    if (store) return store.set('deployment', value, { nx: true })
+    await mkdir(dataDir, { recursive: true })
+    const temporary = `${deploymentFile}.${randomBytes(12).toString('hex')}.tmp`
+    await writeFile(temporary, JSON.stringify(value, null, 2))
+    try {
+      await link(temporary, deploymentFile)
+      return true
+    } catch (e) {
+      if (e.code === 'EEXIST') return false
+      throw e
+    } finally {
+      await unlink(temporary)
+    }
+  }
+  async function saveChallenge(nonce, value) {
+    if (store) return store.set(`challenge:${nonce}`, value, { ttl: 300000 })
+    await mkdir(resolve(dataDir, 'challenges'), { recursive: true })
+    // Expired authorizations are never accepted, and old files are pruned here.
+    for (const name of await readdir(resolve(dataDir, 'challenges'))) {
+      const file = resolve(dataDir, 'challenges', name)
+      try {
+        if ((await stat(file)).mtimeMs < Date.now() - 300000) await unlink(file)
+      } catch {}
+    }
+    await writeFile(resolve(dataDir, 'challenges', nonce), JSON.stringify(value))
+  }
+  async function getChallenge(nonce) {
+    if (!/^[a-f0-9]{40}$/.test(nonce || '')) return null
+    if (store) return store.get(`challenge:${nonce}`)
+    try {
+      return JSON.parse(await readFile(resolve(dataDir, 'challenges', nonce), 'utf8'))
+    } catch (e) {
+      if (e.code === 'ENOENT') return null
+      throw e
+    }
+  }
+  function existingDeployment(res, supplied) {
+    if (!config) return false
+    const matches =
+      same(supplied.factoryTx, config.factoryTx) && same(supplied.routerTx, config.routerTx)
+    json(res, matches ? 200 : 409, {
+      deployment: config,
+      alreadyActive: true,
+      ...(!matches
+        ? {
+            error:
+              'A different Hookbrew deployment is already active. Continue with the active venue; no additional deployment is needed.',
+          }
+        : {}),
+    })
+    return true
   }
   async function body(req, max = 2200000) {
+    // Vercel may provide an already-parsed body instead of a readable stream.
+    if (req.body !== undefined) {
+      const text =
+        typeof req.body === 'string'
+          ? req.body
+          : Buffer.isBuffer(req.body)
+            ? req.body.toString()
+            : JSON.stringify(req.body)
+      if (Buffer.byteLength(text) > max)
+        throw Object.assign(Error('Request body is too large.'), { status: 413 })
+      try {
+        return JSON.parse(text)
+      } catch {
+        throw Error('Invalid JSON.')
+      }
+    }
     let chunks = [],
       size = 0
     for await (const c of req) {
@@ -103,10 +203,14 @@ export async function createApplication(options = {}) {
   function baseUrl(req) {
     return (
       process.env.HOOKBREW_PUBLIC_URL ||
+      (serverless
+        ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL || req.headers.host}`
+        : '') ||
       `${req.socket.encrypted ? 'https' : 'http'}://${req.headers.host}`
     ).replace(/\/$/, '')
   }
   async function media(name, bytes) {
+    if (store) return store.putMedia(name, bytes, mediaLimit)
     const operation = mediaQueue.then(async () => {
       const file = resolve(dataDir, 'media', name)
       try {
@@ -126,6 +230,12 @@ export async function createApplication(options = {}) {
     mediaQueue = operation.catch(() => {})
     return operation
   }
+  async function readMedia(name) {
+    if (!store) return readFile(resolve(dataDir, 'media', name))
+    const value = await store.get(`media:${name}`)
+    if (value === null) throw Object.assign(Error('Not found'), { code: 'ENOENT' })
+    return Buffer.from(value, 'base64')
+  }
   async function middleware(req, res, next = () => json(res, 404, { error: 'Not found' })) {
     const url = new URL(req.url, 'http://hookbrew.local'),
       path = url.pathname
@@ -135,7 +245,7 @@ export async function createApplication(options = {}) {
         const name = path.slice(7)
         if (!/^(?:meta-)?[a-f0-9]{64}\.(?:png|jpg|webp|json)$/.test(name))
           return json(res, 404, { error: 'Not found' })
-        const bytes = await readFile(resolve(dataDir, 'media', name))
+        const bytes = await readMedia(name)
         const ext = name.split('.').at(-1)
         res.writeHead(200, {
           'Content-Type': {
@@ -151,11 +261,18 @@ export async function createApplication(options = {}) {
         })
         return res.end(bytes)
       }
+      try {
+        await refreshDeployment()
+        if (store) await indexer?.load(true)
+      } catch (e) {
+        throw Object.assign(e, { status: 503 })
+      }
       if (req.method === 'GET' && path === '/api/status')
         return json(res, 200, {
           deployment: config,
           treasury,
           infrastructure,
+          storage,
           index: indexer?.status() || null,
         })
       if (req.method === 'GET' && path === '/api/market') {
@@ -219,9 +336,7 @@ export async function createApplication(options = {}) {
         try {
           const u = new URL(token.metadataURI)
           if (/^\/media\/meta-[a-f0-9]{64}\.json$/.test(u.pathname))
-            metadata = JSON.parse(
-              await readFile(resolve(dataDir, 'media', u.pathname.split('/').at(-1)), 'utf8'),
-            )
+            metadata = JSON.parse((await readMedia(u.pathname.split('/').at(-1))).toString('utf8'))
         } catch {}
         return json(res, 200, {
           token: { ...token, metadata },
@@ -230,6 +345,8 @@ export async function createApplication(options = {}) {
         })
       }
       if (req.method === 'POST') writeAllowed(req)
+      if (req.method === 'POST' && !storage.ready)
+        return json(res, 503, { error: storage.error, code: 'STORAGE_UNCONFIGURED' })
       if (req.method === 'POST' && path === '/api/media') {
         const b = await body(req),
           m = String(b.data || '').match(/^data:image\/(png|jpeg|webp);base64,([A-Za-z0-9+/=]+)$/)
@@ -283,9 +400,8 @@ export async function createApplication(options = {}) {
         return json(res, 201, { uri: baseUrl(req) + '/media/' + name })
       }
       if (req.method === 'POST' && path === '/api/deployment/challenge') {
-        if (config)
-          throw Error('A deployment is already active. Change it through server configuration.')
         const supplied = await body(req, 2000)
+        if (existingDeployment(res, supplied)) return
         if (
           !/^0x[0-9a-f]{64}$/i.test(supplied.factoryTx) ||
           !/^0x[0-9a-f]{64}$/i.test(supplied.routerTx)
@@ -294,24 +410,30 @@ export async function createApplication(options = {}) {
         const nonce = randomBytes(20).toString('hex'),
           expires = Date.now() + 300000
         const message = `Activate Hookbrew deployment\nHost: ${req.headers.host}\nChain: ${infrastructure.chainId}\nTreasury: ${getAddress(treasury)}\nFactory transaction: ${supplied.factoryTx}\nRouter transaction: ${supplied.routerTx}\nNonce: ${nonce}\nExpires: ${expires}`
-        challenges.set(nonce, {
+        await saveChallenge(nonce, {
           message,
           expires,
+          host: req.headers.host,
           factoryTx: supplied.factoryTx,
           routerTx: supplied.routerTx,
         })
-        for (const [key, v] of challenges) if (v.expires < Date.now()) challenges.delete(key)
         return json(res, 200, { nonce, message })
       }
       if (req.method === 'POST' && path === '/api/deployment/activate') {
-        if (config || activating)
-          throw Error('A deployment is already active or activation is in progress.')
+        const b = await body(req, 12000)
+        if (existingDeployment(res, b)) return
+        if (activating)
+          throw Object.assign(
+            Error('Activation is in progress. Check deployment status in a moment.'),
+            { status: 409 },
+          )
         activating = true
         try {
-          const b = await body(req, 12000),
-            challenge = challenges.get(b.nonce)
+          const challenge = await getChallenge(b.nonce)
           if (!challenge || challenge.expires < Date.now())
             throw Error('Deployment authorization expired.')
+          if (challenge.host !== req.headers.host)
+            throw Error('Authorization belongs to a different host.')
           if (!same(b.factoryTx, challenge.factoryTx) || !same(b.routerTx, challenge.routerTx))
             throw Error('Authorization is for different deployment transactions.')
           if (
@@ -400,18 +522,20 @@ export async function createApplication(options = {}) {
             sourceReference: 'contracts/protocol @ Hookbrew v1',
             activatedAt: new Date().toISOString(),
           }
-          await mkdir(dataDir, { recursive: true })
-          await writeFile(deploymentFile + '.tmp', JSON.stringify(nextConfig, null, 2))
-          await rename(deploymentFile + '.tmp', deploymentFile)
-          challenges.delete(b.nonce)
-          await activateLocal(nextConfig)
+          const saved = await saveDeployment(nextConfig)
+          await refreshDeployment()
+          if (!saved) {
+            existingDeployment(res, b)
+            return
+          }
           return json(res, 201, { deployment: config })
         } finally {
           activating = false
         }
       }
       if (req.method === 'POST' && path === '/api/sync') {
-        indexer?.sync()
+        if (serverless) await indexer?.sync()
+        else indexer?.sync()
         return json(res, 202, { index: indexer?.status() || null })
       }
       return json(res, 404, { error: 'Endpoint not found.' })
@@ -423,6 +547,7 @@ export async function createApplication(options = {}) {
   }
   return {
     middleware,
+    sync: () => indexer?.sync(),
     close: () => timer && clearInterval(timer),
     client,
     get deployment() {
