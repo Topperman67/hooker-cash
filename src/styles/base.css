@@ -1,0 +1,177 @@
+/* Quant Pad design tokens.
+   Cryostat ink base; a thin-film iridescent spectrum reserved for the wordmark and hero field;
+   one spectral colour per Quantum Hook so allocation reads the same everywhere. */
+:root {
+  --ink: #0c0a1f;
+  --ink-2: #110e28;
+  --surface: #15122e;
+  --surface-2: #1c1840;
+  --surface-3: #241f50;
+  --line: #2a2550;
+  --line-strong: #3b3570;
+  --text: #ece9ff;
+  --text-2: #a7a1d6;
+  --text-3: #7b75ad;
+  --on-light: #0c0a1f;
+
+  --foil-1: #7cf7ff;
+  --foil-2: #b69cff;
+  --foil-3: #ff8ad8;
+  --foil-4: #ffe08a;
+  --foil: linear-gradient(
+    100deg,
+    var(--foil-1) 0%,
+    var(--foil-2) 34%,
+    var(--foil-3) 68%,
+    var(--foil-4) 100%
+  );
+
+  --buy: #3ef0a0;
+  --sell: #ff5c8a;
+  --warn: #ffc857;
+  --focus: #7cf7ff;
+
+  --hook-creator: #d9d4ff;
+  --hook-burn: #ffc857;
+  --hook-entangle: #6be8ff;
+  --hook-fusion: #ff8ad8;
+  --hook-super: #b69cff;
+  --hook-dilation: #9effd2;
+
+  --font-display: 'Unbounded Variable', 'Unbounded', system-ui, sans-serif;
+  --font-ui: 'Manrope Variable', 'Manrope', system-ui, sans-serif;
+
+  /* Type scale: 1.25 ratio from a 16px base. */
+  --t-xs: 0.75rem;
+  --t-sm: 0.875rem;
+  --t-md: 1rem;
+  --t-lg: 1.25rem;
+  --t-xl: 1.5625rem;
+  --t-2xl: 1.953rem;
+  --t-3xl: 2.441rem;
+  --t-4xl: 3.815rem;
+
+  --r-sm: 6px;
+  --r-md: 12px;
+  --r-lg: 20px;
+  --r-pill: 999px;
+  --gutter: clamp(16px, 4vw, 40px);
+  --max: 1320px;
+  color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+html {
+  -webkit-text-size-adjust: 100%;
+  background: var(--ink);
+}
+body {
+  margin: 0;
+  min-height: 100vh;
+  background:
+    radial-gradient(1200px 600px at 85% -10%, rgba(182, 156, 255, 0.08), transparent 60%),
+    radial-gradient(900px 500px at -10% 10%, rgba(124, 247, 255, 0.05), transparent 60%), var(--ink);
+  color: var(--text);
+  font-family: var(--font-ui);
+  font-size: var(--t-md);
+  line-height: 1.55;
+  font-feature-settings: 'tnum' 1;
+  -webkit-font-smoothing: antialiased;
+}
+img {
+  max-width: 100%;
+  display: block;
+}
+a {
+  color: inherit;
+}
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-display);
+  font-weight: 600;
+  line-height: 1.12;
+  letter-spacing: -0.01em;
+  margin: 0;
+  text-wrap: balance;
+}
+h1 {
+  font-size: clamp(var(--t-2xl), 5.4vw, var(--t-4xl));
+}
+h2 {
+  font-size: clamp(var(--t-xl), 3vw, var(--t-2xl));
+}
+h3 {
+  font-size: var(--t-lg);
+}
+p {
+  margin: 0;
+  text-wrap: pretty;
+}
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+::selection {
+  background: rgba(182, 156, 255, 0.4);
+}
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  border: 0;
+}
+.num {
+  font-variant-numeric: tabular-nums;
+}
+.muted {
+  color: var(--text-2);
+}
+.faint {
+  color: var(--text-3);
+}
+.up {
+  color: var(--buy);
+}
+.down {
+  color: var(--sell);
+}
+.foil-text {
+  background: var(--foil);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.wrap {
+  width: 100%;
+  max-width: var(--max);
+  margin: 0 auto;
+  padding: 0 var(--gutter);
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

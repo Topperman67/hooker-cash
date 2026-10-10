@@ -1,89 +1,83 @@
-import { formatUnits } from 'viem'
-import { ChevronRight } from 'lucide-react'
-import { robinhood, explorerAddress } from '../config/network'
-import { useWallet } from '../context/WalletContext'
-import { Button, Modal } from './UI'
-import WalletIcon from './WalletIcon'
+import { Link } from 'react-router-dom'
+import { ExternalLink, LogOut } from 'lucide-react'
+import { Modal, Address, Spinner } from './UI.jsx'
+import { useWallet } from '../context/WalletContext.jsx'
+import { explorer } from '../../shared/network.mjs'
+import { sol, toSol } from '../lib/format.js'
 
-export default function WalletDialog({ open, onClose }) {
-  const wallet = useWallet()
-  return (
-    <Modal
-      open={open}
-      onClose={onClose}
-      title={wallet.account ? 'Your wallet' : 'Connect a wallet'}
-    >
-      <div className="dialog-icon">
-        <WalletIcon wallet={wallet.selected} />
-      </div>
-      {wallet.account ? (
-        <>
-          <a
-            className="wallet-address"
-            href={explorerAddress(wallet.account)}
-            target="_blank"
-            rel="noreferrer"
-          >
-            {wallet.account}
+export default function WalletDialog() {
+  const { wallets, wallet, address, balance, busy, error, select, disconnect, closeDialog } =
+    useWallet()
+  if (address)
+    return (
+      <Modal title="Your wallet" onClose={closeDialog} labelledBy="wallet-title">
+        <dl className="kv" style={{ marginBottom: 20 }}>
+          <dt>Wallet</dt>
+          <dd>{wallet?.name}</dd>
+          <dt>Address</dt>
+          <dd>
+            <Address value={address} href={explorer.account(address)} head={6} tail={6} />
+          </dd>
+          <dt>Balance</dt>
+          <dd className="num">{balance == null ? '—' : sol(toSol(balance))}</dd>
+        </dl>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <Link className="btn" to="/portfolio" onClick={closeDialog}>
+            Portfolio
+          </Link>
+          <a className="btn" href={explorer.account(address)} target="_blank" rel="noreferrer">
+            Solscan <ExternalLink size={14} aria-hidden="true" />
           </a>
-          <div className="preview-stat">
-            <span>Wallet network</span>
-            <span>
-              {wallet.chainId === robinhood.id ? 'Robinhood Chain' : `Chain ${wallet.chainId}`}
-            </span>
-          </div>
-          {wallet.chainId === robinhood.id ? (
-            <div className="preview-stat">
-              <span>ETH balance</span>
-              <span>
-                {wallet.balance === null ? 'Unavailable' : formatUnits(wallet.balance, 18)}
-              </span>
-            </div>
-          ) : (
-            <Button primary disabled={wallet.busy} onClick={wallet.switchNetwork}>
-              Switch to Robinhood Chain
-            </Button>
-          )}
-          {wallet.balanceError && (
-            <p role="status" className="fine-print">
-              Balance unavailable: {wallet.balanceError}
-            </p>
-          )}
-          <Button className="full-width" disabled={wallet.busy} onClick={wallet.disconnect}>
-            Disconnect
-          </Button>
-        </>
-      ) : (
-        <>
-          <p>
-            Select your installed wallet. Connecting requests your public account; it does not sign
-            a transaction.
-          </p>
-          {wallet.wallets.map((item) => (
-            <Button
-              key={item.info.uuid}
-              className="full-width wallet-option"
-              disabled={wallet.busy}
-              onClick={() => wallet.connect(item)}
+          <button
+            className="btn btn-ghost"
+            onClick={() => {
+              disconnect()
+              closeDialog()
+            }}
+          >
+            <LogOut size={14} aria-hidden="true" /> Disconnect
+          </button>
+        </div>
+      </Modal>
+    )
+  return (
+    <Modal title="Connect a Solana wallet" onClose={closeDialog} labelledBy="wallet-title">
+      {wallets.length ? (
+        <div className="wallet-list">
+          {wallets.map((w) => (
+            <button
+              key={w.name}
+              className="wallet-option"
+              onClick={() => select(w)}
+              disabled={busy}
             >
-              <WalletIcon wallet={item} />
-              <span>{wallet.busy ? 'Check your wallet…' : item.info.name}</span>
-              <ChevronRight size={16} aria-hidden="true" />
-            </Button>
+              {w.icon && <img src={w.icon} alt="" />}
+              <span>{w.name}</span>
+              {busy && <Spinner />}
+            </button>
           ))}
-          {!wallet.wallets.length && (
-            <p role="status">
-              No wallet was detected. Open Hookbrew in a browser with an Ethereum-compatible wallet
-              extension or your wallet’s in-app browser.
-            </p>
-          )}
-        </>
+        </div>
+      ) : (
+        <div className="notice">
+          <p>
+            <strong>No Solana wallet found in this browser.</strong> Install Phantom, Solflare or
+            Backpack, then reload this page.
+          </p>
+          <p style={{ marginTop: 10 }}>
+            <a href="https://phantom.com/download" target="_blank" rel="noreferrer">
+              Get Phantom
+            </a>
+          </p>
+        </div>
       )}
-      {wallet.error && (
-        <p className="form-error" role="alert">
-          {wallet.error}
+      {error && (
+        <p className="error-text" role="alert" style={{ marginTop: 12 }}>
+          {error}
         </p>
       )}
+      <p className="faint" style={{ marginTop: 16, fontSize: 'var(--t-xs)' }}>
+        Quant Pad only asks your wallet to sign transactions you review. It never sees your keys.
+      </p>
     </Modal>
   )
 }

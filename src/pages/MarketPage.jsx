@@ -1,197 +1,163 @@
 import { useEffect, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
-import { isAddress } from 'viem'
-import { ArrowUpRight, FlaskConical, Search } from 'lucide-react'
-import Glass from '../components/Glass'
-import { Button, PageHeading, TokenAvatar } from '../components/UI'
-import TokenLookup from '../components/TokenLookup'
-import { useResource, number, eth } from '../lib/api'
-export default function MarketPage({ trading = false }) {
-  const [params, setParams] = useSearchParams(),
-    q = params.get('q') || '',
-    sort = params.get('sort') || 'newest',
-    fee = params.get('fee') || '',
-    offset = Number(params.get('offset')) || 0
-  const [input, setInput] = useState(q)
-  useEffect(() => setInput(q), [q])
-  const result = useResource(
-    `/api/market?q=${encodeURIComponent(q)}&sort=${sort}&fee=${fee}&offset=${offset}`,
-    10000,
-  )
-  function filter(key, value) {
-    const p = new URLSearchParams(params)
-    value ? p.set(key, value) : p.delete(key)
-    if (key !== 'offset') p.delete('offset')
-    setParams(p)
+import { useNavigate, useSearchParams } from 'react-router-dom'
+import { LayoutGrid, List } from 'lucide-react'
+import { CoinCard, CoinSkeletons, CoinTable } from '../components/CoinList.jsx'
+import { Empty, Segmented } from '../components/UI.jsx'
+import { useResource } from '../lib/api.js'
+import { isAddress } from '../../shared/network.mjs'
+
+const SORTS = [
+  ['trending', 'Trending'],
+  ['newest', 'Newest'],
+  ['mcap', 'Market cap'],
+  ['volume', 'Volume'],
+  ['progress', 'Curve progress'],
+]
+const FILTERS = [
+  ['all', 'All'],
+  ['quantum', 'Quantum'],
+  ['graduated', 'Graduated'],
+  ['tracked', 'Tracked'],
+]
+const VIEW_KEY = 'quantpad:market-view'
+
+export default function MarketPage() {
+  const [params, setParams] = useSearchParams()
+  const navigate = useNavigate()
+  const sort = params.get('sort') || 'trending'
+  const filter = params.get('filter') || 'all'
+  const q = params.get('q') || ''
+  const [text, setText] = useState(q)
+  const [view, setView] = useState(() => {
+    try {
+      return localStorage.getItem(VIEW_KEY) || 'grid'
+    } catch {
+      return 'grid'
+    }
+  })
+  const [offset, setOffset] = useState(0)
+  useEffect(() => setText(q), [q])
+  useEffect(() => setOffset(0), [sort, filter, q])
+  const query = new URLSearchParams({ sort, filter, q, offset: String(offset) })
+  const market = useResource(`/api/market?${query}`, 15000)
+
+  const update = (patch) => {
+    const next = new URLSearchParams(params)
+    for (const [k, v] of Object.entries(patch)) v ? next.set(k, v) : next.delete(k)
+    setParams(next, { replace: true })
   }
+  const changeView = (v) => {
+    setView(v)
+    try {
+      localStorage.setItem(VIEW_KEY, v)
+    } catch {}
+  }
+  const items = market.data?.items || []
+
   return (
-    <div className="market-workspace">
-      <PageHeading
-        title={trading ? 'Find your next trade.' : 'Fresh brews. Open markets.'}
-        description={
-          trading
-            ? 'Choose a market to open its live chart and buy or sell with your wallet.'
-            : 'Explore tokens launched on Hookbrew. Every listing comes from a confirmed on-chain launch.'
-        }
-        action={
-          <Button primary to="/create">
-            <FlaskConical size={16} /> Launch a token
-          </Button>
-        }
-      />
-      <div className="market-context">
-        <span>
-          <img src="/brand/robinhood/robinhood-eth.png" alt="" width="22" height="22" />
-          Robinhood Chain markets
-        </span>
-        <span>Native ETH pairs</span>
-        <span>
-          {result.data?.total != null
-            ? `${result.data.total} indexed tokens`
-            : 'Reading the index…'}
-        </span>
-      </div>
-      <Glass className="product-market-toolbar" radius={20}>
+    <div className="wrap market">
+      <header className="page-head">
+        <h1>Market</h1>
+        <p className="muted">
+          Coins launched through Quant Pad. Paste any pump.fun mint to open and trade it here.
+        </p>
+      </header>
+      <div className="market-bar">
         <form
+          className="market-search"
+          role="search"
           onSubmit={(e) => {
             e.preventDefault()
-            filter('q', input.trim())
+            const value = text.trim()
+            if (isAddress(value)) navigate(`/coin/${value}`)
+            else update({ q: value })
           }}
         >
-          <Search size={18} />
+          <label className="sr-only" htmlFor="market-q">
+            Search by name, ticker or mint
+          </label>
           <input
-            aria-label="Token contract address"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Search tokens, symbols or addresses…"
+            id="market-q"
+            className="input"
+            placeholder="Name, ticker or mint address"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
           />
-          <Button type="submit">Search</Button>
         </form>
-        <div>
-          <select
-            aria-label="Sort markets"
-            value={sort}
-            onChange={(e) => filter('sort', e.target.value)}
+        <Segmented
+          label="Filter"
+          value={filter}
+          onChange={(v) => update({ filter: v === 'all' ? '' : v })}
+          options={FILTERS}
+        />
+        <Segmented
+          label="Sort"
+          value={sort}
+          onChange={(v) => update({ sort: v })}
+          options={SORTS}
+        />
+        <div className="segmented" role="group" aria-label="View">
+          <button
+            type="button"
+            aria-pressed={view === 'grid'}
+            aria-label="Grid view"
+            onClick={() => changeView('grid')}
           >
-            <option value="newest">Newest launches</option>
-            <option value="volume">24h volume</option>
-            <option value="mcap">Market cap</option>
-          </select>
-          <select
-            aria-label="Filter pool fee"
-            value={fee}
-            onChange={(e) => filter('fee', e.target.value)}
+            <LayoutGrid size={14} />
+          </button>
+          <button
+            type="button"
+            aria-pressed={view === 'table'}
+            aria-label="Table view"
+            onClick={() => changeView('table')}
           >
-            <option value="">All pool fees</option>
-            {[1, 2, 3, 4, 5].map((n) => (
-              <option key={n} value={n * 10000}>
-                {n}% fee
-              </option>
-            ))}
-          </select>
-        </div>
-      </Glass>
-      {isAddress(q) && <TokenLookup address={q} />}
-      {result.error && (
-        <p className="form-error" role="alert">
-          Market unavailable: {result.error} <button onClick={result.refresh}>Retry</button>
-        </p>
-      )}
-      {result.data?.index?.error && (
-        <p className="form-error">Market index delayed: {result.data.index.error}</p>
-      )}
-      {!!result.data?.items.length ? (
-        <Glass className="market-table-panel" radius={24}>
-          <div className="table-scroll">
-            <table className="product-table market-table">
-              <thead>
-                <tr>
-                  <th>Token</th>
-                  <th>Price / ETH</th>
-                  <th>Market cap</th>
-                  <th>24h volume</th>
-                  <th>24h change</th>
-                  <th>Pool fee</th>
-                  <th />
-                </tr>
-              </thead>
-              <tbody>
-                {result.data.items.map((t) => (
-                  <tr key={t.address}>
-                    <td>
-                      <Link to={`/token/${t.address}`} className="market-token">
-                        <TokenAvatar token={t} />
-                        <span>
-                          <strong>{t.name}</strong>
-                          <small>{t.symbol}</small>
-                        </span>
-                      </Link>
-                    </td>
-                    <td>{eth(t.price)}</td>
-                    <td>{eth(t.marketCap)}</td>
-                    <td>{eth(t.volume24h)}</td>
-                    <td className={t.change24h >= 0 ? 'text-mint' : 'text-rose'}>
-                      {t.change24h == null
-                        ? '—'
-                        : `${t.change24h >= 0 ? '+' : ''}${number(t.change24h)}%`}
-                    </td>
-                    <td>{t.fee / 10000}%</td>
-                    <td>
-                      <Link to={`/token/${t.address}`} aria-label={`Trade ${t.name}`}>
-                        <ArrowUpRight size={18} />
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </Glass>
-      ) : (
-        !result.error && (
-          <Glass className="product-empty market-empty" radius={26}>
-            <div className="market-empty-symbol" aria-hidden="true">
-              <img src="/brand/navigation/robinhood/market.svg" alt="" width="62" height="62" />
-            </div>
-            <span className="eyebrow">Room for your next idea</span>
-            <h2>
-              {result.loading
-                ? 'Reading the market…'
-                : q || fee
-                  ? 'No matching brews.'
-                  : result.data?.deployment
-                    ? 'Be the first to brew.'
-                    : 'Your launch venue is ready to set up.'}
-            </h2>
-            <p>
-              {q || fee
-                ? 'Try a different name, address or fee tier.'
-                : result.data?.deployment
-                  ? 'Confirmed launches appear here automatically, with their own chart and trading terminal.'
-                  : 'Deploy Hookbrew’s contracts with your treasury, then launch the first token. You can build and save your token draft now.'}
-            </p>
-            <div className="product-actions">
-              <Button primary to="/create">
-                Open launch studio
-              </Button>
-              {!result.data?.deployment && <Button to="/setup">Set up contracts</Button>}
-            </div>
-          </Glass>
-        )
-      )}
-      <div className="product-inline market-pagination">
-        <span>{result.data?.total ?? '—'} indexed tokens · ETH quote markets</span>
-        <div className="product-actions">
-          {offset > 0 && (
-            <Button onClick={() => filter('offset', String(Math.max(0, offset - 24)))}>
-              Previous
-            </Button>
-          )}
-          {result.data?.next != null && (
-            <Button onClick={() => filter('offset', String(result.data.next))}>Next</Button>
-          )}
+            <List size={14} />
+          </button>
         </div>
       </div>
+
+      {market.loading && !market.data ? (
+        <CoinSkeletons />
+      ) : market.error && !market.data ? (
+        <Empty title="The market could not load">{market.error}</Empty>
+      ) : items.length ? (
+        <>
+          {view === 'grid' ? (
+            <div className="coin-grid">
+              {items.map((c) => (
+                <CoinCard key={c.mint} coin={c} />
+              ))}
+            </div>
+          ) : (
+            <CoinTable items={items} />
+          )}
+          <div className="pager">
+            <button
+              className="btn"
+              disabled={!offset}
+              onClick={() => setOffset(Math.max(0, offset - 24))}
+            >
+              Previous
+            </button>
+            <span className="faint num">
+              {offset + 1}–{offset + items.length} of {market.data.total}
+            </span>
+            <button
+              className="btn"
+              disabled={market.data.next == null}
+              onClick={() => setOffset(market.data.next)}
+            >
+              Next
+            </button>
+          </div>
+        </>
+      ) : (
+        <Empty title={q ? `Nothing matches “${q}”` : 'No coins here yet'}>
+          {q
+            ? 'Try a ticker, a name, or paste a pump.fun mint address.'
+            : 'Launched coins appear here once their launch confirms.'}
+        </Empty>
+      )}
     </div>
   )
 }

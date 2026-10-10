@@ -1,123 +1,193 @@
-import { useEffect, useId, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
-import { X } from 'lucide-react'
-import Glass from './Glass'
-import { safeLink } from '../lib/api'
+import { useEffect, useRef, useState } from 'react'
+import { Check, Copy, X } from 'lucide-react'
+import { short } from '../lib/format.js'
+import { MODULES } from '../lib/hooks.js'
 
-export function Button({ to, children, primary = false, className = '', ...props }) {
+export function Spinner({ block, label }) {
+  if (!block) return <span className="spinner" role="status" aria-label={label || 'Loading'} />
   return (
-    <Glass
-      as={to ? Link : 'button'}
-      to={to}
-      type={to ? undefined : 'button'}
-      variant="control"
-      tone={primary ? 'green' : 'neutral'}
-      interactive
-      className={`btn ${primary ? 'btn-primary' : 'btn-secondary'} ${className}`}
-      {...props}
-    >
-      {children}
-    </Glass>
+    <div className="spinner-block" role="status">
+      <span className="spinner" />
+      {label && <span>{label}</span>}
+    </div>
   )
 }
 
-export function Logo({ compact = false }) {
+export function Empty({ title, children, action }) {
   return (
-    <span className={`brand ${compact ? 'brand-compact' : ''}`}>
-      <img
-        className={compact ? 'brand-icon' : 'brand-lockup'}
-        src={`/brand/hookbrew/hookbrew-${compact ? 'icon' : 'logo'}.png`}
-        alt="Hookbrew"
-        width={compact ? 1254 : 2172}
-        height={compact ? 1254 : 724}
-        decoding="async"
-      />
-    </span>
-  )
-}
-
-const brandAssets = {
-  robinhood: '/brand/robinhood/robinhood-eth.png',
-  'robinhood-blue': '/brand/robinhood/robinhood-eth.png',
-  eth: '/brand/eth/eth.svg',
-  uniswap: '/brand/uniswap/uniswap.svg',
-}
-
-export function BrandMark({ name, alt = '' }) {
-  return (
-    <img
-      className={`brand-mark brand-mark-${name}`}
-      src={brandAssets[name]}
-      alt={alt}
-      width="32"
-      height="32"
-    />
-  )
-}
-
-export function PageHeading({ title, description, action }) {
-  return (
-    <div className="page-heading">
-      <div>
-        <h1 className="page-title">{title}</h1>
-        <p className="page-sub">{description}</p>
-      </div>
+    <div className="empty">
+      <h3>{title}</h3>
+      {children && <p>{children}</p>}
       {action}
     </div>
   )
 }
 
-export function TokenAvatar({ token, small = false }) {
-  const [failedToken, setFailedToken] = useState(null)
-  const image = safeLink(token.metadata?.image || token.image)
-  // A refreshed market record retries artwork after a temporary delivery failure.
-  const hasImage = image && token !== failedToken
+export function CoinAvatar({ src, symbol, size = 40 }) {
+  const [failed, setFailed] = useState(false)
+  const style = { '--s': `${size}px` }
+  if (src && !failed)
+    return (
+      <img
+        className="avatar"
+        style={style}
+        src={src}
+        alt=""
+        loading="lazy"
+        onError={() => setFailed(true)}
+      />
+    )
   return (
-    <span
-      className={`token-avatar ${hasImage ? 'token-artwork' : 'token-initials'} ${small ? 'small' : ''}`}
-      aria-hidden="true"
-    >
-      {hasImage ? (
-        <img
-          key={image}
-          src={image}
-          alt=""
-          decoding="async"
-          onError={() => setFailedToken(token)}
-        />
-      ) : (
-        (token.symbol || token.name || '?').slice(0, 2).toUpperCase()
-      )}
+    <span className="avatar" style={style} aria-hidden="true">
+      {(symbol || '?').slice(0, 2)}
     </span>
   )
 }
-export function Modal({ open, onClose, title, children }) {
-  const dialog = useRef(null)
-  const titleId = useId()
-  useEffect(() => {
-    const el = dialog.current
-    if (open && !el.open) el.showModal()
-    if (!open && el.open) el.close()
-  }, [open])
+
+export function CopyButton({ value, label = 'Copy' }) {
+  const [done, setDone] = useState(false)
   return (
-    <dialog
-      ref={dialog}
-      className="modal"
-      aria-labelledby={titleId}
-      onClose={onClose}
-      onClick={(event) => {
-        if (event.target === event.currentTarget) onClose()
+    <button
+      type="button"
+      className="copy"
+      aria-label={done ? 'Copied' : label}
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(value)
+          setDone(true)
+          setTimeout(() => setDone(false), 1400)
+        } catch {}
       }}
     >
-      <Glass className="modal-body">
+      {done ? <Check size={14} /> : <Copy size={14} />}
+    </button>
+  )
+}
+
+export function Address({ value, href, head = 4, tail = 4 }) {
+  if (!value) return <span className="faint">—</span>
+  return (
+    <span className="address">
+      {href ? (
+        <a href={href} target="_blank" rel="noreferrer">
+          {short(value, head, tail)}
+        </a>
+      ) : (
+        short(value, head, tail)
+      )}
+      <CopyButton value={value} label="Copy address" />
+    </span>
+  )
+}
+
+export function Stat({ label, children, className = '' }) {
+  return (
+    <div className={`stat ${className}`}>
+      <dt>{label}</dt>
+      <dd>{children}</dd>
+    </div>
+  )
+}
+
+export function CurveProgress({ progress = 0, complete }) {
+  const value = complete ? 100 : Math.max(0, Math.min(100, progress || 0))
+  return (
+    <div className={`curve ${complete ? 'curve-done' : ''}`}>
+      <div
+        className="curve-track"
+        role="progressbar"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(value)}
+        aria-label="Bonding curve progress"
+      >
+        <div
+          className="curve-fill"
+          style={{ width: `${Math.max(value, complete ? 100 : 1.5)}%` }}
+        />
+      </div>
+      <div className="curve-meta">
+        <span>{complete ? 'Graduated to PumpSwap' : 'Bonding curve'}</span>
+        <span className="num">{value.toFixed(value < 10 ? 1 : 0)}%</span>
+      </div>
+    </div>
+  )
+}
+
+export function AllocationBar({ hooks, legend = true }) {
+  const parts = MODULES.map((m) => ({ ...m, value: Number(hooks?.[m.key] || 0) })).filter(
+    (p) => p.value > 0,
+  )
+  return (
+    <div>
+      <div
+        className="alloc-bar"
+        role="img"
+        aria-label={parts.map((p) => `${p.name} ${p.value / 100}%`).join(', ')}
+      >
+        {parts.map((p) => (
+          <span key={p.key} style={{ flexBasis: `${p.value / 100}%`, background: p.color }} />
+        ))}
+      </div>
+      {legend && (
+        <div className="alloc-legend">
+          {parts.map((p) => (
+            <span key={p.key}>
+              <i style={{ background: p.color }} />
+              {p.name}{' '}
+              <span className="num">
+                {(p.value / 100).toLocaleString('en-US', { maximumFractionDigits: 2 })}%
+              </span>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+export function Modal({ title, onClose, children, labelledBy = 'modal-title' }) {
+  const ref = useRef(null)
+  useEffect(() => {
+    const previous = document.activeElement
+    ref.current?.querySelector('button, [href], input, select, textarea')?.focus()
+    const onKey = (e) => e.key === 'Escape' && onClose()
+    document.addEventListener('keydown', onKey)
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.body.style.overflow = ''
+      previous?.focus?.()
+    }
+  }, [onClose])
+  return (
+    <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal" role="dialog" aria-modal="true" aria-labelledby={labelledBy} ref={ref}>
         <div className="modal-head">
-          <h2 id={titleId}>{title}</h2>
-          <button type="button" className="icon-button" onClick={onClose} aria-label="Close dialog">
-            <X size={20} />
+          <h3 id={labelledBy}>{title}</h3>
+          <button
+            type="button"
+            className="btn btn-ghost icon-btn"
+            aria-label="Close"
+            onClick={onClose}
+          >
+            <X size={18} />
           </button>
         </div>
         {children}
-      </Glass>
-    </dialog>
+      </div>
+    </div>
+  )
+}
+
+export function Segmented({ value, onChange, options, label }) {
+  return (
+    <div className="segmented" role="group" aria-label={label}>
+      {options.map(([key, text]) => (
+        <button key={key} type="button" aria-pressed={value === key} onClick={() => onChange(key)}>
+          {text}
+        </button>
+      ))}
+    </div>
   )
 }

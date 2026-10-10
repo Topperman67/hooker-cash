@@ -1,240 +1,157 @@
-import {
-  ArrowRight,
-  ArrowUpRight,
-  FlaskConical,
-  RefreshCw,
-  LockKeyhole,
-  SlidersHorizontal,
-  Users,
-} from 'lucide-react'
 import { Link } from 'react-router-dom'
-import HookStack from '../components/HookStack'
-import { BrandMark, Button, TokenAvatar } from '../components/UI'
-import { useChain } from '../context/ChainContext'
-import { useResource, eth } from '../lib/api'
-import { hookModules } from '../data/hookModules'
-import { network } from '../../shared/network.mjs'
-import { formatUnits } from 'viem'
+import WaveField from '../components/WaveField.jsx'
+import { CoinCard, CoinSkeletons } from '../components/CoinList.jsx'
+import { Empty } from '../components/UI.jsx'
+import { useResource } from '../lib/api.js'
+import { usePlatform } from '../context/PlatformContext.jsx'
+import { EXTRAS, MODULES } from '../lib/hooks.js'
+import { compact, sol, usd } from '../lib/format.js'
 
 export default function HomePage() {
-  const market = useResource('/api/market?sort=newest', 15000)
-  const chain = useChain()
-  const tokens = market.data?.items || []
+  const latest = useResource('/api/market?sort=newest', 15000)
+  const trending = useResource('/api/market?sort=trending', 20000)
+  const stats = useResource('/api/stats', 30000)
+  const { solUsd, quantum } = usePlatform()
+  const s = stats.data
 
   return (
-    <div className="landing">
-      <section className="landing-hero" aria-labelledby="landing-title">
-        <div className="landing-stage">
-          <div className="landing-copy">
-            <div className="landing-eyebrow">
-              <BrandMark name="robinhood" />A new home for your next idea
-            </div>
-            <h1 id="landing-title">
-              Brew something
-              <br />
-              worth trading.
-            </h1>
-            <p>
-              Create a token. Give it your own rules. Open an ETH market on Robinhood Chain, with a
-              little help from Uniswap V4.
+    <>
+      <section className="hero">
+        <div className="wrap hero-grid">
+          <div className="hero-copy">
+            <h1>Launch on pump.fun. Route every fee through Quantum Hooks.</h1>
+            <p className="hero-lede">
+              Quant Pad creates your coin on pump.fun and points its creator fees at an on-chain
+              program. Each pulse of fees is split by rules you lock at launch: buy back and burn,
+              pay holders, fund liquidity, pay your team.
             </p>
-            <div className="landing-actions">
-              <Button to="/create" primary>
-                Launch a token <ArrowUpRight size={18} />
-              </Button>
-              <Link to="/market" className="landing-text-link">
-                Explore the market <ArrowRight size={17} />
+            <div className="hero-actions">
+              <Link to="/launch" className="btn btn-primary btn-lg">
+                Launch a coin
+              </Link>
+              <Link to="/market" className="btn btn-lg">
+                Explore the market
               </Link>
             </div>
-            <span className="landing-note">
-              <span>
-                {formatUnits(BigInt(network.launchFee), network.quoteDecimals)} ETH launch fee
-              </span>
-              <span>+ network gas</span>
-            </span>
+            <p className="hero-facts">
+              {s ? (
+                <>
+                  <span className="num">{compact(s.coins)}</span> coins launched,{' '}
+                  <span className="num">{compact(s.quantum)}</span> with hooks,{' '}
+                  <span className="num">
+                    {s.volume24h
+                      ? solUsd
+                        ? usd(s.volume24h * solUsd)
+                        : sol(s.volume24h)
+                      : '0 SOL'}
+                  </span>{' '}
+                  traded in the last 24 hours.
+                </>
+              ) : (
+                'Coins trade on pump.fun’s bonding curve and graduate to PumpSwap automatically.'
+              )}
+            </p>
           </div>
-          <div className="landing-visual">
-            <div className="architecture-heading">
-              <span>The anatomy of a brew</span>
-              <span>Uniswap V4</span>
-            </div>
-            <HookStack />
-            <div className="architecture-footnote">
-              <LockKeyhole size={13} /> Seed liquidity, permanently locked
-            </div>
-          </div>
-        </div>
-        <div className="landing-foundations" aria-label="Built with">
-          <span>
-            <BrandMark name="robinhood-blue" />
-            Robinhood Chain
-          </span>
-          <span>
-            <BrandMark name="uniswap" />
-            Uniswap V4
-          </span>
-          <span>
-            <BrandMark name="eth" />
-            Native ETH markets
-          </span>
-          <Link to="/docs">
-            Get to know Hookbrew <ArrowUpRight size={14} />
-          </Link>
+          <WaveField className="hero-field" />
         </div>
       </section>
-      {chain.status === 'error' && (
-        <div className="landing-network-error" role="status">
-          <span>Robinhood Chain connection unavailable. Network data may be out of date.</span>
-          <button onClick={chain.retry}>
-            Retry network <RefreshCw size={14} />
-          </button>
+
+      <section className="wrap section">
+        <div className="section-head">
+          <h2>Trending now</h2>
+          <Link to="/market?sort=trending" className="btn btn-ghost">
+            Full market
+          </Link>
         </div>
-      )}
-      <div className="landing-bottom">
-        <section className="landing-market" aria-labelledby="fresh-launches-title">
-          <div className="landing-section-heading">
-            <div>
-              <h2 id="fresh-launches-title">Freshly brewed.</h2>
-              <p>New ideas, straight from the launchpad.</p>
-            </div>
-            <Link to="/market" className="landing-text-link">
-              All tokens <ArrowUpRight size={16} />
+        {trending.loading && !trending.data ? (
+          <CoinSkeletons count={3} />
+        ) : trending.data?.items?.length ? (
+          <div className="coin-grid">
+            {trending.data.items.slice(0, 6).map((c) => (
+              <CoinCard key={c.mint} coin={c} />
+            ))}
+          </div>
+        ) : (
+          <Empty
+            title="No coins yet"
+            action={
+              <Link to="/launch" className="btn btn-primary">
+                Launch the first one
+              </Link>
+            }
+          >
+            Coins launched through Quant Pad appear here as soon as their launch confirms.
+          </Empty>
+        )}
+      </section>
+
+      {latest.data?.items?.length > 0 && (
+        <section className="wrap section">
+          <div className="section-head">
+            <h2>Just launched</h2>
+            <Link to="/market?sort=newest" className="btn btn-ghost">
+              All new coins
             </Link>
           </div>
-          {market.error && (
-            <div className="landing-market-error" role="status">
-              <span>
-                {tokens.length
-                  ? 'Market updates are unavailable. Showing the last loaded data.'
-                  : 'The market is temporarily unavailable.'}
-              </span>
-              <button onClick={market.refresh}>
-                Try again <RefreshCw size={14} />
-              </button>
-            </div>
-          )}
-          {tokens.length > 0 ? (
-            <div className="table-scroll landing-market-table">
-              <table className="product-table">
-                <thead>
-                  <tr>
-                    <th>Token</th>
-                    <th>Market cap / ETH</th>
-                    <th>24h volume / ETH</th>
-                    <th>Trade</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {tokens.slice(0, 4).map((token) => (
-                    <tr key={token.address}>
-                      <td>
-                        <Link className="market-token" to={`/token/${token.address}`}>
-                          <TokenAvatar token={token} />
-                          <span>
-                            <strong>{token.name}</strong>
-                            <small>{token.symbol}</small>
-                          </span>
-                        </Link>
-                      </td>
-                      <td>{eth(token.marketCap)}</td>
-                      <td>{eth(token.volume24h)}</td>
-                      <td>
-                        <Link to={`/token/${token.address}`} aria-label={`Trade ${token.symbol}`}>
-                          <ArrowUpRight size={18} />
-                        </Link>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          ) : (
-            !market.error && (
-              <div className="landing-market-empty" role="status" aria-busy={market.loading}>
-                <span className="landing-empty-icon">
-                  <FlaskConical size={25} strokeWidth={1.3} />
-                </span>
-                <div>
-                  <h3>
-                    {market.loading
-                      ? 'Checking the latest launches…'
-                      : 'The next launch could be yours.'}
-                  </h3>
-                  <p>
-                    {market.loading
-                      ? 'Fetching markets from Hookbrew.'
-                      : 'New tokens land here, ready to discover and trade.'}
-                  </p>
-                </div>
-                {!market.loading && (
-                  <Link to="/create" aria-label="Create the first token">
-                    <ArrowUpRight size={20} />
-                  </Link>
-                )}
-              </div>
-            )
-          )}
-        </section>
-        <section className="landing-studio" aria-labelledby="studio-title">
-          <div className="studio-invitation-icon">
-            <FlaskConical size={26} strokeWidth={1.4} />
+          <div className="coin-grid">
+            {latest.data.items.slice(0, 6).map((c) => (
+              <CoinCard key={c.mint} coin={c} />
+            ))}
           </div>
-          <span className="landing-overline">Your next move</span>
-          <h2 id="studio-title">It starts with a recipe.</h2>
-          <p>
-            Five steps from a blank canvas to your own token. Build your draft now and launch when
-            you’re ready.
+        </section>
+      )}
+
+      <section className="wrap section">
+        <div className="section-head">
+          <h2>How a Quantum launch works</h2>
+        </div>
+        <ol className="steps">
+          <li>
+            <h3>Wire the hooks</h3>
+            <p>
+              Choose how creator fees split between you, burns, holders and liquidity. The rules are
+              written on-chain before your coin exists and can never be changed.
+            </p>
+          </li>
+          <li>
+            <h3>Launch on pump.fun</h3>
+            <p>
+              Your coin is created on pump.fun with its creator set to the coin’s own Quant Pad
+              well, with your dev buy in the same transaction.
+            </p>
+          </li>
+          <li>
+            <h3>Pulse</h3>
+            <p>
+              Every trade pays a creator fee into the well. Pulses collect it and route it: burns,
+              holder epochs and liquidity run automatically, and anyone can trigger them.
+            </p>
+          </li>
+        </ol>
+        {!quantum.available && (
+          <p className="notice" style={{ marginTop: 20 }}>
+            Quantum Hooks are being deployed. Standard pump.fun launches work today; hooked launches
+            unlock once the program is live on mainnet.
           </p>
-          <Link to="/create" className="landing-text-link">
-            Start your recipe <ArrowRight size={16} />
-          </Link>
-        </section>
-      </div>
-      <section className="recipe-discovery" aria-labelledby="recipe-discovery-title">
-        <div className="recipe-discovery-heading">
-          <div>
-            <h2 id="recipe-discovery-title">The hook makes it yours.</h2>
-            <p>Seven modules. Your combination. Set the rules before the first trade.</p>
-          </div>
-          <Link to="/modules" className="landing-text-link">
-            Explore the hooks <ArrowUpRight size={16} />
+        )}
+      </section>
+
+      <section className="wrap section">
+        <div className="section-head">
+          <h2>The hooks</h2>
+          <Link to="/hooks" className="btn btn-ghost">
+            How each hook works
           </Link>
         </div>
-        <div className="recipe-module-list">
-          {hookModules.map(({ key, title, icon: Icon }) => (
-            <span key={key}>
-              <Icon size={19} strokeWidth={1.5} />
-              {title}
-            </span>
+        <div className="hook-grid">
+          {[...MODULES, ...EXTRAS].map((m) => (
+            <article key={m.key} className="hook-tile" style={{ '--c': m.color }}>
+              <h3>{m.name}</h3>
+              <p>{m.body}</p>
+            </article>
           ))}
         </div>
-        <div className="brew-principles">
-          <article>
-            <SlidersHorizontal size={23} strokeWidth={1.4} />
-            <h3>Set the opening.</h3>
-            <p>
-              Choose a {formatUnits(BigInt(network.minMcap), 18)}–
-              {formatUnits(BigInt(network.maxMcap), 18)} ETH starting valuation and a 1–5% pool fee.
-            </p>
-          </article>
-          <article>
-            <Users size={23} strokeWidth={1.4} />
-            <h3>Share your upside.</h3>
-            <p>
-              Split creator payouts with your team. Add holder rewards to share a portion of ETH
-              fees with your community.
-            </p>
-          </article>
-          <article>
-            <LockKeyhole size={23} strokeWidth={1.4} />
-            <h3>Build on clear rules.</h3>
-            <p>
-              Permanent seed liquidity. A fixed 70/30 creator and protocol fee split. Every
-              transaction signed by you.
-            </p>
-          </article>
-        </div>
       </section>
-    </div>
+    </>
   )
 }

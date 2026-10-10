@@ -1,30 +1,28 @@
+import './polyfills.js'
+import '@fontsource-variable/unbounded'
+import '@fontsource-variable/manrope'
+import './styles/base.css'
+import './styles/shell.css'
+import './styles/components.css'
+import './styles/pages.css'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import App from './App.jsx'
-import AppErrorBoundary from './components/AppErrorBoundary.jsx'
-import { ChainProvider } from './context/ChainContext'
-import { WalletProvider } from './context/WalletContext'
-import { PlatformProvider } from './context/PlatformContext'
-import '@fontsource-variable/outfit'
-import '@fontsource-variable/dm-sans'
-import './index.css'
-import './product.css'
-import './landing.css'
-import './workspace.css'
+import { PlatformProvider } from './context/PlatformContext.jsx'
+import { WalletProvider } from './context/WalletContext.jsx'
+import { ToastProvider } from './components/Toasts.jsx'
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
-    <AppErrorBoundary>
-      <BrowserRouter>
-        <ChainProvider>
-          <WalletProvider>
-            <PlatformProvider>
-              <App />
-            </PlatformProvider>
-          </WalletProvider>
-        </ChainProvider>
-      </BrowserRouter>
-    </AppErrorBoundary>
+    <BrowserRouter>
+      <PlatformProvider>
+        <WalletProvider>
+          <ToastProvider>
+            <App />
+          </ToastProvider>
+        </WalletProvider>
+      </PlatformProvider>
+    </BrowserRouter>
   </StrictMode>,
 )
