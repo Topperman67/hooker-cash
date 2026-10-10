@@ -9,7 +9,7 @@ export default function TradesTable({ mint, symbol, launcher }) {
   const trades = useResource(`/api/coins/${mint}/trades${side ? `?side=${side}` : ''}`, 8000)
   const items = trades.data?.items || []
   return (
-    <section className="panel" aria-labelledby="trades-title" style={{ padding: 0 }}>
+    <section className="instrument" aria-labelledby="trades-title" style={{ padding: 0 }}>
       <div className="panel-head" style={{ padding: '16px 16px 0' }}>
         <h3 id="trades-title">Trades</h3>
         <Segmented

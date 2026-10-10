@@ -1,5 +1,5 @@
 import { Link } from 'react-router-dom'
-import WaveField from '../components/WaveField.jsx'
+import Refractor from '../components/Refractor.jsx'
 import { CoinCard, CoinSkeletons } from '../components/CoinList.jsx'
 import { Empty } from '../components/UI.jsx'
 import { useResource } from '../lib/api.js'
@@ -13,46 +13,56 @@ export default function HomePage() {
   const stats = useResource('/api/stats', 30000)
   const { solUsd, quantum } = usePlatform()
   const s = stats.data
+  const newest = latest.data?.items?.[0]
 
   return (
     <>
       <section className="hero">
         <div className="wrap hero-grid">
           <div className="hero-copy">
-            <h1>Launch on pump.fun. Route every fee through Quantum Hooks.</h1>
+            <h1 className="hero-title">
+              <span>Launch on pump.fun.</span>
+              <span>Route every fee through</span>
+              <span className="hero-chrome chrome-text">Quantum Hooks.</span>
+            </h1>
             <p className="hero-lede">
               Quant Pad creates your coin on pump.fun and points its creator fees at an on-chain
-              program. Each pulse of fees is split by rules you lock at launch: buy back and burn,
-              pay holders, fund liquidity, pay your team.
+              program. Every pulse of fees is split by rules you lock at launch:{' '}
+              <b>buy back and burn</b>, <b>pay holders in SOL</b>, <b>lock liquidity</b>,{' '}
+              <b>pay your team</b>.
             </p>
             <div className="hero-actions">
               <Link to="/launch" className="btn btn-primary btn-lg">
                 Launch a coin
               </Link>
-              <Link to="/market" className="btn btn-lg">
-                Explore the market
+              <Link to="/hooks" className="btn btn-lg">
+                See how the hooks work
               </Link>
             </div>
-            <p className="hero-facts">
-              {s ? (
-                <>
-                  <span className="num">{compact(s.coins)}</span> coins launched,{' '}
-                  <span className="num">{compact(s.quantum)}</span> with hooks,{' '}
-                  <span className="num">
+            {s && (
+              <dl className="hero-stats">
+                <div>
+                  <dt>Coins launched</dt>
+                  <dd className="num">{compact(s.coins)}</dd>
+                </div>
+                <div>
+                  <dt>With Quantum Hooks</dt>
+                  <dd className="num">{compact(s.quantum)}</dd>
+                </div>
+                <div>
+                  <dt>Traded in 24 h</dt>
+                  <dd className="num">
                     {s.volume24h
                       ? solUsd
                         ? usd(s.volume24h * solUsd)
                         : sol(s.volume24h)
                       : '0 SOL'}
-                  </span>{' '}
-                  traded in the last 24 hours.
-                </>
-              ) : (
-                'Coins trade on pump.fun’s bonding curve and graduate to PumpSwap automatically.'
-              )}
-            </p>
+                  </dd>
+                </div>
+              </dl>
+            )}
           </div>
-          <WaveField className="hero-field" />
+          <Refractor symbol={newest?.symbol} />
         </div>
       </section>
 
@@ -124,7 +134,7 @@ export default function HomePage() {
             <h3>Pulse</h3>
             <p>
               Every trade pays a creator fee into the well. Pulses collect it and route it: burns,
-              holder epochs and liquidity run automatically, and anyone can trigger them.
+              holder payouts and liquidity run automatically, and anyone can trigger them.
             </p>
           </li>
         </ol>
@@ -146,6 +156,7 @@ export default function HomePage() {
         <div className="hook-grid">
           {[...MODULES, ...EXTRAS].map((m) => (
             <article key={m.key} className="hook-tile" style={{ '--c': m.color }}>
+              <span className="hook-line" aria-hidden="true" />
               <h3>{m.name}</h3>
               <p>{m.body}</p>
             </article>

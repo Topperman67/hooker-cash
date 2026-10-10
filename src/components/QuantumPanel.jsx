@@ -18,7 +18,7 @@ const ACTION_LABELS = {
   'close-epoch': 'Epoch closed',
 }
 
-export default function QuantumPanel({ coin }) {
+export default function QuantumPanel({ coin, onLoaded }) {
   const { address, connected, openDialog, sendTransactions } = useWallet()
   const { lookupTable } = usePlatform()
   const toast = useToast()
@@ -41,6 +41,7 @@ export default function QuantumPanel({ coin }) {
         client.pendingCreatorFees(connection, mint).catch(() => null),
       ])
       setState({ client, quantum })
+      if (quantum) onLoaded?.(quantum)
       setPending(waiting)
       setError('')
     } catch (e) {

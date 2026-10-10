@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { LogoMark } from './Logo.jsx'
+import Logo from './Logo.jsx'
 
 const KEY = 'quantpad:risk-accepted:v1'
 const read = () => {
@@ -17,8 +17,8 @@ export default function RiskGate({ children }) {
   return (
     <div className="gate">
       <div className="gate-card">
-        <LogoMark size={44} />
-        <h1>Before you enter Quant Pad</h1>
+        <Logo className="gate-lockup" />
+        <h1>Before you enter</h1>
         <ul>
           <li>
             Coins launched here are memecoins on pump.fun. Most go to zero. Only use SOL you can

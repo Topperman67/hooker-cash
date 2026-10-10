@@ -1,45 +1,73 @@
-# Quant Pad design
+# Quant Pad design: "Refractor"
 
-**Concept.** Quant Pad is the double-slit experiment applied to a memecoin's fees. A stream of creator-fee
-quanta passes through the coin's well and lands on four detectors, one per hook. The homepage
-wave field renders this literally, and the rest of the interface stays quiet so it can be the one
-memorable moment.
+**Concept.** Quant Pad works like a prism. A coin's pump.fun creator fees enter as white light and
+leave as coloured lines, one per Quantum Hook. The identity is polished chrome in a pearl photo
+studio. The only colour comes from four light lines (blue, pink, green and yellow), and they are
+always crisp separate lines, never a rainbow blend.
+
+## Logo
+
+- **Mark ("Q-Pad").** A heavy squircle Q in silver chrome. Its tail is a separate cobalt-anodised slab, cut off by a hairline gap: the slab is where fees leave the coin. Four light lines rake across the metal at 45°.
+- **Files** in `public/brand/`:
+
+  | File               | Use                                                          |
+  | ------------------ | ------------------------------------------------------------ |
+  | `mark.svg`         | Silver chrome                                                |
+  | `mark-black.svg`   | Black chrome                                                 |
+  | `mark-small*.svg`  | Favicon cut (no filters, heavier geometry, light/dark aware) |
+  | `mark-mono*.svg`   | Single flat colour                                           |
+  | `lockup-light.svg` | Black chrome, on pearl                                       |
+  | `lockup-dark.svg`  | Silver chrome, on graphite                                   |
+  | `lockup-mono.svg`  | Under ~36 px tall                                            |
+
+- **Wordmark.** The QUANT PAD wordmark is custom drawn (wide racing letters from rounded rectangles and 45° slabs) and needs no font.
+- **Source.** The generator lives outside the repo (`build.mjs` from the brand exploration). To change the four line colours, edit its `diffraction` stops and rebuild.
 
 ## Colour
 
-| Token                 | Value                       | Use                                                    |
-| --------------------- | --------------------------- | ------------------------------------------------------ |
-| `--ink`               | `#0c0a1f`                   | Page background ("cryostat" ink, not neutral black)    |
-| `--surface` / `-2/-3` | `#15122e` … `#241f50`       | Panels, hovered rows, selected segments                |
-| `--line`              | `#2a2550`                   | 1px structure lines                                    |
-| `--text` / `-2/-3`    | `#ece9ff` … `#7b75ad`       | Primary, secondary, tertiary text                      |
-| `--foil`              | cyan → violet → pink → gold | Thin-film spectrum: wordmark, logo and hero field only |
-| `--buy` / `--sell`    | `#3ef0a0` / `#ff5c8a`       | Trade direction only                                   |
+| Role                                              | Token                       | Value                 |
+| ------------------------------------------------- | --------------------------- | --------------------- |
+| Page (pearl studio)                               | `--pearl`                   | `#E9ECF0`             |
+| Plates (raised surfaces)                          | `--plate`                   | `#FAFBFC`             |
+| Rules, borders                                    | `--mercury` / `--mercury-2` | `#BCC3CD` / `#D5DAE1` |
+| Secondary text                                    | `--steel`                   | `#5F6876`             |
+| Text, black chrome base                           | `--ink`                     | `#15181D`             |
+| Instrument panels (chart, ticket, trades, footer) | `--graphite`                | `#262B34`             |
+| Brand, primary buttons, Creator share             | `--blue`                    | `#2E4BFF`             |
+| Quantum Burn, sell                                | `--pink`                    | `#FF3EA5`             |
+| Entanglement, buy                                 | `--green`                   | `#12C26E`             |
+| Fusion                                            | `--yellow`                  | `#FFC21A`             |
+| Superposition                                     | `--blue-tint`               | `#8FA4FF`             |
+| Time Dilation                                     | `--yellow-tint`             | `#FFE08A`             |
 
-Each hook owns one spectral colour, used everywhere it appears (sliders, allocation bar, reserves,
-detector bands):
+- On pearl, buy and sell use deeper shades (`--buy` `#0A8F50`, `--sell` `#D81F78`) for contrast.
+- On graphite they use full brightness (`--buy-bright`, `--sell-bright`).
+- Yellow is never used for text on pearl. It appears as lines, dots and fills next to ink labels.
 
-- Creator `#d9d4ff`
-- Quantum Burn `#ffc857`
-- Entanglement `#6be8ff`
-- Fusion `#ff8ad8`
-- Superposition `#b69cff`
-- Time Dilation `#9effd2`
+## Materials
+
+- **Chrome.** `--chrome`, `--black-chrome` and `--silver-chrome` gradients for the mark, the "Quantum Hooks." headline, avatars and step numerals.
+- **Light lines.** `--lines` (buttons, chips) and `--lines-thin` (large lettering, holo cards). The pointer is the studio light: `useGlobalGlint` slides the lines across chrome text as the cursor moves. Holo cards tilt and track the lines under the pointer. Both are off under reduced motion.
+- **Surfaces.**
+  - Plates are near-white with a white top edge and a soft studio shadow.
+  - Graphite instruments hold anything you trade with.
+  - Primary buttons are cobalt-anodised metal with a four-line sheen on hover.
 
 ## Type
 
-- **Unbounded** (variable): headings, wordmark, step numerals. Wide geometric forms for the "flashy" brief.
-- **Manrope** (variable): interface and numbers, with tabular figures enabled globally so prices and balances align.
-- Scale: 1.25 ratio from 16px. Headlines use `text-wrap: balance`. Sentence case throughout, with no all-caps labels.
+- **Hubot Sans** (variable width): display. Headlines run at `wdth` 110–118. "Quantum Hooks." and coin tickers run at 125.
+- **Mona Sans:** interface and body text.
+- **Martian Mono:** prices, SOL amounts, tickers and percentages.
+- Scale: 1.25 from 16 px. Sentence case throughout, with no all-caps labels.
 
-## Layout and components
+## Signature moments
 
-- Data surfaces (tables, tickets, reserves) use 12px corners and 1px lines. Hero surfaces use 20px.
-- The hook grid is drawn with shared 1px gutters and a hook-coloured top rule, not floating cards.
-- The only numbered sequences are real sequences: the three launch steps and the studio sections.
-- Motion: the wave field animation (paused off-screen, static under reduced motion) plus feedback for user actions. There are no scroll-reveal effects.
+- **The Refractor** (homepage hero). A white fee beam enters the chrome Q, and four coloured hook lines fan out of its tail to labelled readouts. Pulses travel the lines, the Q sways gently, and the glint follows the cursor. The split shown is labelled as an example.
+- **Holographic launch card.** Every coin page and the launch studio preview show the coin as a graphite trading card: chrome-framed art, silver ticker, and the hook loadout as coloured bars.
+- **Live tape.** A graphite rail of real trending coins under the header. It is hidden when there is no data and pauses on hover.
 
 ## Accessibility
 
-- Visible focus rings (`--focus`), labelled controls, `aria-pressed` segmented controls and dialog focus return.
-- Everything works at 320px wide. Reduced motion is respected.
+- Visible cobalt focus rings, labelled controls, `aria-pressed` segmented controls and dialog focus return.
+- Everything works at 320 px wide.
+- Reduced motion stops the sway, pulses, tape, glint and card tilt.

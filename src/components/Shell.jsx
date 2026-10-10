@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { Menu, Search, Wallet, X } from 'lucide-react'
 import Logo from './Logo.jsx'
+import Tape from './Tape.jsx'
 import WalletDialog from './WalletDialog.jsx'
 import { useWallet } from '../context/WalletContext.jsx'
 import { usePlatform } from '../context/PlatformContext.jsx'
@@ -114,14 +115,19 @@ export default function Shell({ children }) {
           ))}
         </nav>
       </header>
+      <Tape />
       <main className="app-main">{children}</main>
       <footer className="footer">
         <div className="wrap footer-inner">
-          <p>
-            Quant Pad launches coins through pump.fun on Solana and routes their creator fees
-            through Quantum Hooks. Memecoins are extremely risky. Nothing here is financial advice.
-            {solUsd ? <span className="num"> SOL {usd(solUsd)}.</span> : null}
-          </p>
+          <div>
+            <Logo tone="dark" className="footer-lockup" />
+            <p>
+              Quant Pad launches coins through pump.fun on Solana and routes their creator fees
+              through Quantum Hooks. Memecoins are extremely risky. Nothing here is financial
+              advice.
+              {solUsd ? <span className="num"> SOL {usd(solUsd)}.</span> : null}
+            </p>
+          </div>
           <div className="footer-links">
             <Link to="/hooks">Quantum Hooks</Link>
             <Link to="/docs">Docs</Link>

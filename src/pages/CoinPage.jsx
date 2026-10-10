@@ -5,7 +5,8 @@ import MarketChart from '../components/MarketChart.jsx'
 import TradeTicket from '../components/TradeTicket.jsx'
 import TradesTable from '../components/TradesTable.jsx'
 import QuantumPanel from '../components/QuantumPanel.jsx'
-import { Address, CoinAvatar, CurveProgress, Empty, Spinner, Stat } from '../components/UI.jsx'
+import HoloCard from '../components/HoloCard.jsx'
+import { Address, CurveProgress, Empty, Spinner, Stat } from '../components/UI.jsx'
 import { api, useResource } from '../lib/api.js'
 import { usePlatform } from '../context/PlatformContext.jsx'
 import { ago, pct, price, safeLink, sol, usd } from '../lib/format.js'
@@ -16,6 +17,7 @@ export default function CoinPage() {
   const { solUsd } = usePlatform()
   const coin = useResource(isAddress(mint) ? `/api/coins/${mint}` : null, 10000)
   const [tracking, setTracking] = useState('')
+  const [hooks, setHooks] = useState(null)
 
   // Any pump.fun coin can be opened; untracked mints are added on first visit.
   useEffect(() => {
@@ -76,40 +78,55 @@ export default function CoinPage() {
 
   return (
     <div className="wrap coin-page">
-      <header className="coin-head">
-        <CoinAvatar src={c.image} symbol={c.symbol} size={64} />
-        <div className="coin-id">
-          <h1>
-            {c.name} <span className="muted coin-ticker">${c.symbol}</span>
-          </h1>
-          <div className="coin-badges">
-            {c.quantum && <span className="chip chip-quantum">Quantum Hooks</span>}
-            {c.complete && <span className="chip chip-grad">Graduated</span>}
-            {c.external && <span className="chip">Launched outside Quant Pad</span>}
-            <Address value={c.mint} href={explorer.token(c.mint)} />
+      <header className="coin-top">
+        <HoloCard
+          name={c.name}
+          symbol={c.symbol}
+          image={c.image}
+          quantum={c.quantum}
+          hooks={hooks}
+          footer={
+            <span>
+              {c.complete
+                ? 'Graduated to PumpSwap'
+                : `Bonding curve ${Math.round(c.progress || 0)}%`}
+            </span>
+          }
+        />
+        <div className="coin-summary">
+          <div className="coin-id">
+            <h1>
+              {c.name} <span className="coin-ticker">${c.symbol}</span>
+            </h1>
+            <div className="coin-badges">
+              {c.quantum && <span className="chip chip-quantum">Quantum Hooks</span>}
+              {c.complete && <span className="chip chip-grad">Graduated</span>}
+              {c.external && <span className="chip">Launched outside Quant Pad</span>}
+              <Address value={c.mint} href={explorer.token(c.mint)} />
+            </div>
           </div>
+          <dl className="coin-stats">
+            <Stat label="Price">
+              <span className="num">{price(c.price)} SOL</span>
+            </Stat>
+            <Stat label="Market cap">
+              <span className="num">
+                {solUsd && mcap ? usd(mcap * solUsd) : sol(mcap, { digits: 1 })}
+              </span>
+            </Stat>
+            <Stat label="24h change">
+              <span className={`num ${c.change24h > 0 ? 'up' : c.change24h < 0 ? 'down' : ''}`}>
+                {pct(c.change24h)}
+              </span>
+            </Stat>
+            <Stat label="24h volume">
+              <span className="num">{sol(c.volume24h, { digits: 2 })}</span>
+            </Stat>
+            <Stat label="Age">
+              <span className="num">{ago(c.createdAt)}</span>
+            </Stat>
+          </dl>
         </div>
-        <dl className="coin-stats">
-          <Stat label="Price">
-            <span className="num">{price(c.price)} SOL</span>
-          </Stat>
-          <Stat label="Market cap">
-            <span className="num">
-              {solUsd && mcap ? usd(mcap * solUsd) : sol(mcap, { digits: 1 })}
-            </span>
-          </Stat>
-          <Stat label="24h change">
-            <span className={`num ${c.change24h > 0 ? 'up' : c.change24h < 0 ? 'down' : ''}`}>
-              {pct(c.change24h)}
-            </span>
-          </Stat>
-          <Stat label="24h volume">
-            <span className="num">{sol(c.volume24h, { digits: 2 })}</span>
-          </Stat>
-          <Stat label="Age">
-            <span className="num">{ago(c.createdAt)}</span>
-          </Stat>
-        </dl>
       </header>
 
       <div className="coin-grid-layout">
@@ -128,7 +145,7 @@ export default function CoinPage() {
               </p>
             )}
           </section>
-          {c.quantum && <QuantumPanel coin={c} />}
+          {c.quantum && <QuantumPanel coin={c} onLoaded={setHooks} />}
           <section className="panel about">
             <h3>About</h3>
             {c.meta?.description ? (

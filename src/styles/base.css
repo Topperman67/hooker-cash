@@ -1,47 +1,121 @@
-/* Quant Pad design tokens.
-   Cryostat ink base; a thin-film iridescent spectrum reserved for the wordmark and hero field;
-   one spectral colour per Quantum Hook so allocation reads the same everywhere. */
+/* Quant Pad — "Refractor" identity.
+   A pearl photo-studio page with polished-chrome material and graphite instrument panels.
+   Accents are four light lines only — blue, pink, green, yellow — never a rainbow blend.
+   Each Quantum Hook owns one of them; buy/sell reuse green/pink in their own shades. */
 :root {
-  --ink: #0c0a1f;
-  --ink-2: #110e28;
-  --surface: #15122e;
-  --surface-2: #1c1840;
-  --surface-3: #241f50;
-  --line: #2a2550;
-  --line-strong: #3b3570;
-  --text: #ece9ff;
-  --text-2: #a7a1d6;
-  --text-3: #7b75ad;
-  --on-light: #0c0a1f;
+  /* studio + metal neutrals */
+  --pearl: #e9ecf0;
+  --pearl-2: #f3f5f8;
+  --plate: #fafbfc;
+  --white: #ffffff;
+  --mercury: #bcc3cd;
+  --mercury-2: #d5dae1;
+  --steel: #5f6876;
+  --steel-2: #7d8693;
+  --ink: #15181d;
+  --ink-2: #2b3038;
 
-  --foil-1: #7cf7ff;
-  --foil-2: #b69cff;
-  --foil-3: #ff8ad8;
-  --foil-4: #ffe08a;
-  --foil: linear-gradient(
-    100deg,
-    var(--foil-1) 0%,
-    var(--foil-2) 34%,
-    var(--foil-3) 68%,
-    var(--foil-4) 100%
+  /* graphite instrument panels */
+  --graphite: #262b34;
+  --graphite-2: #1d2128;
+  --graphite-3: #323844;
+  --graphite-line: #3a414d;
+  --on-graphite: #e9ecf0;
+  --on-graphite-2: #a3abb8;
+
+  /* the four light lines */
+  --blue: #2e4bff;
+  --blue-deep: #1b33e0;
+  --blue-tint: #8fa4ff;
+  --pink: #ff3ea5;
+  --green: #12c26e;
+  --yellow: #ffc21a;
+  --yellow-tint: #ffe08a;
+
+  /* hooks */
+  --hook-creator: var(--blue);
+  --hook-burn: var(--pink);
+  --hook-entangle: var(--green);
+  --hook-fusion: var(--yellow);
+  --hook-super: var(--blue-tint);
+  --hook-dilation: var(--yellow-tint);
+
+  /* trade direction: deeper shades on pearl, full brightness on graphite */
+  --buy: #0a8f50;
+  --sell: #d81f78;
+  --buy-bright: #18d47a;
+  --sell-bright: #ff4fae;
+  --focus: #2e4bff;
+
+  /* materials */
+  --chrome: linear-gradient(
+    180deg,
+    #ffffff 0%,
+    #f4f7fa 14%,
+    #bec6d1 34%,
+    #6e7785 45%,
+    #1b1f27 50%,
+    #2c333e 54%,
+    #7e8999 64%,
+    #d3d9e2 75%,
+    #a4aebc 80%,
+    #e8ecf2 90%,
+    #ffffff 100%
+  );
+  --black-chrome: linear-gradient(
+    180deg,
+    #5a6272 0%,
+    #2a2f38 30%,
+    #0b0d10 48%,
+    #000000 52%,
+    #3a404b 70%,
+    #15181d 100%
+  );
+  --silver-chrome: linear-gradient(
+    180deg,
+    #ffffff 0%,
+    #e3e8ef 42%,
+    #8c95a3 50%,
+    #c8cfd9 62%,
+    #f4f6fa 100%
+  );
+  --cobalt-anodised: linear-gradient(180deg, #7b90ff 0%, #2e4bff 48%, #1b33e0 100%);
+  --plate-edge:
+    inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 1px 2px rgba(21, 24, 29, 0.06),
+    0 10px 30px rgba(21, 24, 29, 0.07);
+  /* four crisp lines; slide them with background-position for a glint */
+  --lines: linear-gradient(
+    115deg,
+    transparent 0 38%,
+    rgba(255, 62, 165, 0.9) 38% 39.6%,
+    transparent 39.6% 41.2%,
+    rgba(255, 194, 26, 0.95) 41.2% 42.8%,
+    transparent 42.8% 44.4%,
+    rgba(18, 194, 110, 0.9) 44.4% 46%,
+    transparent 46% 47.6%,
+    rgba(46, 75, 255, 0.95) 47.6% 49.2%,
+    transparent 49.2% 100%
   );
 
-  --buy: #3ef0a0;
-  --sell: #ff5c8a;
-  --warn: #ffc857;
-  --focus: #7cf7ff;
+  /* hairline version for large lettering, where full-width bands would read as blocks */
+  --lines-thin: linear-gradient(
+    115deg,
+    transparent 0 47%,
+    rgba(255, 62, 165, 0.95) 47% 47.5%,
+    transparent 47.5% 48.2%,
+    rgba(255, 194, 26, 1) 48.2% 48.7%,
+    transparent 48.7% 49.4%,
+    rgba(18, 194, 110, 0.95) 49.4% 49.9%,
+    transparent 49.9% 50.6%,
+    rgba(46, 75, 255, 1) 50.6% 51.1%,
+    transparent 51.1% 100%
+  );
 
-  --hook-creator: #d9d4ff;
-  --hook-burn: #ffc857;
-  --hook-entangle: #6be8ff;
-  --hook-fusion: #ff8ad8;
-  --hook-super: #b69cff;
-  --hook-dilation: #9effd2;
+  --font-display: 'Hubot Sans Variable', 'Hubot Sans', system-ui, sans-serif;
+  --font-ui: 'Mona Sans Variable', 'Mona Sans', system-ui, sans-serif;
+  --font-mono: 'Martian Mono Variable', 'Martian Mono', ui-monospace, monospace;
 
-  --font-display: 'Unbounded Variable', 'Unbounded', system-ui, sans-serif;
-  --font-ui: 'Manrope Variable', 'Manrope', system-ui, sans-serif;
-
-  /* Type scale: 1.25 ratio from a 16px base. */
+  /* 1.25 type scale from 16px */
   --t-xs: 0.75rem;
   --t-sm: 0.875rem;
   --t-md: 1rem;
@@ -51,13 +125,13 @@
   --t-3xl: 2.441rem;
   --t-4xl: 3.815rem;
 
-  --r-sm: 6px;
+  --r-sm: 8px;
   --r-md: 12px;
-  --r-lg: 20px;
+  --r-lg: 18px;
   --r-pill: 999px;
   --gutter: clamp(16px, 4vw, 40px);
   --max: 1320px;
-  color-scheme: dark;
+  color-scheme: light;
 }
 
 *,
@@ -67,19 +141,20 @@
 }
 html {
   -webkit-text-size-adjust: 100%;
-  background: var(--ink);
+  background: var(--pearl);
 }
 body {
   margin: 0;
   min-height: 100vh;
+  /* studio backdrop: a soft key light top-right, a cool fill bottom-left */
   background:
-    radial-gradient(1200px 600px at 85% -10%, rgba(182, 156, 255, 0.08), transparent 60%),
-    radial-gradient(900px 500px at -10% 10%, rgba(124, 247, 255, 0.05), transparent 60%), var(--ink);
-  color: var(--text);
+    radial-gradient(1100px 620px at 88% -8%, rgba(255, 255, 255, 0.95), transparent 62%),
+    radial-gradient(900px 520px at -6% 108%, rgba(188, 195, 205, 0.55), transparent 60%),
+    var(--pearl);
+  color: var(--ink);
   font-family: var(--font-ui);
   font-size: var(--t-md);
   line-height: 1.55;
-  font-feature-settings: 'tnum' 1;
   -webkit-font-smoothing: antialiased;
 }
 img {
@@ -101,20 +176,24 @@ h2,
 h3,
 h4 {
   font-family: var(--font-display);
-  font-weight: 600;
-  line-height: 1.12;
-  letter-spacing: -0.01em;
+  font-weight: 800;
+  font-stretch: 112%;
+  line-height: 1.04;
+  letter-spacing: -0.02em;
   margin: 0;
   text-wrap: balance;
 }
 h1 {
-  font-size: clamp(var(--t-2xl), 5.4vw, var(--t-4xl));
+  font-size: clamp(var(--t-2xl), 5.2vw, var(--t-4xl));
+  font-weight: 900;
 }
 h2 {
-  font-size: clamp(var(--t-xl), 3vw, var(--t-2xl));
+  font-size: clamp(var(--t-xl), 2.8vw, var(--t-2xl));
 }
 h3 {
   font-size: var(--t-lg);
+  font-stretch: 104%;
+  font-weight: 750;
 }
 p {
   margin: 0;
@@ -126,7 +205,7 @@ p {
   border-radius: var(--r-sm);
 }
 ::selection {
-  background: rgba(182, 156, 255, 0.4);
+  background: rgba(46, 75, 255, 0.22);
 }
 .sr-only {
   position: absolute;
@@ -138,14 +217,18 @@ p {
   clip: rect(0, 0, 0, 0);
   border: 0;
 }
-.num {
+.num,
+.mono {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
   font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
 }
 .muted {
-  color: var(--text-2);
+  color: var(--steel);
 }
 .faint {
-  color: var(--text-3);
+  color: var(--steel-2);
 }
 .up {
   color: var(--buy);
@@ -153,8 +236,28 @@ p {
 .down {
   color: var(--sell);
 }
-.foil-text {
-  background: var(--foil);
+/* Black-chrome lettering with a four-line glint that follows --lx (set by useGlint). */
+.chrome-text {
+  background: var(--lines-thin), var(--black-chrome);
+  background-size:
+    220% 100%,
+    100% 100%;
+  background-position:
+    var(--lx, 70%) 0,
+    0 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  transition: background-position 0.25s ease-out;
+}
+.silver-text {
+  background: var(--lines-thin), var(--silver-chrome);
+  background-size:
+    220% 100%,
+    100% 100%;
+  background-position:
+    var(--lx, 70%) 0,
+    0 0;
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
@@ -163,7 +266,8 @@ p {
   width: 100%;
   max-width: var(--max);
   margin: 0 auto;
-  padding: 0 var(--gutter);
+  padding-left: var(--gutter);
+  padding-right: var(--gutter);
 }
 @media (prefers-reduced-motion: reduce) {
   *,

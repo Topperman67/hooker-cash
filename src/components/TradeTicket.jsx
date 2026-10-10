@@ -127,7 +127,7 @@ export default function TradeTicket({ coin, onTraded }) {
 
   const venue = market?.venue === 'pool' ? 'PumpSwap pool' : 'pump.fun bonding curve'
   return (
-    <form className="panel ticket" onSubmit={submit} aria-label={`Trade ${coin.symbol}`}>
+    <form className="instrument ticket" onSubmit={submit} aria-label={`Trade ${coin.symbol}`}>
       <div className="ticket-tabs" role="tablist" aria-label="Trade side">
         {['buy', 'sell'].map((s) => (
           <button

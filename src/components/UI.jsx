@@ -23,7 +23,7 @@ export function Empty({ title, children, action }) {
   )
 }
 
-export function CoinAvatar({ src, symbol, size = 40 }) {
+export function CoinAvatar({ src, symbol, size = 40, eager = false }) {
   const [failed, setFailed] = useState(false)
   const style = { '--s': `${size}px` }
   if (src && !failed)
@@ -33,7 +33,7 @@ export function CoinAvatar({ src, symbol, size = 40 }) {
         style={style}
         src={src}
         alt=""
-        loading="lazy"
+        loading={eager ? 'eager' : 'lazy'}
         onError={() => setFailed(true)}
       />
     )

@@ -36,22 +36,22 @@ export default function MarketChart({ mint, symbol }) {
       autoSize: true,
       layout: {
         background: { type: ColorType.Solid, color: 'transparent' },
-        textColor: '#a7a1d6',
-        fontFamily: 'Manrope Variable, sans-serif',
+        textColor: '#a3abb8',
+        fontFamily: 'Martian Mono Variable, monospace',
         attributionLogo: true,
       },
       grid: {
-        vertLines: { color: 'rgba(167,161,214,0.05)' },
-        horzLines: { color: 'rgba(167,161,214,0.07)' },
+        vertLines: { color: 'rgba(255,255,255,0.04)' },
+        horzLines: { color: 'rgba(255,255,255,0.06)' },
       },
-      rightPriceScale: { borderColor: '#2a2550', scaleMargins: { top: 0.12, bottom: 0.25 } },
+      rightPriceScale: { borderColor: '#3a414d', scaleMargins: { top: 0.12, bottom: 0.25 } },
       timeScale: {
         timeVisible: true,
         secondsVisible: interval < 60,
-        borderColor: '#2a2550',
+        borderColor: '#3a414d',
         maxBarSpacing: 22,
       },
-      crosshair: { vertLine: { color: '#b69cff66' }, horzLine: { color: '#b69cff66' } },
+      crosshair: { vertLine: { color: '#8fa4ff88' }, horzLine: { color: '#8fa4ff88' } },
     })
     chart.current = instance
     const format =
@@ -61,14 +61,14 @@ export default function MarketChart({ mint, symbol }) {
     series.current =
       mode === 'candles'
         ? instance.addSeries(CandlestickSeries, {
-            upColor: '#3ef0a0',
-            downColor: '#ff5c8a',
-            wickUpColor: '#3ef0a0',
-            wickDownColor: '#ff5c8a',
+            upColor: '#18d47a',
+            downColor: '#ff4fae',
+            wickUpColor: '#18d47a',
+            wickDownColor: '#ff4fae',
             borderVisible: false,
             priceFormat: format,
           })
-        : instance.addSeries(LineSeries, { color: '#b69cff', lineWidth: 2, priceFormat: format })
+        : instance.addSeries(LineSeries, { color: '#8fa4ff', lineWidth: 2, priceFormat: format })
     volume.current = instance.addSeries(HistogramSeries, {
       priceFormat: { type: 'volume' },
       priceScaleId: 'volume',
@@ -102,7 +102,7 @@ export default function MarketChart({ mint, symbol }) {
       items.map((c) => ({
         time: c.time,
         value: c.volume,
-        color: c.close >= c.open ? '#3ef0a033' : '#ff5c8a33',
+        color: c.close >= c.open ? '#18d47a33' : '#ff4fae33',
       })),
     )
     if (items.length && !fitted.current) {
@@ -113,7 +113,7 @@ export default function MarketChart({ mint, symbol }) {
 
   const empty = !resource.data?.items?.length
   return (
-    <section className="panel chart-panel" aria-label={`${symbol} chart`}>
+    <section className="instrument chart-panel" aria-label={`${symbol} chart`}>
       <div className="chart-toolbar">
         <strong>
           {symbol} / SOL {unit === 'mcap' ? 'market cap' : 'price'}

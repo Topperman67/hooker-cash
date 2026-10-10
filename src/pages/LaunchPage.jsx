@@ -4,7 +4,8 @@ import { ImagePlus, Plus, Trash2 } from 'lucide-react'
 import { useWallet } from '../context/WalletContext.jsx'
 import { usePlatform } from '../context/PlatformContext.jsx'
 import { useToast } from '../components/Toasts.jsx'
-import { AllocationBar, CoinAvatar, Segmented, Spinner } from '../components/UI.jsx'
+import { AllocationBar, Segmented, Spinner } from '../components/UI.jsx'
+import HoloCard from '../components/HoloCard.jsx'
 import { api } from '../lib/api.js'
 import { MODULES, PRESETS, MAX_SPLITS, setAllocation } from '../lib/hooks.js'
 import { bps, formatUnits, parseUnits, sol, toSol } from '../lib/format.js'
@@ -611,14 +612,15 @@ export default function LaunchPage() {
         </div>
 
         <aside className="launch-aside">
+          <HoloCard
+            compact
+            name={preview.name}
+            symbol={preview.symbol}
+            image={draft.image}
+            quantum={wantsQuantum}
+            hooks={draft.hooks}
+          />
           <div className="panel launch-summary">
-            <div className="summary-id">
-              <CoinAvatar src={draft.image} symbol={preview.symbol} size={56} />
-              <div>
-                <strong>{preview.name}</strong>
-                <span className="muted">${preview.symbol}</span>
-              </div>
-            </div>
             {wantsQuantum ? (
               <>
                 <h3 className="summary-label">Fee routing</h3>

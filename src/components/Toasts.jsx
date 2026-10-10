@@ -11,7 +11,7 @@ export function ToastProvider({ children }) {
     if (ttl) setTimeout(() => setToasts((list) => list.filter((t) => t.id !== id)), ttl)
     return id
   }, [])
-  const colors = { info: 'var(--foil-2)', success: 'var(--buy)', error: 'var(--sell)' }
+  const colors = { info: 'var(--blue)', success: 'var(--green)', error: 'var(--pink)' }
   return (
     <ToastContext.Provider value={push}>
       {children}

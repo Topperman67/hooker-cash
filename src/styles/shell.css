@@ -5,89 +5,93 @@
 }
 .app-main {
   flex: 1;
-  padding-bottom: 72px;
+  padding-bottom: 80px;
 }
 
-/* Header */
+/* Header: frosted pearl with the black-chrome lockup */
 .topbar {
   position: sticky;
   top: 0;
   z-index: 40;
-  background: rgba(12, 10, 31, 0.82);
-  backdrop-filter: blur(14px);
-  border-bottom: 1px solid var(--line);
+  background: rgba(233, 236, 240, 0.82);
+  backdrop-filter: blur(16px) saturate(1.2);
+  border-bottom: 1px solid var(--mercury-2);
+  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.7);
 }
 .topbar-inner {
   display: flex;
   align-items: center;
   gap: 20px;
-  height: 64px;
+  height: 68px;
 }
 .brand {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  text-decoration: none;
   flex-shrink: 0;
+  text-decoration: none;
 }
-.brand-mark {
-  width: 30px;
-  height: 30px;
-}
-.brand-word {
-  font-family: var(--font-display);
-  font-weight: 700;
-  font-size: 1.05rem;
-  letter-spacing: -0.02em;
-  background: var(--foil);
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
+.brand-lockup {
+  height: 40px;
+  width: auto;
 }
 .nav {
   display: flex;
-  gap: 4px;
-  margin-left: 12px;
+  gap: 2px;
+  margin-left: 10px;
 }
 .nav a {
+  position: relative;
   text-decoration: none;
-  color: var(--text-2);
+  color: var(--steel);
   font-weight: 600;
   font-size: var(--t-sm);
   padding: 8px 12px;
   border-radius: var(--r-pill);
 }
 .nav a:hover {
-  color: var(--text);
-  background: var(--surface);
+  color: var(--ink);
 }
 .nav a.active {
-  color: var(--text);
-  background: var(--surface-2);
+  color: var(--ink);
+}
+.nav a.active::after {
+  content: '';
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 2px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--blue);
 }
 .topbar-search {
   margin-left: auto;
   position: relative;
-  width: min(320px, 30vw);
+  width: min(320px, 28vw);
 }
 .topbar-search input {
   width: 100%;
-  height: 38px;
+  height: 40px;
   border-radius: var(--r-pill);
-  border: 1px solid var(--line);
-  background: var(--ink-2);
+  border: 1px solid var(--mercury-2);
+  background: var(--plate);
+  box-shadow: inset 0 1px 2px rgba(21, 24, 29, 0.06);
   padding: 0 14px 0 36px;
   font-size: var(--t-sm);
 }
 .topbar-search input::placeholder {
-  color: var(--text-3);
+  color: var(--steel-2);
+}
+.topbar-search input:focus {
+  outline: none;
+  border-color: var(--blue);
 }
 .topbar-search svg {
   position: absolute;
   left: 12px;
   top: 50%;
   transform: translateY(-50%);
-  color: var(--text-3);
+  color: var(--steel-2);
 }
 .topbar-actions {
   display: flex;
@@ -101,17 +105,99 @@
   display: none;
 }
 
-/* Footer */
+/* Live tape: graphite rail of real coins under the header */
+.tape {
+  background: var(--graphite-2);
+  color: var(--on-graphite);
+  border-bottom: 1px solid #000;
+  overflow: hidden;
+  height: 34px;
+  font-size: var(--t-xs);
+}
+.tape-track {
+  display: flex;
+  gap: 36px;
+  width: max-content;
+  height: 100%;
+  align-items: center;
+  padding-left: var(--gutter);
+  animation: tape 70s linear infinite;
+}
+.tape:hover .tape-track {
+  animation-play-state: paused;
+}
+.tape-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.tape-item strong {
+  font-family: var(--font-mono);
+  font-weight: 600;
+}
+.tape-label {
+  color: var(--on-graphite-2);
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.tape-label::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 8px var(--green);
+}
+.tape .up {
+  color: var(--buy-bright);
+}
+.tape .down {
+  color: var(--sell-bright);
+}
+.mini-split {
+  display: inline-flex;
+  width: 44px;
+  height: 5px;
+  border-radius: 3px;
+  overflow: hidden;
+  gap: 1px;
+  background: var(--graphite-3);
+}
+.mini-split span {
+  height: 100%;
+}
+@keyframes tape {
+  to {
+    transform: translateX(-50%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tape-track {
+    animation: none;
+  }
+}
+
+/* Footer: graphite with the silver-chrome lockup */
 .footer {
-  border-top: 1px solid var(--line);
-  padding: 32px 0 40px;
-  color: var(--text-3);
+  background: var(--graphite);
+  color: var(--on-graphite-2);
+  padding: 40px 0 44px;
   font-size: var(--t-sm);
 }
 .footer-inner {
   display: grid;
   grid-template-columns: 1.4fr 1fr;
-  gap: 24px;
+  gap: 28px;
+  align-items: start;
+}
+.footer-lockup {
+  height: 30px;
+  width: auto;
+  margin-bottom: 14px;
 }
 .footer p {
   max-width: 62ch;
@@ -119,16 +205,15 @@
 .footer-links {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px 20px;
+  gap: 8px 22px;
   justify-content: flex-end;
-  align-content: start;
 }
 .footer-links a {
-  color: var(--text-2);
+  color: var(--on-graphite);
   text-decoration: none;
 }
 .footer-links a:hover {
-  color: var(--text);
+  text-decoration: underline;
 }
 
 @media (max-width: 960px) {
@@ -142,9 +227,12 @@
   .topbar-actions {
     margin-left: auto;
   }
+  .brand-lockup {
+    height: 28px;
+  }
   .mobile-nav {
     display: block;
-    border-top: 1px solid var(--line);
+    border-top: 1px solid var(--mercury-2);
     padding: 12px var(--gutter) 16px;
   }
   .mobile-nav[hidden] {
@@ -155,10 +243,10 @@
     padding: 10px 0;
     text-decoration: none;
     font-weight: 600;
-    color: var(--text-2);
+    color: var(--steel);
   }
   .mobile-nav a.active {
-    color: var(--text);
+    color: var(--ink);
   }
   .mobile-nav .topbar-search {
     display: block;
@@ -170,5 +258,10 @@
   }
   .footer-links {
     justify-content: flex-start;
+  }
+}
+@media (max-width: 420px) {
+  .brand-lockup {
+    height: 22px;
   }
 }
