@@ -3,9 +3,9 @@ import { defaultDraft } from '../src/lib/protocolDraft.js'
 
 const treasury = '0x2e01dD8dF4A4fb06Ea62a944a658E9ae01DB2ac4'
 const deployment = {
-  chainId: 5042,
+  chainId: 4663,
   treasury,
-  abiVersion: 'hookbrew-v1',
+  abiVersion: 'hookbrew-v2',
   factory: `0x${'11'.repeat(20)}`,
   router: `0x${'22'.repeat(20)}`,
   factoryTx: `0x${'33'.repeat(32)}`,
@@ -15,17 +15,17 @@ async function init(page) {
   await page.addInitScript(
     ({ treasury, deployment, draft }) => {
       localStorage.setItem('hooker_vamp_access_v1', '1')
-      if (!localStorage.getItem('hookbrew:launch-draft:v1')) {
-        localStorage.setItem('hookbrew:launch-draft:v1', JSON.stringify(draft))
-        localStorage.setItem('hookbrew:launch-step:v1', '4')
+      if (!localStorage.getItem('hookbrew:4663:v2:launch-draft')) {
+        localStorage.setItem('hookbrew:4663:v2:launch-draft', JSON.stringify(draft))
+        localStorage.setItem('hookbrew:4663:v2:launch-step', '4')
       }
-      localStorage.setItem('hookbrew:deployment-progress:v1', JSON.stringify(deployment))
+      localStorage.setItem('hookbrew:4663:v2:deployment-progress', JSON.stringify(deployment))
       window.__walletCalls = []
       window.ethereum = {
         async request({ method }) {
           window.__walletCalls.push(method)
           if (method === 'eth_accounts' || method === 'eth_requestAccounts') return [treasury]
-          if (method === 'eth_chainId') return '0x13b2'
+          if (method === 'eth_chainId') return '0x1237'
           if (method === 'personal_sign') return '0x1234'
           throw Error(`Unexpected wallet request: ${method}`)
         },
@@ -33,13 +33,13 @@ async function init(page) {
     },
     { treasury, deployment, draft: { ...defaultDraft, name: 'Saved Brew', symbol: 'BREW' } },
   )
-  await page.route(/https:\/\/rpc\.(?:drpc\.)?mainnet\.arc\.io/, (route) => {
+  await page.route(/https:\/\/rpc\.mainnet\.chain\.robinhood\.com/, (route) => {
     const request = route.request().postDataJSON()
     return route.fulfill({
       json: {
         jsonrpc: '2.0',
         id: request.id,
-        result: request.method === 'eth_chainId' ? '0x13b2' : '0x0',
+        result: request.method === 'eth_chainId' ? '0x1237' : '0x0',
       },
     })
   })
@@ -115,7 +115,7 @@ test('an existing draft from the older build resumes at review after setup', asy
   await init(page)
   await page.route('**/api/status', (route) => route.fulfill({ json: { deployment, treasury } }))
   await page.goto('/setup')
-  await page.evaluate(() => localStorage.removeItem('hookbrew:launch-step:v1'))
+  await page.evaluate(() => localStorage.removeItem('hookbrew:4663:v2:launch-step'))
   await page.getByRole('link', { name: 'Continue your token launch' }).click()
   await expect(page.getByRole('heading', { name: 'Review your launch' })).toBeVisible()
   await expect(page.getByRole('region', { name: 'Token review' })).toContainText(

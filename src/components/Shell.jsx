@@ -12,7 +12,7 @@ import {
 } from 'lucide-react'
 import Glass from './Glass'
 import { BrandMark, Button, Logo } from './UI'
-import { arc, shortenAddress } from '../config/network'
+import { robinhood, shortenAddress } from '../config/network'
 import { useChain } from '../context/ChainContext'
 
 const NAV = [
@@ -142,7 +142,7 @@ export default function Shell({ onConnect, connected }) {
             >
               <img
                 className="rail-artwork"
-                src={`/brand/navigation/platinum/${image}.png`}
+                src={`/brand/navigation/robinhood/${image}.svg`}
                 alt=""
                 width="30"
                 height="30"
@@ -164,13 +164,13 @@ export default function Shell({ onConnect, connected }) {
           </button>
           <a
             className="rail-link rail-network"
-            href={arc.blockExplorers.default.url}
+            href={robinhood.blockExplorers.default.url}
             target="_blank"
             rel="noreferrer"
-            aria-label="Arc block explorer"
-            title="Arc block explorer"
+            aria-label="Robinhood Chain block explorer"
+            title="Robinhood Chain block explorer"
           >
-            <BrandMark name="arc-blue" />
+            <BrandMark name="robinhood-blue" />
           </a>
         </div>
       </Glass>
@@ -226,7 +226,7 @@ export default function Shell({ onConnect, connected }) {
             <X size={18} />
           </button>
         </div>
-        <div className="sidebar-caption">Token launchpad on Arc</div>
+        <div className="sidebar-caption">Token launchpad on Robinhood Chain</div>
         <nav ref={navigation} aria-label="Primary navigation" id="primary-navigation">
           {NAV.map(({ to, label, image }) => (
             <NavLink
@@ -240,7 +240,7 @@ export default function Shell({ onConnect, connected }) {
                 <>
                   <img
                     className="nav-artwork"
-                    src={`/brand/navigation/platinum/${image}.png`}
+                    src={`/brand/navigation/robinhood/${image}.svg`}
                     alt=""
                     width="36"
                     height="36"
@@ -254,11 +254,11 @@ export default function Shell({ onConnect, connected }) {
           ))}
         </nav>
         <div className="sidebar-footer">
-          <div className="sidebar-network" aria-label="Arc network status">
+          <div className="sidebar-network" aria-label="Robinhood Chain network status">
             <div className="sidebar-network-heading">
-              <BrandMark name="arc-blue" />
+              <BrandMark name="robinhood-blue" />
               <div>
-                <strong>Arc mainnet</strong>
+                <strong>Robinhood Chain mainnet</strong>
                 <span className="sidebar-network-state">
                   <i
                     className={chain.status === 'ready' ? 'is-connected' : ''}
@@ -280,7 +280,7 @@ export default function Shell({ onConnect, connected }) {
                   : '—'}
               </strong>
             </div>
-            <a href={arc.blockExplorers.default.url} target="_blank" rel="noreferrer">
+            <a href={robinhood.blockExplorers.default.url} target="_blank" rel="noreferrer">
               View on explorer <ArrowUpRight size={13} />
             </a>
           </div>
@@ -294,6 +294,9 @@ export default function Shell({ onConnect, connected }) {
 
       <div className="main-col" inert={menuOpen && mobile ? true : undefined}>
         <header className="topbar">
+          <Link className="workspace-wordmark" to="/" aria-label="Hookbrew overview">
+            Hookbrew
+          </Link>
           <Glass
             as="form"
             variant="control"
@@ -318,11 +321,11 @@ export default function Shell({ onConnect, connected }) {
               title={
                 chain.status === 'ready'
                   ? `Latest RPC block: ${chain.network.blockNumber}`
-                  : 'Arc RPC unavailable or still connecting'
+                  : 'Robinhood Chain RPC unavailable or still connecting'
               }
             >
-              <BrandMark name="arc-blue" />
-              Arc
+              <BrandMark name="robinhood-blue" />
+              <span className="network-label">Robinhood Chain</span>
               <span className={`status-dot ${chain.status !== 'ready' ? 'status-offline' : ''}`} />
             </Glass>
             <Button primary onClick={onConnect} className="connect-button">

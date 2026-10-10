@@ -15,6 +15,7 @@ import { Field } from './StudioFields'
 import { number, safeLink, short } from '../lib/api'
 import {
   openingMarketCap,
+  valuation,
   recipientVesting,
   vestingLabel,
   vestingPresets,
@@ -27,27 +28,27 @@ export function PoolStep({ draft, input, update }) {
     <>
       <Field
         label="Trade against"
-        hint="USDC is the quote asset supported by the active Hookbrew factory."
+        hint="ETH is the quote asset supported by the active Hookbrew factory."
       >
         <div className="launch-quote">
-          <BrandMark name="usdc" />
+          <BrandMark name="eth" />
           <div>
-            <strong>USDC</strong>
-            <span>USD Coin · Arc</span>
+            <strong>ETH</strong>
+            <span>Native Ether · Robinhood Chain</span>
           </div>
           <Check size={18} />
         </div>
       </Field>
       <Field
-        label="Opening market cap · USDC"
-        hint="Optional · leave blank for $5,000. This sets a starting valuation, not money raised."
+        label="Opening market cap · ETH"
+        hint={`Optional · leave blank for ${valuation.default} ETH. This sets a starting valuation, not money raised.`}
       >
         {input('targetMcap', {
           type: 'number',
-          min: 2000,
-          max: 10000,
+          min: valuation.min,
+          max: valuation.max,
           step: '0.000001',
-          placeholder: '5,000',
+          placeholder: valuation.default,
           className: 'launch-amount',
         })}
       </Field>
@@ -55,25 +56,26 @@ export function PoolStep({ draft, input, update }) {
         <div>
           <span>Starting valuation</span>
           <strong>
-            {!draft.targetMcap && <small>Default </small>}${number(openingMarketCap(draft))}
+            {!draft.targetMcap && <small>Default </small>}
+            {number(openingMarketCap(draft))} ETH
           </strong>
         </div>
         <input
           aria-label="Opening valuation slider"
           type="range"
-          min="2000"
-          max="10000"
-          step="100"
+          min={valuation.min}
+          max={valuation.max}
+          step="0.1"
           value={openingMarketCap(draft)}
           onChange={(e) => update('targetMcap', e.target.value)}
           style={{
-            '--range-fill': `${Math.max(0, Math.min(100, (Number(openingMarketCap(draft)) - 2000) / 80))}%`,
+            '--range-fill': `${Math.max(0, Math.min(100, ((Number(openingMarketCap(draft)) - Number(valuation.min)) / (Number(valuation.max) - Number(valuation.min))) * 100))}%`,
           }}
         />
         <div className="launch-range-labels">
-          <span>$2,000</span>
-          <span>$6,000</span>
-          <span>$10,000</span>
+          <span>{valuation.min} ETH</span>
+          <span>{(Number(valuation.min) + Number(valuation.max)) / 2} ETH</span>
+          <span>{valuation.max} ETH</span>
         </div>
       </div>
       <div className="launch-slider">
@@ -232,7 +234,7 @@ export function PayoutStep({ draft, update, input, wallet }) {
   return (
     <>
       <div className="product-grid-2">
-        <Field label="Founder buy · USDC" hint="Optional · leave empty for no founder allocation.">
+        <Field label="Founder buy · ETH" hint="Optional · leave empty for no founder allocation.">
           {input('initialBuy', { inputMode: 'decimal', placeholder: '0.00' })}
         </Field>
         <Field label="Slippage tolerance · %" hint="Applies to the founder buy · 0.1–10%.">
@@ -240,8 +242,8 @@ export function PayoutStep({ draft, update, input, wallet }) {
         </Field>
       </div>
       <p className="fine-print launch-buy-note">
-        Your USDC buys tokens in the launch transaction, capped at 10% of supply. You approve only
-        the entered amount before launching.
+        Your ETH buys tokens in the launch transaction, capped at 10% of supply. ETH is sent with
+        the launch; no token approval is required.
       </p>
       <section className="launch-vesting" aria-label="Founder vesting">
         <div className="launch-subheading">
@@ -400,10 +402,10 @@ export function ReviewStep({ draft, platform, wallet, go }) {
       title: 'Pool',
       step: 0,
       rows: [
-        ['Launch currency', 'USDC · Arc / Uniswap V4'],
+        ['Launch currency', 'ETH · Robinhood Chain / Uniswap V4'],
         [
           'Starting market cap',
-          `$${number(openingMarketCap(draft))}${!draft.targetMcap ? ' (default)' : ''}`,
+          `${number(openingMarketCap(draft))} ETH${!draft.targetMcap ? ' (default)' : ''}`,
         ],
         ['Pool fee', `${Number(draft.fee) / 10000}% on each swap`],
       ],
@@ -412,7 +414,7 @@ export function ReviewStep({ draft, platform, wallet, go }) {
       title: 'Hook',
       step: 1,
       rows: [
-        ['Preset', draft.guarded ? 'Guarded opening' : 'Open market · base V1'],
+        ['Preset', draft.guarded ? 'Guarded opening' : 'Open market · base V2'],
         ...(draft.hook?.mode !== 'custom' && draft.guarded
           ? [
               [
@@ -449,7 +451,7 @@ export function ReviewStep({ draft, platform, wallet, go }) {
       title: 'Payouts',
       step: 3,
       rows: [
-        ['Founder buy', `${number(draft.initialBuy || 0, 6)} USDC`],
+        ['Founder buy', `${number(draft.initialBuy || 0, 6)} ETH`],
         ['Buy slippage', `${draft.slippage}%`],
         ...(!draft.splits.length
           ? [

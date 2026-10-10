@@ -1,6 +1,6 @@
 import { formatUnits } from 'viem'
 import { ChevronRight } from 'lucide-react'
-import { arc, explorerAddress } from '../config/network'
+import { robinhood, explorerAddress } from '../config/network'
 import { useWallet } from '../context/WalletContext'
 import { Button, Modal } from './UI'
 import WalletIcon from './WalletIcon'
@@ -28,18 +28,20 @@ export default function WalletDialog({ open, onClose }) {
           </a>
           <div className="preview-stat">
             <span>Wallet network</span>
-            <span>{wallet.chainId === arc.id ? 'Arc' : `Chain ${wallet.chainId}`}</span>
+            <span>
+              {wallet.chainId === robinhood.id ? 'Robinhood Chain' : `Chain ${wallet.chainId}`}
+            </span>
           </div>
-          {wallet.chainId === arc.id ? (
+          {wallet.chainId === robinhood.id ? (
             <div className="preview-stat">
-              <span>USDC balance</span>
+              <span>ETH balance</span>
               <span>
                 {wallet.balance === null ? 'Unavailable' : formatUnits(wallet.balance, 18)}
               </span>
             </div>
           ) : (
             <Button primary disabled={wallet.busy} onClick={wallet.switchNetwork}>
-              Switch to Arc
+              Switch to Robinhood Chain
             </Button>
           )}
           {wallet.balanceError && (

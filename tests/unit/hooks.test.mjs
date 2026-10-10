@@ -28,7 +28,11 @@ test('a custom launch requires a built matching recipe and encodes its immutable
     ...defaultDraft,
     name: 'Modular',
     symbol: 'MOD',
-    hook: { mode: 'custom', recipe, deployment: { recipeHash: hash } },
+    hook: {
+      mode: 'custom',
+      recipe,
+      deployment: { recipeHash: hash, chainId: 4663, abiVersion: 'hookbrew-modular-v2' },
+    },
   }
   assert.doesNotThrow(() => validateDraft(d))
   assert.throws(

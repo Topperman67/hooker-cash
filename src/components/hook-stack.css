@@ -14,7 +14,7 @@
 .hook-stack-halo {
   position: absolute;
   inset: 8% -5%;
-  background: radial-gradient(ellipse, #9460ca22, #6130890a 50%, transparent 70%);
+  background: radial-gradient(ellipse, #9ca89f22, #68776c0a 50%, transparent 70%);
   border-radius: 50%;
   pointer-events: none;
 }
@@ -57,23 +57,23 @@
 .hook-layer-glass.glass {
   height: 100%;
   background:
-    radial-gradient(ellipse at var(--light-x) var(--light-y), #d7b7ff25, transparent 65%),
-    linear-gradient(135deg, #8752aa33, #210c394f 60%, #9161b933);
-  border: 1px solid #e2c8ff70;
+    radial-gradient(ellipse at var(--light-x) var(--light-y), #ccff0025, transparent 65%),
+    linear-gradient(135deg, #68776c33, #1b211d4f 60%, #9ca89f33);
+  border: 1px solid #d7e0d570;
   box-shadow:
-    2px 5px 0 #c0a4e236,
-    4px 10px 0 #9875c31c,
-    10px 28px 35px #09041177 !important;
+    2px 5px 0 #bdc7bf36,
+    4px 10px 0 #9ca89f1c,
+    10px 28px 35px #11151277 !important;
   transition:
     box-shadow 0.3s,
     border-color 0.3s;
 }
 .hook-layer-hook .hook-layer-glass {
-  background-color: #632ba736;
-  border-color: #d5b1ff99;
+  background-color: #68776c36;
+  border-color: #ccff0099;
 }
 .hook-layer-pool .hook-layer-glass {
-  background-color: #32164130;
+  background-color: #29332c30;
 }
 .hook-layer-glass > .ql-content {
   height: 100%;
@@ -86,11 +86,11 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  color: #e4d2ff;
+  color: #f2f5ee;
 }
 .hook-layer-top > span:last-child {
   font-size: 9px;
-  color: #d6c4e9;
+  color: #d7e0d5;
 }
 .hook-layer-top .brand-icon {
   width: 37px;
@@ -104,7 +104,7 @@
 .hook-layer-title {
   font: 500 26px var(--font-display);
   letter-spacing: -0.6px;
-  color: #f2eaff;
+  color: #f2f5ee;
 }
 .hook-layer-edge {
   position: absolute;
@@ -112,7 +112,7 @@
   right: 26px;
   bottom: 10px;
   height: 1px;
-  background: linear-gradient(90deg, transparent, #eddbff66, transparent);
+  background: linear-gradient(90deg, transparent, #f2f5ee66, transparent);
 }
 .hook-stack figcaption {
   position: absolute;
@@ -122,13 +122,13 @@
   align-items: center;
   justify-content: center;
   gap: 8px;
-  color: #afa0c3;
+  color: #bdc7bf;
   font-size: 10px;
 }
 .hook-stack figcaption > span {
   width: 4px;
   height: 4px;
-  background: #b4a1ff;
+  background: #ccff00;
   border-radius: 50%;
 }
 @media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
@@ -137,11 +137,11 @@
       rotateX(calc(43deg + var(--tilt-x))) rotateY(var(--tilt-y)) rotateZ(-21deg);
   }
   .hook-layer:hover .hook-layer-glass {
-    border-color: #eddbffaa;
+    border-color: #f2f5eeaa;
     box-shadow:
-      2px 6px 0 #c0a4e245,
-      4px 12px 0 #9875c323,
-      10px 32px 40px #09041188 !important;
+      2px 6px 0 #bdc7bf45,
+      4px 12px 0 #9ca89f23,
+      10px 32px 40px #11151288 !important;
   }
 }
 @media (max-width: 1150px) and (min-width: 901px) {

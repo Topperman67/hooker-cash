@@ -1,3 +1,4 @@
+import { network as chainConfig } from '../../shared/network.mjs'
 import { Blocks, ArrowUpRight } from 'lucide-react'
 import { hookModules } from '../data/hookModules'
 import { recipeModules } from '../lib/hookRecipe'
@@ -17,7 +18,7 @@ export default function ModulesPage() {
           </Button>
         }
       />
-      <Glass className="registry-banner" tone="violet">
+      <Glass className="registry-banner" tone="green">
         <Blocks size={28} />
         <p>
           <strong>Your rules, built on-chain.</strong>
@@ -27,7 +28,7 @@ export default function ModulesPage() {
         <Button to="/docs">How hooks work</Button>
       </Glass>
       {['opening', 'value'].map((group) => (
-        <section key={group}>
+        <section key={group} className="registry-group">
           <div className="section-head section-space">
             <div>
               <h2>{group === 'opening' ? 'Shape the opening' : 'Put fees to work'}</h2>
@@ -38,25 +39,22 @@ export default function ModulesPage() {
               </p>
             </div>
           </div>
-          <div className="grid-2">
+          <div className="module-catalog">
             {hookModules
               .filter((m) => m.group === group)
               .map((m) => {
                 const Icon = m.icon
                 return (
-                  <Glass className="mod-card" key={m.key}>
-                    <div className="mod-card-head">
+                  <article className="module-catalog-entry" key={m.key}>
+                    <div className="module-catalog-identity">
                       <span className="module-icon">
                         <Icon size={22} />
                       </span>
-                      <span className="product-badge">
-                        {group === 'opening' ? 'Trading' : 'Harvest'}
-                      </span>
+                      <h3>{m.title}</h3>
                     </div>
-                    <h3>{m.title}</h3>
                     <p>{m.text}</p>
-                    <p className="fine-print">{m.detail}</p>
-                  </Glass>
+                    <p className="module-catalog-detail">{m.detail}</p>
+                  </article>
                 )
               })}
           </div>
@@ -78,9 +76,9 @@ export default function ModulesPage() {
             {registry.data.items.map((d) => (
               <Glass className="mod-card" key={d.factory}>
                 <h3>{recipeModules(d.recipe).join(' + ') || 'Base recipe'}</h3>
-                <p>Built by {short(d.builtBy)} on Arc</p>
+                <p>Built by {short(d.builtBy)} on Robinhood Chain</p>
                 <a
-                  href={`https://explorer.arc.io/address/${d.factory}`}
+                  href={`${chainConfig.explorerUrl}/address/${d.factory}`}
                   target="_blank"
                   rel="noreferrer"
                 >

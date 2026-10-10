@@ -32,7 +32,7 @@ for (const width of [1440, 390])
     await page.getByRole('button', { name: 'Install Holder rewards', exact: true }).click()
     await page.getByRole('slider', { name: 'Holder rewards · % of creator share' }).fill('40')
     await expect(
-      page.getByLabel(/USDC fees: protocol 30%, creator 28%, Holders 28%, Buyback 14%/),
+      page.getByLabel(/ETH fees: protocol 30%, creator 28%, Holders 28%, Buyback 14%/),
     ).toBeVisible()
     await page.getByRole('button', { name: /Continue/ }).click()
     await expect(page.getByRole('alert')).toContainText('Build or select')
@@ -103,7 +103,7 @@ for (const width of [1440, 390])
 test('old over-allocated drafts are repaired when reopening the builder', async ({ page }) => {
   await page.addInitScript(() =>
     localStorage.setItem(
-      'hookbrew:launch-draft:v1',
+      'hookbrew:4663:v2:launch-draft',
       JSON.stringify({
         hook: {
           mode: 'custom',

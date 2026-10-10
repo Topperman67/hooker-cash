@@ -1,5 +1,6 @@
 import { normalizeRecipe, recipeHash, recipeGuard } from './hookRecipe.js'
-import { getAddress, isAddress, parseUnits, zeroAddress } from 'viem'
+import { getAddress, isAddress, parseUnits, formatUnits, zeroAddress } from 'viem'
+import { network, modularVersion } from '../../shared/network.mjs'
 const same = (a, b) => String(a).toLowerCase() === String(b).toLowerCase()
 export const defaultDraft = {
   name: '',
@@ -22,7 +23,12 @@ export const defaultDraft = {
   vesting: { cliff: '0', cliffUnit: 'days', duration: '0', durationUnit: 'days' },
   splits: [],
 }
-export const openingMarketCap = (draft) => String(draft.targetMcap).trim() || '5000'
+export const valuation = Object.freeze({
+  min: formatUnits(BigInt(network.minMcap), network.quoteDecimals),
+  max: formatUnits(BigInt(network.maxMcap), network.quoteDecimals),
+  default: formatUnits(BigInt(network.defaultMcap), network.quoteDecimals),
+})
+export const openingMarketCap = (draft) => String(draft.targetMcap).trim() || valuation.default
 const schedule = (cliff, cliffUnit, duration, durationUnit) => ({
   cliff: String(cliff),
   cliffUnit,
@@ -95,7 +101,7 @@ export function vestingLabel(value) {
         .filter(Boolean)
         .join(' + ')
 }
-export function amount(value, decimals = 6) {
+export function amount(value, decimals = network.quoteDecimals) {
   if (!/^\d+(\.\d+)?$/.test(String(value)) || (String(value).split('.')[1]?.length || 0) > decimals)
     throw Error(`Enter a positive amount with at most ${decimals} decimals.`)
   const result = parseUnits(String(value), decimals)
@@ -110,20 +116,40 @@ export function slippageBps(value) {
   return parseUnits(String(value), 2)
 }
 export const minimum = (output, slippage) => (output * (10000n - slippageBps(slippage))) / 10000n
-// Arc's ERC20 USDC shares the native balance, expressed at a different precision.
-export function nativeBudget(gas, gasPrice, value = 0n, quoteSpend = 0n) {
-  return value + quoteSpend * 10n ** 12n + (gas * gasPrice * 120n) / 100n
+// Transaction value already includes the purchase and, on launch, the platform fee.
+export function nativeBudget(gas, gasPrice, value = 0n) {
+  return value + (gas * gasPrice * 120n + 99n) / 100n
+}
+export async function maximumNativeSpend(balance, gasPrice, estimateGas) {
+  let value = balance / 2n
+  if (value <= 0n) throw Error('Keep enough ETH available for network gas.')
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const reserve = nativeBudget(await estimateGas(value), gasPrice)
+    if (balance <= reserve) throw Error('Keep enough ETH available for network gas.')
+    const available = balance - reserve
+    if (available === value) return value
+    value = available
+  }
+  // Verify the final calldata/value again: the L1 data component can change with it.
+  if (nativeBudget(await estimateGas(value), gasPrice, value) > balance)
+    throw Error('Network fees changed. Retry MAX with a fresh gas estimate.')
+  return value
 }
 export function validateDraft(d, stage = 4) {
   if (![10000, 20000, 30000, 40000, 50000].includes(Number(d.fee)))
     throw Error('Choose a fee from 1% to 5%.')
   const mcap = amount(openingMarketCap(d))
-  if (mcap < 2000_000000n || mcap > 10000_000000n)
-    throw Error('Opening market cap must be 2,000–10,000 USDC.')
+  if (mcap < BigInt(network.minMcap) || mcap > BigInt(network.maxMcap))
+    throw Error('Opening market cap must be 0.5–5 ETH.')
   if (stage < 1) return
   if (d.hook?.mode === 'custom') {
     normalizeRecipe(d.hook.recipe)
-    if (!d.hook.deployment || d.hook.deployment.recipeHash !== recipeHash(d.hook.recipe))
+    if (
+      !d.hook.deployment ||
+      d.hook.deployment.chainId !== network.chainId ||
+      d.hook.deployment.abiVersion !== modularVersion ||
+      d.hook.deployment.recipeHash !== recipeHash(d.hook.recipe)
+    )
       throw Error('Build or select your custom hook before continuing to Token.')
   }
   if (

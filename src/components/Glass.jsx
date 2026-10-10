@@ -23,19 +23,19 @@ export default function Glass({
       blur: variant === 'clear' ? 2 : variant === 'panel' ? 12 : 7,
       tint:
         tone === 'slate'
-          ? '30, 43, 65'
-          : tone === 'violet'
-            ? '79, 30, 126'
+          ? '36, 40, 37'
+          : tone === 'green'
+            ? '52, 65, 38'
             : tone === 'cyan'
-              ? '61, 135, 152'
-              : '55, 25, 83',
-      tintOpacity: tone === 'neutral' ? 0.1 : 0.16,
-      refractionStrength: variant === 'clear' ? 32 : variant === 'panel' ? 18 : 12,
-      bezelWidth: variant === 'panel' || variant === 'clear' ? 24 : 12,
-      chromaticAberration: 0.24,
-      edgeHighlight: 0.5,
-      specularStrength: 0.15,
-      elevation: variant === 'panel' ? 1.2 : 0.45,
+              ? '64, 114, 81'
+              : '30, 33, 31',
+      tintOpacity: tone === 'neutral' ? 0.08 : 0.1,
+      refractionStrength: variant === 'clear' ? 32 : variant === 'panel' ? 12 : 5,
+      bezelWidth: variant === 'clear' ? 24 : variant === 'panel' ? 14 : 5,
+      chromaticAberration: variant === 'clear' ? 0.24 : 0.06,
+      edgeHighlight: variant === 'clear' ? 0.5 : 0.16,
+      specularStrength: variant === 'clear' ? 0.15 : 0.04,
+      elevation: variant === 'panel' ? 0.5 : 0.15,
       quality: variant === 'clear' ? 'high' : variant === 'panel' ? 'medium' : 'low',
       dynamicLighting: interactive,
       refractionMode: 'auto',

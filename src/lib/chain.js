@@ -1,16 +1,17 @@
 import { createPublicClient, erc20Abi, fallback, getAddress, http, isAddress } from 'viem'
-import { arc } from '../config/network'
+import { robinhood } from '../config/network'
 
 export const publicClient = createPublicClient({
-  chain: arc,
+  chain: robinhood,
   transport: fallback(
-    arc.rpcUrls.default.http.map((url) => http(url, { timeout: 10000, retryCount: 1 })),
+    robinhood.rpcUrls.default.http.map((url) => http(url, { timeout: 10000, retryCount: 1 })),
   ),
 })
 
 export async function readNetwork() {
   const chainId = await publicClient.getChainId()
-  if (chainId !== arc.id) throw new Error(`RPC returned chain ${chainId}; expected ${arc.id}.`)
+  if (chainId !== robinhood.id)
+    throw new Error(`RPC returned chain ${chainId}; expected ${robinhood.id}.`)
   const block = await publicClient.getBlock()
   return {
     chainId,
@@ -24,10 +25,11 @@ export async function readToken(input) {
   if (!isAddress(input)) throw new Error('Enter a valid token contract address.')
   const address = getAddress(input)
   const chainId = await publicClient.getChainId()
-  if (chainId !== arc.id) throw new Error('The RPC is connected to a different network.')
+  if (chainId !== robinhood.id) throw new Error('The RPC is connected to a different network.')
   const blockNumber = await publicClient.getBlockNumber()
   const code = await publicClient.getCode({ address, blockNumber })
-  if (!code || code === '0x') throw new Error('No contract exists at this address on Arc.')
+  if (!code || code === '0x')
+    throw new Error('No contract exists at this address on Robinhood Chain.')
   const call = (functionName) =>
     publicClient.readContract({ address, abi: erc20Abi, functionName, blockNumber })
   const [name, symbol, decimals, totalSupply] = await Promise.all(

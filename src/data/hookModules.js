@@ -9,7 +9,7 @@ export const hookModules = [
     detail:
       'One timer for the entire pool, not each wallet. The founder buy is exempt. It expires automatically.',
     value: 5,
-    color: 'lilac',
+    color: 'lime',
   },
   {
     key: 'startCapBps',
@@ -18,9 +18,9 @@ export const hookModules = [
     group: 'opening',
     text: 'Start with smaller buys, then gradually increase the limit as your market opens.',
     detail:
-      'Limits each buy to a percentage of virtual USDC reserves. Multiple wallets can still buy; this is not a bot-proof guarantee.',
+      'Limits each buy to a percentage of virtual ETH reserves. Multiple wallets can still buy; this is not a bot-proof guarantee.',
     value: 100,
-    color: 'peach',
+    color: 'sage',
   },
   {
     key: 'oracle',
@@ -40,31 +40,31 @@ export const hookModules = [
     group: 'value',
     text: 'Permanently burn a slice of the token fees in your creator share.',
     detail:
-      'Burns only tokens collected as fees, reducing supply at harvest. Your USDC fees are unchanged. Holder balances are never burned.',
+      'Burns only tokens collected as fees, reducing supply at harvest. Your ETH fees are unchanged. Holder balances are never burned.',
     value: 2000,
-    color: 'rose',
+    color: 'fern',
   },
   {
     key: 'rewardBps',
     title: 'Holder rewards',
     icon: Users,
     group: 'value',
-    text: 'Share part of your USDC fees with people holding your token.',
+    text: 'Share part of your ETH fees with people holding your token.',
     detail:
-      'Rewards accrue to holders at harvest and remain theirs after a transfer. Pool, hook and vesting balances are excluded. Holders claim USDC in the terminal.',
+      'Rewards accrue to holders at harvest and remain theirs after a transfer. Pool, hook and vesting balances are excluded. Holders claim ETH in the terminal.',
     value: 3000,
-    color: 'lilac',
+    color: 'lime',
   },
   {
     key: 'buybackBps',
     title: 'Buyback & burn',
     icon: RefreshCw,
     group: 'value',
-    text: 'Use part of your USDC fees to buy tokens from the pool and burn them.',
+    text: 'Use part of your ETH fees to buy tokens from the pool and burn them.',
     detail:
-      'Queues fees until price history is ready. Each execution spends at most 0.5% of virtual USDC reserves with a 200-tick price limit. Anyone can trigger execution.',
+      'Queues fees until price history is ready. Each execution spends at most 0.5% of virtual ETH reserves with a 200-tick price limit. Anyone can trigger execution.',
     value: 2000,
-    color: 'gold',
+    color: 'olive',
   },
   {
     key: 'liquidityBps',
@@ -75,6 +75,6 @@ export const hookModules = [
     detail:
       'Adds to the seed position when enough of both assets are available and the price check passes. Unused funds wait for another execution. No withdrawal function.',
     value: 2000,
-    color: 'blue',
+    color: 'moss',
   },
 ]

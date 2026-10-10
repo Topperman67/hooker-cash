@@ -1,10 +1,20 @@
-import { ArrowRight, ArrowUpRight, FlaskConical, RefreshCw } from 'lucide-react'
+import {
+  ArrowRight,
+  ArrowUpRight,
+  FlaskConical,
+  RefreshCw,
+  LockKeyhole,
+  SlidersHorizontal,
+  Users,
+} from 'lucide-react'
 import { Link } from 'react-router-dom'
-import Glass from '../components/Glass'
 import HookStack from '../components/HookStack'
 import { BrandMark, Button, TokenAvatar } from '../components/UI'
 import { useChain } from '../context/ChainContext'
-import { useResource, compact } from '../lib/api'
+import { useResource, eth } from '../lib/api'
+import { hookModules } from '../data/hookModules'
+import { network } from '../../shared/network.mjs'
+import { formatUnits } from 'viem'
 
 export default function HomePage() {
   const market = useResource('/api/market?sort=newest', 15000)
@@ -13,28 +23,20 @@ export default function HomePage() {
 
   return (
     <div className="landing">
-      <Glass
-        as="section"
-        tone="violet"
-        radius={28}
-        className="landing-hero"
-        aria-labelledby="landing-title"
-      >
+      <section className="landing-hero" aria-labelledby="landing-title">
         <div className="landing-stage">
           <div className="landing-copy">
             <div className="landing-eyebrow">
-              <span>Hookbrew</span>
-              <i />
-              The token launchpad on Arc
+              <BrandMark name="robinhood" />A new home for your next idea
             </div>
             <h1 id="landing-title">
               Brew something
               <br />
-              <span>worth trading.</span>
+              worth trading.
             </h1>
             <p>
-              A new idea deserves its own market. Create your token, set the opening rules, and
-              bring it to life on Arc.
+              Create a token. Give it your own rules. Open an ETH market on Robinhood Chain, with a
+              little help from Uniswap V4.
             </p>
             <div className="landing-actions">
               <Button to="/create" primary>
@@ -44,31 +46,45 @@ export default function HomePage() {
                 Explore the market <ArrowRight size={17} />
               </Link>
             </div>
-            <span className="landing-note">Your token. Your recipe.</span>
+            <span className="landing-note">
+              <span>
+                {formatUnits(BigInt(network.launchFee), network.quoteDecimals)} ETH launch fee
+              </span>
+              <span>+ network gas</span>
+            </span>
           </div>
-          <HookStack />
+          <div className="landing-visual">
+            <div className="architecture-heading">
+              <span>The anatomy of a brew</span>
+              <span>Uniswap V4</span>
+            </div>
+            <HookStack />
+            <div className="architecture-footnote">
+              <LockKeyhole size={13} /> Seed liquidity, permanently locked
+            </div>
+          </div>
         </div>
         <div className="landing-foundations" aria-label="Built with">
           <span>
-            <BrandMark name="arc-blue" />
-            Built on Arc
+            <BrandMark name="robinhood-blue" />
+            Robinhood Chain
           </span>
           <span>
             <BrandMark name="uniswap" />
-            Uniswap V4 pools
+            Uniswap V4
           </span>
           <span>
-            <BrandMark name="usdc" />
-            Paired with USDC
+            <BrandMark name="eth" />
+            Native ETH markets
           </span>
           <Link to="/docs">
             Get to know Hookbrew <ArrowUpRight size={14} />
           </Link>
         </div>
-      </Glass>
+      </section>
       {chain.status === 'error' && (
         <div className="landing-network-error" role="status">
-          <span>Arc connection unavailable. Network data may be out of date.</span>
+          <span>Robinhood Chain connection unavailable. Network data may be out of date.</span>
           <button onClick={chain.retry}>
             Retry network <RefreshCw size={14} />
           </button>
@@ -78,8 +94,8 @@ export default function HomePage() {
         <section className="landing-market" aria-labelledby="fresh-launches-title">
           <div className="landing-section-heading">
             <div>
-              <span className="landing-overline">Discover</span>
               <h2 id="fresh-launches-title">Freshly brewed.</h2>
+              <p>New ideas, straight from the launchpad.</p>
             </div>
             <Link to="/market" className="landing-text-link">
               All tokens <ArrowUpRight size={16} />
@@ -103,8 +119,8 @@ export default function HomePage() {
                 <thead>
                   <tr>
                     <th>Token</th>
-                    <th>Market cap / USDC</th>
-                    <th>24h volume / USDC</th>
+                    <th>Market cap / ETH</th>
+                    <th>24h volume / ETH</th>
                     <th>Trade</th>
                   </tr>
                 </thead>
@@ -120,8 +136,8 @@ export default function HomePage() {
                           </span>
                         </Link>
                       </td>
-                      <td>{compact(token.marketCap)}</td>
-                      <td>{compact(token.volume24h)}</td>
+                      <td>{eth(token.marketCap)}</td>
+                      <td>{eth(token.volume24h)}</td>
                       <td>
                         <Link to={`/token/${token.address}`} aria-label={`Trade ${token.symbol}`}>
                           <ArrowUpRight size={18} />
@@ -159,28 +175,66 @@ export default function HomePage() {
             )
           )}
         </section>
-        <Glass
-          as="section"
-          tone="violet"
-          radius={20}
-          className="landing-studio"
-          aria-labelledby="studio-title"
-        >
-          <span className="landing-overline">The launch studio</span>
-          <h2 id="studio-title">
-            An idea to a market.
-            <br />
-            All in one place.
-          </h2>
+        <section className="landing-studio" aria-labelledby="studio-title">
+          <div className="studio-invitation-icon">
+            <FlaskConical size={26} strokeWidth={1.4} />
+          </div>
+          <span className="landing-overline">Your next move</span>
+          <h2 id="studio-title">It starts with a recipe.</h2>
           <p>
-            Set your supply. Shape your launch. Then follow the chart and trade from your token’s
-            own terminal.
+            Five steps from a blank canvas to your own token. Build your draft now and launch when
+            you’re ready.
           </p>
           <Link to="/create" className="landing-text-link">
             Start your recipe <ArrowRight size={16} />
           </Link>
-        </Glass>
+        </section>
       </div>
+      <section className="recipe-discovery" aria-labelledby="recipe-discovery-title">
+        <div className="recipe-discovery-heading">
+          <div>
+            <h2 id="recipe-discovery-title">The hook makes it yours.</h2>
+            <p>Seven modules. Your combination. Set the rules before the first trade.</p>
+          </div>
+          <Link to="/modules" className="landing-text-link">
+            Explore the hooks <ArrowUpRight size={16} />
+          </Link>
+        </div>
+        <div className="recipe-module-list">
+          {hookModules.map(({ key, title, icon: Icon }) => (
+            <span key={key}>
+              <Icon size={19} strokeWidth={1.5} />
+              {title}
+            </span>
+          ))}
+        </div>
+        <div className="brew-principles">
+          <article>
+            <SlidersHorizontal size={23} strokeWidth={1.4} />
+            <h3>Set the opening.</h3>
+            <p>
+              Choose a {formatUnits(BigInt(network.minMcap), 18)}–
+              {formatUnits(BigInt(network.maxMcap), 18)} ETH starting valuation and a 1–5% pool fee.
+            </p>
+          </article>
+          <article>
+            <Users size={23} strokeWidth={1.4} />
+            <h3>Share your upside.</h3>
+            <p>
+              Split creator payouts with your team. Add holder rewards to share a portion of ETH
+              fees with your community.
+            </p>
+          </article>
+          <article>
+            <LockKeyhole size={23} strokeWidth={1.4} />
+            <h3>Build on clear rules.</h3>
+            <p>
+              Permanent seed liquidity. A fixed 70/30 creator and protocol fee split. Every
+              transaction signed by you.
+            </p>
+          </article>
+        </div>
+      </section>
     </div>
   )
 }

@@ -5,11 +5,11 @@ const tokenAddress = '0x1111111111111111111111111111111111111111'
 const account = '0x2222222222222222222222222222222222222222'
 // All synthetic values in this file are test fixtures. Production has no fallback data.
 async function rpc(page, { wrongChain = false } = {}) {
-  await page.route(/https:\/\/rpc\.(?:drpc\.)?mainnet\.arc\.io/, async (route) => {
+  await page.route(/https:\/\/rpc\.mainnet\.chain\.robinhood\.com/, async (route) => {
     const request = route.request().postDataJSON()
     const respond = (item) => {
       let result
-      if (item.method === 'eth_chainId') result = wrongChain ? '0x1' : '0x13b2'
+      if (item.method === 'eth_chainId') result = wrongChain ? '0x1' : '0x1237'
       else if (item.method === 'eth_blockNumber') result = '0x1234'
       else if (item.method === 'eth_getBlockByNumber')
         result = {
@@ -126,11 +126,11 @@ test('sidebar uses distinct section icons and keeps the glass surface', async ({
   await expect(artwork).toHaveCount(9)
   await expect(page.locator('a[href="/trade"] .nav-artwork')).toHaveAttribute(
     'src',
-    '/brand/navigation/platinum/trade.png',
+    '/brand/navigation/robinhood/trade.svg',
   )
   await expect(page.locator('a[href="/agents"] .nav-artwork')).toHaveAttribute(
     'src',
-    '/brand/navigation/platinum/agents.png',
+    '/brand/navigation/robinhood/agents.svg',
   )
   await expect
     .poll(() =>
@@ -144,8 +144,8 @@ test('sidebar uses distinct section icons and keeps the glass surface', async ({
   ).toBe(9)
   await expect(page.locator('.sidebar')).not.toContainText('A little hook.')
   await expect(page.getByRole('link', { name: 'Help & resources' })).toBeVisible()
-  await expect(page.getByLabel('Arc network status')).toContainText('Network connected')
-  await expect(page.getByLabel('Arc network status')).toContainText('4,660')
+  await expect(page.getByLabel('Robinhood Chain network status')).toContainText('Network connected')
+  await expect(page.getByLabel('Robinhood Chain network status')).toContainText('4,660')
   await expect(page.locator('.glass-mode')).toHaveCount(0)
   await expect(page.getByRole('button', { name: /liquid glass|light glass/i })).toHaveCount(0)
   await expect(page.locator('.ql-lens').first()).toBeAttached()
@@ -207,7 +207,7 @@ test('sidebar uses distinct section icons and keeps the glass surface', async ({
       footerOverlaps: false,
     })
     await page.locator('.sidebar').screenshot({
-      path: `artifacts/sidebar-platinum/${viewport.width}x${viewport.height}.png`,
+      path: `artifacts/sidebar-robinhood/${viewport.width}x${viewport.height}.png`,
       animations: 'disabled',
     })
     if (viewport.width <= 900) await page.keyboard.press('Escape')
@@ -239,7 +239,7 @@ test('invalid addresses and absent contracts do not become invented tokens', asy
   await expect(page.locator('.token-lookup .token-top')).toHaveCount(0)
 })
 
-test('wallet connects, adds Arc, reads balance, tracks account events and disconnects', async ({
+test('wallet connects, adds Robinhood Chain, reads balance, tracks account events and disconnects', async ({
   page,
 }) => {
   await injectWallet(page, { unknownChain: true })
@@ -248,7 +248,7 @@ test('wallet connects, adds Arc, reads balance, tracks account events and discon
   await page.getByRole('button', { name: 'Connect wallet', exact: true }).click()
   await page.getByRole('button', { name: 'Test wallet' }).click()
   await expect(page.getByRole('dialog')).toContainText(account)
-  await page.getByRole('button', { name: 'Switch to Arc' }).click()
+  await page.getByRole('button', { name: 'Switch to Robinhood Chain' }).click()
   await expect(page.getByRole('dialog').locator('.preview-stat').last()).toContainText('10')
   const calls = await page.evaluate(() => window.__walletRequests)
   expect(
@@ -551,7 +551,7 @@ test('home distinguishes loading, errors, and real market data with retry', asyn
                   address: tokenAddress,
                   name: 'Fixture Token',
                   symbol: 'TEST',
-                  marketCap: 12345,
+                  marketCap: 1.2345,
                   volume24h: null,
                 },
               ],
@@ -569,7 +569,7 @@ test('home distinguishes loading, errors, and real market data with retry', asyn
   recovered = true
   await page.getByRole('button', { name: 'Try again' }).click()
   await expect(page.getByRole('table')).toContainText('Fixture Token')
-  await expect(page.getByRole('table')).toContainText('12.35K')
+  await expect(page.getByRole('table')).toContainText('1.2345')
   await expect(page.getByRole('table')).toContainText('—')
   await expect(page.getByRole('link', { name: 'Trade TEST' })).toHaveAttribute(
     'href',
@@ -580,15 +580,19 @@ test('home distinguishes loading, errors, and real market data with retry', asyn
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
 })
 
-test('wrong RPC chain is an error, not a connected Arc status', async ({ page }) => {
+test('wrong RPC chain is an error, not a connected Robinhood Chain status', async ({ page }) => {
   await page.unrouteAll()
   await rpc(page, { wrongChain: true })
   await unlock(page)
   await page.goto('/')
-  await expect(page.locator('.landing-network-error')).toContainText('Arc connection unavailable')
+  await expect(page.locator('.landing-network-error')).toContainText(
+    'Robinhood Chain connection unavailable',
+  )
   await expect(page.locator('.network-chip .status-dot')).toHaveClass(/status-offline/)
   await page.getByRole('button', { name: 'Open navigation' }).click()
-  await expect(page.getByLabel('Arc network status')).toContainText('Connection unavailable')
+  await expect(page.getByLabel('Robinhood Chain network status')).toContainText(
+    'Connection unavailable',
+  )
   await expect(page.locator('.sidebar-network-block')).toContainText('—')
   await expect(page.getByRole('button', { name: 'Retry network' })).toBeVisible()
 })
@@ -686,7 +690,7 @@ test('a failed route chunk offers reload and preserves drafts and pending receip
   await page.evaluate(
     ({ draft, pending }) => {
       localStorage.setItem('hookbrew:recovery-test-draft', draft)
-      sessionStorage.setItem('hookbrew:pending-transaction:v1', pending)
+      sessionStorage.setItem('hookbrew:4663:v2:pending-transaction', pending)
     },
     { draft, pending },
   )
@@ -700,7 +704,7 @@ test('a failed route chunk offers reload and preserves drafts and pending receip
   expect(await page.evaluate(() => localStorage.getItem('hookbrew:recovery-test-draft'))).toBe(
     draft,
   )
-  expect(await page.evaluate(() => sessionStorage.getItem('hookbrew:pending-transaction:v1'))).toBe(
-    pending,
-  )
+  expect(
+    await page.evaluate(() => sessionStorage.getItem('hookbrew:4663:v2:pending-transaction')),
+  ).toBe(pending)
 })

@@ -35,7 +35,7 @@ export default function TokenLookup({ address, showLink = true }) {
   if (status === 'idle') return null
   return (
     <Glass className="panel-pad token-lookup" aria-live="polite">
-      {status === 'loading' && <p>Reading token contract on Arc…</p>}
+      {status === 'loading' && <p>Reading token contract on Robinhood Chain…</p>}
       {status === 'error' && (
         <p className="form-error" role="alert">
           {error}

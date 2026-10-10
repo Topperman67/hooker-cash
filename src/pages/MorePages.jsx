@@ -2,7 +2,7 @@ import { Link } from 'react-router-dom'
 import Glass from '../components/Glass'
 import { Button, PageHeading, TokenAvatar } from '../components/UI'
 import ChainStatus from '../components/ChainStatus'
-import { useResource, compact, short } from '../lib/api'
+import { useResource, short, eth } from '../lib/api'
 
 function IndexedTable({ liquidity = false }) {
   const market = useResource(`/api/market?sort=${liquidity ? 'newest' : 'volume'}`)
@@ -14,8 +14,8 @@ function IndexedTable({ liquidity = false }) {
             <thead>
               <tr>
                 <th>{liquidity ? 'Pool' : 'Rank / token'}</th>
-                <th>{liquidity ? 'Seed position' : '24h volume / USDC'}</th>
-                <th>{liquidity ? 'Creator' : 'Market cap / USDC'}</th>
+                <th>{liquidity ? 'Seed position' : '24h volume / ETH'}</th>
+                <th>{liquidity ? 'Creator' : 'Market cap / ETH'}</th>
                 <th>Pool fee</th>
               </tr>
             </thead>
@@ -28,12 +28,12 @@ function IndexedTable({ liquidity = false }) {
                       <TokenAvatar token={t} />
                       <span>
                         <strong>{t.name}</strong>
-                        <small>{t.symbol} / USDC</small>
+                        <small>{t.symbol} / ETH</small>
                       </span>
                     </Link>
                   </td>
-                  <td>{liquidity ? 'Factory held · no withdrawal' : compact(t.volume24h)}</td>
-                  <td>{liquidity ? short(t.creator) : compact(t.marketCap)}</td>
+                  <td>{liquidity ? 'Factory held · no withdrawal' : eth(t.volume24h)}</td>
+                  <td>{liquidity ? short(t.creator) : eth(t.marketCap)}</td>
                   <td>{t.fee / 10000}%</td>
                 </tr>
               ))}
@@ -54,7 +54,7 @@ function IndexedTable({ liquidity = false }) {
       <p className="fine-print">
         {liquidity
           ? 'The factory seed position has no withdrawal function. Open a token’s Creator & vesting tab to harvest and claim fees. External LP position management is not included.'
-          : 'Top 24 indexed tokens ranked by USDC swap volume over the past 24 hours. Volume is observed activity, not a recommendation.'}
+          : 'Top 24 indexed tokens ranked by ETH swap volume over the past 24 hours. Volume is observed activity, not a recommendation.'}
       </p>
     </>
   )
@@ -64,7 +64,7 @@ export default function LiquidityPage() {
     <>
       <PageHeading
         title="The pools behind the brews."
-        description="Every Hookbrew launch creates a token / USDC pool with a permanent factory seed position."
+        description="Every Hookbrew launch creates a token / ETH pool with a permanent factory seed position."
       />
       <IndexedTable liquidity />
     </>
@@ -115,83 +115,102 @@ export function DocsPage() {
     <>
       <PageHeading
         title="Built to brew. Built on-chain."
-        description="The Hookbrew v1 launch and trading guide."
+        description="The Hookbrew v2 launch and trading guide."
       />
       <ChainStatus />
-      <Glass as="article" className="docs-body">
-        <h2>Launch studio</h2>
-        <p>
-          Set a name, ticker, artwork and socials. Every token starts with one billion tokens; burn
-          modules can reduce the supply. Choose an ERC20 USDC market, and a 1–5% pool fee. Opening
-          valuation targets 2,000–10,000 USDC and rounds to a V4 price tick. This valuation is not
-          deposited liquidity or funds raised.
-        </p>
-        <h2>Founder buys and vesting</h2>
-        <p>
-          An optional initial purchase is capped at 10% of token supply. Approve the exact ERC20
-          USDC amount, simulate, and sign the launch. Up to ten recipients share that allocation and
-          creator fees. Each recipient can have an immutable cliff followed by linear vesting; zero
-          periods deliver immediately.
-        </p>
-        <h2>Launch guards</h2>
-        <p>
-          Optional buy caps ramp as a percentage of the seed position’s virtual USDC reserves for up
-          to one hour. Optional global buy spacing applies during that window. Sells and the founder
-          purchase are exempt. These rules cannot guarantee protection against bots or multiple
-          wallets.
-        </p>
-        <h2>Trading inside Hookbrew</h2>
-        <p>
-          Open a token market for its real swap chart and buy/sell ticket. Quotes come from the V4
-          quoter. The Hookbrew router takes an exact input, enforces minimum received and a
-          deadline, and delivers output directly to your wallet. Approvals are exact amounts. USDC
-          for gas and ERC20 USDC for trading are two interfaces to one balance on Arc. Keep enough
-          USDC for both the purchase and gas.
-        </p>
-        <h2>Creator fees and seed liquidity</h2>
-        <p>
-          The factory holds the seed LP position with no withdrawal function. Harvesting allocates
-          70% of its fees to recipients and 30% to the immutable Hookbrew treasury. Recipients with
-          founder tokens must retain their original allocation, counting unreleased vesting, to
-          claim creator fees. Protocol fees are independent of that hold requirement. Other
-          liquidity positions are outside this fee split.
-        </p>
-        <h2>Data and confirmations</h2>
-        <p>
-          The server indexes confirmed TokenLaunched and PoolManager Swap events, including external
-          routes into these pools. Own-router events identify traders; external routes are labeled
-          separately. Candles use actual observed swaps and do not fill gaps with invented activity.
-          The index follows two blocks behind the head, persists to shared Redis in production (disk
-          locally), and rebuilds after a detected reorganization.
-        </p>
-        <h2>Deployment and contract source</h2>
-        <p>
-          Hookbrew v1 is an independent implementation in contracts/protocol. The setup page
-          verifies the deployment bytecode, fixed treasury, receipt and network. The treasury signs
-          a host-bound activation message identifying both deployment transactions. The original
-          Hooker factory and treasury are not used. Local contract and integration tests do not
-          constitute an independent security audit.
-        </p>
-        <Button to="/setup">Contract deployment setup</Button>
-        <h2>Current scope</h2>
-        <p>
-          This build covers launches, token branding, recipient splits, vesting, creator claims,
-          indexed markets, charts and spot trading. Stage 2 includes an immutable custom-hook
-          builder with buy spacing, rising buy caps, price history, fee burning, USDC holder
-          rewards, buybacks and liquidity reinvestment. Each new recipe deploys its own hook and
-          router in one wallet transaction. Existing recipes can be reused without redeployment.
-          Market modules require 30 minutes of price history and a bounded price check. External LP
-          management, leveraged markets and transaction-capable agent services remain separate
-          backlog items.
-        </p>
-        <h2>Hosting</h2>
-        <p>
-          Run the Node server with persistent storage and set HOOKBREW_PUBLIC_URL to the public
-          HTTPS origin before a live launch. Token metadata and uploaded artwork must remain
-          accessible at that origin. Browser drafts are saved on this device; on-chain token
-          metadata is immutable.
-        </p>
-      </Glass>
+      <div className="guide-layout">
+        <nav className="guide-index" aria-label="Guide sections">
+          <span>In this guide</span>
+          {[
+            ['launch-studio', 'Launch studio'],
+            ['founder-buys', 'Founder buys & vesting'],
+            ['launch-guards', 'Launch guards'],
+            ['trading', 'Trading'],
+            ['creator-fees', 'Creator fees & liquidity'],
+            ['data-confirmations', 'Data & confirmations'],
+            ['deployment', 'Contract deployment'],
+            ['scope', 'Current scope'],
+            ['hosting', 'Hosting'],
+          ].map(([id, label]) => (
+            <a key={id} href={`#${id}`}>
+              {label}
+            </a>
+          ))}
+        </nav>
+        <Glass as="article" className="docs-body">
+          <h2 id="launch-studio">Launch studio</h2>
+          <p>
+            Set a name, ticker, artwork and socials. Every token starts with one billion tokens;
+            burn modules can reduce the supply. Choose a native ETH market, and a 1–5% pool fee.
+            Opening valuation targets 0.5–5 ETH and rounds to a V4 price tick. This valuation is not
+            deposited liquidity or funds raised.
+          </p>
+          <h2 id="founder-buys">Founder buys and vesting</h2>
+          <p>
+            An optional initial purchase is capped at 10% of token supply. Simulate and sign the
+            launch with the purchase plus launch fee in native ETH. Up to ten recipients share that
+            allocation and creator fees. Each recipient can have an immutable cliff followed by
+            linear vesting; zero periods deliver immediately.
+          </p>
+          <h2 id="launch-guards">Launch guards</h2>
+          <p>
+            Optional buy caps ramp as a percentage of the seed position’s virtual ETH reserves for
+            up to one hour. Optional global buy spacing applies during that window. Sells and the
+            founder purchase are exempt. These rules cannot guarantee protection against bots or
+            multiple wallets.
+          </p>
+          <h2 id="trading">Trading inside Hookbrew</h2>
+          <p>
+            Open a token market for its real swap chart and buy/sell ticket. Quotes come from the V4
+            quoter. The Hookbrew router takes an exact input, enforces minimum received and a
+            deadline, and delivers output directly to your wallet. Token sell approvals are exact
+            amounts. ETH purchases need no approval. Keep enough ETH for both the purchase and gas.
+          </p>
+          <h2 id="creator-fees">Creator fees and seed liquidity</h2>
+          <p>
+            The factory holds the seed LP position with no withdrawal function. Harvesting allocates
+            70% of its fees to recipients and 30% to the immutable Hookbrew treasury. Recipients
+            with founder tokens must retain their original allocation, counting unreleased vesting,
+            to claim creator fees. Protocol fees are independent of that hold requirement. Other
+            liquidity positions are outside this fee split.
+          </p>
+          <h2 id="data-confirmations">Data and confirmations</h2>
+          <p>
+            The server indexes confirmed TokenLaunched and PoolManager Swap events, including
+            external routes into these pools. Own-router events identify traders; external routes
+            are labeled separately. Candles use actual observed swaps and do not fill gaps with
+            invented activity. The index waits for two L2 confirmations, persists to shared Redis in
+            production (disk locally), and rebuilds after a detected reorganization.
+          </p>
+          <h2 id="deployment">Deployment and contract source</h2>
+          <p>
+            Hookbrew v2 is an independent implementation in contracts/protocol. The setup page
+            verifies the deployment bytecode, fixed treasury, receipt and network. The treasury
+            signs a host-bound activation message identifying both deployment transactions. The
+            original Hooker factory and treasury are not used. Local contract and integration tests
+            do not constitute an independent security audit.
+          </p>
+          <Button to="/setup">Contract deployment setup</Button>
+          <h2 id="scope">Current scope</h2>
+          <p>
+            This build covers launches, token branding, recipient splits, vesting, creator claims,
+            indexed markets, charts and spot trading. Stage 2 includes an immutable custom-hook
+            builder with buy spacing, rising buy caps, price history, fee burning, ETH holder
+            rewards, buybacks and liquidity reinvestment. Each new recipe deploys its own hook and
+            router in one wallet transaction. Existing recipes can be reused without redeployment.
+            Market modules require 30 minutes of price history and a bounded price check. External
+            LP management, leveraged markets and transaction-capable agent services remain separate
+            backlog items.
+          </p>
+          <h2 id="hosting">Hosting</h2>
+          <p>
+            Run the Node server with persistent storage and set HOOKBREW_PUBLIC_URL to the public
+            HTTPS origin before a live launch. Token metadata and uploaded artwork must remain
+            accessible at that origin. Browser drafts are saved on this device; on-chain token
+            metadata is immutable.
+          </p>
+        </Glass>
+      </div>
     </>
   )
 }

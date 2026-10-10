@@ -84,7 +84,7 @@ export default function HookStack() {
       <div className="hook-stack-scene">
         {layers.map(({ id, title, detail, mark }) => (
           <div className={`hook-layer hook-layer-${id}`} key={id}>
-            <Glass variant="clear" tone="violet" radius={30} className="hook-layer-glass">
+            <Glass variant="clear" tone="green" radius={30} className="hook-layer-glass">
               <div className="hook-layer-top">
                 {mark}
                 <span>{detail}</span>

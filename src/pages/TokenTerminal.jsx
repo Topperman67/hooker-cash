@@ -1,3 +1,4 @@
+import { network as chainConfig } from '../../shared/network.mjs'
 import { useMemo, useState } from 'react'
 import { useParams, Link, useSearchParams } from 'react-router-dom'
 import { isAddress } from 'viem'
@@ -8,7 +9,7 @@ import MarketChart from '../components/MarketChart'
 import TradeTicket from '../components/TradeTicket'
 import CreatorPosition from '../components/CreatorPosition'
 import { Metric } from '../components/LaunchStudio'
-import { useResource, number, compact, short, safeLink } from '../lib/api'
+import { useResource, number, compact, short, safeLink, eth } from '../lib/api'
 import TokenLookup from '../components/TokenLookup'
 export default function TokenTerminal() {
   const { id } = useParams(),
@@ -49,7 +50,7 @@ export default function TokenTerminal() {
           <p>{detail.error}</p>
           {params.get('launched') && /^0x[\da-f]{64}$/i.test(params.get('launched')) && (
             <a
-              href={`https://explorer.arc.io/tx/${params.get('launched')}`}
+              href={`${chainConfig.explorerUrl}/tx/${params.get('launched')}`}
               target="_blank"
               rel="noreferrer"
             >
@@ -91,7 +92,7 @@ export default function TokenTerminal() {
                 <Copy size={12} /> {copied ? 'Copied' : short(token.address)}
               </button>
               <a
-                href={`https://explorer.arc.io/address/${token.address}`}
+                href={`${chainConfig.explorerUrl}/address/${token.address}`}
                 target="_blank"
                 rel="noreferrer"
               >
@@ -112,12 +113,12 @@ export default function TokenTerminal() {
             </div>
           </div>
         </div>
-        <span className="product-badge">Arc · V4 pool · {token.fee / 10000}% fee</span>
+        <span className="product-badge">Robinhood Chain · V4 pool · {token.fee / 10000}% fee</span>
       </div>
       <div className="terminal-metrics">
-        <Metric label="PRICE / USDC" value={number(token.price, 10)} />
-        <Metric label="MARKET CAP / USDC" value={compact(token.marketCap)} />
-        <Metric label="24H VOLUME / USDC" value={compact(token.volume24h)} />
+        <Metric label="PRICE / ETH" value={eth(token.price)} />
+        <Metric label="MARKET CAP / ETH" value={eth(token.marketCap)} />
+        <Metric label="24H VOLUME / ETH" value={eth(token.volume24h)} />
         <Metric
           label="24H CHANGE"
           value={change == null ? '—' : `${change >= 0 ? '+' : ''}${number(change)}%`}
@@ -166,7 +167,7 @@ export default function TokenTerminal() {
                         <tr>
                           <th>Time</th>
                           <th>Side</th>
-                          <th>USDC</th>
+                          <th>ETH</th>
                           <th>{token.symbol}</th>
                           <th>Trader</th>
                           <th>Tx</th>
@@ -179,12 +180,12 @@ export default function TokenTerminal() {
                             <td className={t.side === 'buy' ? 'text-mint' : 'text-rose'}>
                               {t.side}
                             </td>
-                            <td>{number(t.quoteAmount, 4)}</td>
+                            <td>{eth(t.quoteAmount)}</td>
                             <td>{compact(Number(t.tokenAmount))}</td>
                             <td>
                               {t.trader ? (
                                 <a
-                                  href={`https://explorer.arc.io/address/${t.trader}`}
+                                  href={`${chainConfig.explorerUrl}/address/${t.trader}`}
                                   target="_blank"
                                   rel="noreferrer"
                                 >
@@ -197,7 +198,7 @@ export default function TokenTerminal() {
                             <td>
                               <a
                                 aria-label="View trade transaction"
-                                href={`https://explorer.arc.io/tx/${t.transactionHash}`}
+                                href={`${chainConfig.explorerUrl}/tx/${t.transactionHash}`}
                                 target="_blank"
                                 rel="noreferrer"
                               >

@@ -9,7 +9,8 @@ import {
 } from 'viem'
 import abis from '../generated/protocol.json'
 import { publicClient } from './chain'
-import { arc } from '../config/network'
+import { robinhood } from '../config/network'
+import { network, hasNativeConfiguration } from '../../shared/network.mjs'
 export { abis }
 export const same = (a, b) => String(a).toLowerCase() === String(b).toLowerCase()
 export const quoterAbi = parseAbi([
@@ -33,14 +34,25 @@ export async function checkWallet(wallet) {
   ])
   if (!same(accounts?.[0], wallet.account))
     throw Error('Wallet account changed. Review the transaction again.')
-  if (Number(chain) !== arc.id) throw Error('Switch your wallet to Arc before continuing.')
-  return createWalletClient({ chain: arc, account: wallet.account, transport: custom(provider) })
+  if (Number(chain) !== robinhood.id)
+    throw Error('Switch your wallet to Robinhood Chain before continuing.')
+  return createWalletClient({
+    chain: robinhood,
+    account: wallet.account,
+    transport: custom(provider),
+  })
 }
 export async function verifyDeployment(d) {
-  if (!d || !['hookbrew-v1', 'hookbrew-modular-v1'].includes(d.abiVersion) || d.chainId !== arc.id)
-    throw Error('Deploy and activate Hookbrew v1 before submitting transactions.')
+  if (
+    !d ||
+    !['hookbrew-v2', 'hookbrew-modular-v2'].includes(d.abiVersion) ||
+    d.chainId !== robinhood.id
+  )
+    throw Error('Deploy and activate Hookbrew v2 before submitting transactions.')
   if ((await publicClient.getChainId()) !== d.chainId) throw Error('RPC network mismatch.')
-  const [fc, rc, treasury, quote, factory] = await Promise.all([
+  if (!hasNativeConfiguration(d))
+    throw Error('Deployment currency or launch fee does not match Robinhood ETH configuration.')
+  const [fc, rc, treasury, quote, factory, launchFee, manager] = await Promise.all([
     publicClient.getCode({ address: d.factory }),
     publicClient.getCode({ address: d.router }),
     publicClient.readContract({
@@ -58,6 +70,8 @@ export async function verifyDeployment(d) {
       abi: abis.HookbrewRouter,
       functionName: 'factory',
     }),
+    read(d.factory, abis.HookbrewFactory, 'launchFee'),
+    read(d.factory, abis.HookbrewFactory, 'poolManager'),
   ])
   if (
     !fc ||
@@ -66,6 +80,8 @@ export async function verifyDeployment(d) {
     keccak256(rc) !== d.routerCodeHash ||
     !same(treasury, d.treasury) ||
     !same(quote, d.quote) ||
+    launchFee !== BigInt(network.launchFee) ||
+    !same(manager, d.poolManager) ||
     !same(factory, d.factory)
   )
     throw Error('Deployment verification failed. No transaction was sent.')
@@ -76,14 +92,8 @@ export async function simulate(wallet, request) {
   const gas = await publicClient.estimateContractGas({ ...request, account: wallet.account })
   const gasPrice = await publicClient.getGasPrice()
   const native = await publicClient.getBalance({ address: wallet.account })
-  const quoteSpend =
-    request.functionName === 'launch'
-      ? request.args[0].initialBuy
-      : request.functionName === 'swap' && request.args[1]
-        ? request.args[2]
-        : 0n
-  if (native < nativeBudget(gas, gasPrice, request.value || 0n, quoteSpend))
-    throw Error('Insufficient USDC for the purchase, launch fee, and network gas together.')
+  if (native < nativeBudget(gas, gasPrice, request.value || 0n))
+    throw Error('Insufficient ETH for the purchase, launch fee, and network gas together.')
   return { ...result, gas, gasCost: gas * gasPrice }
 }
 export async function send(wallet, request) {
@@ -102,6 +112,12 @@ export const read = (address, abi, functionName, args = []) =>
   publicClient.readContract({ address, abi, functionName, args })
 export async function balances(d, token, account, spender) {
   const input = token || d.quote
+  if (same(input, network.quote))
+    return {
+      balance: await publicClient.getBalance({ address: account }),
+      allowance: null,
+      native: true,
+    }
   const [balance, allowance] = await Promise.all([
     read(input, erc20Abi, 'balanceOf', [account]),
     read(input, erc20Abi, 'allowance', [account, spender]),
@@ -109,6 +125,7 @@ export async function balances(d, token, account, spender) {
   return { balance, allowance }
 }
 export function approval(input, spender, value) {
+  if (same(input, network.quote)) throw Error('Native ETH does not use token approvals.')
   return { address: input, abi: erc20Abi, functionName: 'approve', args: [spender, value] }
 }
 export async function quoteTrade(d, token, buy, input, account) {

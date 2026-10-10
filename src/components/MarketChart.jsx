@@ -24,7 +24,7 @@ export default function MarketChart({ address, symbol }) {
       autoSize: true,
       layout: {
         background: { type: ColorType.Solid, color: 'transparent' },
-        textColor: '#a49bb5',
+        textColor: '#9ca89f',
         fontFamily: 'DM Sans Variable, sans-serif',
         attributionLogo: true,
       },
@@ -36,10 +36,10 @@ export default function MarketChart({ address, symbol }) {
         borderColor: '#ffffff10',
         maxBarSpacing: 22,
       },
-      crosshair: { vertLine: { color: '#b4a1ff66' }, horzLine: { color: '#b4a1ff66' } },
+      crosshair: { vertLine: { color: '#ccff0066' }, horzLine: { color: '#ccff0066' } },
     })
     chart.current = instance
-    const format = { type: 'price', precision: 10, minMove: 0.0000000001 }
+    const format = { type: 'price', precision: 14, minMove: 0.00000000000001 }
     series.current =
       mode === 'candles'
         ? instance.addSeries(CandlestickSeries, {
@@ -87,7 +87,7 @@ export default function MarketChart({ address, symbol }) {
   return (
     <Glass className="chart-panel" radius={24}>
       <div className="chart-toolbar">
-        <strong>{symbol} / USDC</strong>
+        <strong>{symbol} / ETH</strong>
         <div className="chart-controls">
           {[
             [60, '1m'],
@@ -110,11 +110,7 @@ export default function MarketChart({ address, symbol }) {
         </button>
       </div>
       <div className="chart-stage">
-        <div
-          ref={container}
-          className="market-chart"
-          aria-label={`${symbol} price chart in USDC`}
-        />
+        <div ref={container} className="market-chart" aria-label={`${symbol} price chart in ETH`} />
         {!resource.data?.items?.length && (
           <div className="chart-empty">
             <span className="chart-empty-icon">⌁</span>

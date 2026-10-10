@@ -10,6 +10,35 @@ test.beforeEach(async ({ page }) => {
   )
 })
 const advance = (page) => page.getByRole('button', { name: 'Continue', exact: false }).click()
+test('Arc browser drafts and receipts never populate the Robinhood studio', async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem(
+      'hookbrew:launch-draft:v1',
+      JSON.stringify({ name: 'Arc only', initialBuy: '2500', targetMcap: '5000' }),
+    )
+    localStorage.setItem(
+      'hookbrew:deployment-progress:v1',
+      JSON.stringify({
+        chainId: 5042,
+        abiVersion: 'hookbrew-v1',
+        factoryTx: '0x' + '11'.repeat(32),
+      }),
+    )
+    sessionStorage.setItem(
+      'hookbrew:pending-transaction:v1',
+      JSON.stringify({ chainId: 5042, hash: '0x' + '22'.repeat(32), scope: 'launch' }),
+    )
+  })
+  await page.goto('/create')
+  await expect(page.getByLabel('Opening market cap · ETH', { exact: true })).toHaveValue('')
+  await expect(page.getByRole('button', { name: 'Check confirmation', exact: true })).toHaveCount(0)
+  await advance(page)
+  await advance(page)
+  await expect(page.getByLabel('Token name', { exact: false })).toHaveValue('')
+  await page.goto('/setup')
+  await expect(page.getByRole('button', { name: 'Connect deployer wallet' })).toBeVisible()
+  await expect(page.getByRole('link', { name: 'Receipt ↗' })).toHaveCount(0)
+})
 const shot = async (page, name) => {
   await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }))
   await page.screenshot({ path: 'artifacts/launch-flow/' + name + '.png', fullPage: true })
@@ -26,8 +55,8 @@ test('five-step studio validates each stage, reviews exact choices and restores 
   await shot(page, '01-pool-desktop')
   await page.getByLabel('Opening market cap', { exact: false }).fill('100')
   await advance(page)
-  await expect(page.getByRole('alert')).toContainText('2,000')
-  await page.getByLabel('Opening market cap', { exact: false }).fill('5000')
+  await expect(page.getByRole('alert')).toContainText('0.5–5 ETH')
+  await page.getByLabel('Opening market cap', { exact: false }).fill('1')
   await page.getByRole('button', { name: 'Set pool fee to 3%' }).click()
   await advance(page)
   await page.getByRole('button', { name: /Guarded opening/ }).click()
@@ -43,7 +72,7 @@ test('five-step studio validates each stage, reviews exact choices and restores 
   await page.getByLabel('Ticker symbol', { exact: false }).fill('MILK')
   await page
     .getByLabel('Description', { exact: false })
-    .fill('A little lunar culture. Brewed on Arc.')
+    .fill('A little lunar culture. Brewed on Robinhood Chain.')
   await page.getByLabel('Website', { exact: false }).fill('javascript:alert(1)')
   await advance(page)
   await expect(page.getByRole('alert')).toContainText('https or http')
@@ -80,21 +109,23 @@ test('five-step studio validates each stage, reviews exact choices and restores 
   await expect(page.getByLabel('Token name', { exact: false })).toHaveValue('Moon Milk')
   expect(
     await page.evaluate(
-      () => JSON.parse(localStorage.getItem('hookbrew:launch-draft:v1')).splits[0].vesting.duration,
+      () =>
+        JSON.parse(localStorage.getItem('hookbrew:4663:v2:launch-draft')).splits[0].vesting
+          .duration,
     ),
   ).toBe('30')
   expect(errors).toEqual([])
 })
 
 for (const [savedKey, savedStep] of [
-  ['hookbrew:launch-step:v1', '0'],
-  ['hookbrew:launch-step:v2', '2'],
-  ['hookbrew:launch-step:v2', '4'],
+  ['hookbrew:4663:v2:launch-step', '0'],
+  ['hookbrew:4663:v2:launch-step', '2'],
+  ['hookbrew:4663:v2:launch-step', '4'],
 ]) {
   test(`launch entry starts at Pool despite saved ${savedKey}=${savedStep}`, async ({ page }) => {
     await page.addInitScript(
       ({ savedKey, savedStep, draft }) => {
-        localStorage.setItem('hookbrew:launch-draft:v1', JSON.stringify(draft))
+        localStorage.setItem('hookbrew:4663:v2:launch-draft', JSON.stringify(draft))
         localStorage.setItem(savedKey, savedStep)
       },
       { savedKey, savedStep, draft: { ...defaultDraft, name: 'Saved Brew', symbol: 'BREW' } },

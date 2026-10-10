@@ -1,3 +1,4 @@
+import { network as chainConfig } from '../../shared/network.mjs'
 import { useEffect, useRef, useState } from 'react'
 import { useOutletContext, useSearchParams } from 'react-router-dom'
 import {
@@ -18,16 +19,31 @@ import { api, number, short } from '../lib/api'
 import { publicClient, readableError } from '../lib/chain'
 import { checkWallet, same } from '../lib/protocol'
 import { useTransaction } from '../lib/useTransaction'
+import { estimateNativeTransaction, assertCanonicalReceipt } from '../lib/transactionChecks'
 import { restoreDraft } from '../lib/launchDraft'
+import { network, protocolVersion, storageNamespace } from '../../shared/network.mjs'
 const proxyCode =
   '0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3'
-const key = 'hookbrew:deployment-progress:v1'
+const key = `${storageNamespace}:deployment-progress`
 function restore() {
   try {
-    return JSON.parse(localStorage.getItem(key)) || {}
+    const record = JSON.parse(localStorage.getItem(key))
+    return record?.chainId === network.chainId && record.abiVersion === protocolVersion
+      ? record
+      : {}
   } catch {
     return {}
   }
+}
+function exportRecord(record) {
+  const url = URL.createObjectURL(
+    new Blob([JSON.stringify(record, null, 2)], { type: 'application/json' }),
+  )
+  const link = document.createElement('a')
+  link.href = url
+  link.download = 'hookbrew-4663-v2-deployment.json'
+  link.click()
+  URL.revokeObjectURL(url)
 }
 export default function SetupPage() {
   const [search] = useSearchParams()
@@ -74,7 +90,8 @@ export default function SetupPage() {
         ? {
             factory: record.factory,
             factoryTx: receipt.transactionHash,
-            chainId: 5042,
+            chainId: network.chainId,
+            abiVersion: protocolVersion,
             treasury: record.treasury,
             buildHash: record.buildHash,
           }
@@ -96,32 +113,21 @@ export default function SetupPage() {
       await checkWallet(wallet)
       if ((await publicClient.getChainId()) !== i.chainId)
         throw Error('Deployment RPC is on the wrong chain.')
-      const [
-        factoryArtifact,
-        routerArtifact,
-        proxy,
-        managerCode,
-        quoteCode,
-        quoterCode,
-        stateCode,
-      ] = await Promise.all([
-        fetch('/protocol/HookbrewFactory.json').then((r) => r.json()),
-        fetch('/protocol/HookbrewRouter.json').then((r) => r.json()),
-        publicClient.getCode({ address: i.create2 }),
-        publicClient.getCode({ address: i.poolManager }),
-        publicClient.getCode({ address: i.quote }),
-        publicClient.getCode({ address: i.quoter }),
-        publicClient.getCode({ address: i.stateView }),
-      ])
-      if (
-        proxy !== proxyCode ||
-        [managerCode, quoteCode, quoterCode, stateCode].some((c) => !c || c === '0x')
-      )
-        throw Error('Arc deployment infrastructure verification failed.')
+      const [factoryArtifact, routerArtifact, proxy, managerCode, quoterCode, stateCode] =
+        await Promise.all([
+          fetch('/protocol/HookbrewFactory.json').then((r) => r.json()),
+          fetch('/protocol/HookbrewRouter.json').then((r) => r.json()),
+          publicClient.getCode({ address: i.create2 }),
+          publicClient.getCode({ address: i.poolManager }),
+          publicClient.getCode({ address: i.quoter }),
+          publicClient.getCode({ address: i.stateView }),
+        ])
+      if (proxy !== proxyCode || [managerCode, quoterCode, stateCode].some((c) => !c || c === '0x'))
+        throw Error('Robinhood Chain deployment infrastructure verification failed.')
       const data = encodeDeployData({
         abi: factoryArtifact.abi,
         bytecode: factoryArtifact.bytecode,
-        args: [i.poolManager, i.quote, getAddress(platform.treasury), 10n ** 18n],
+        args: [i.poolManager, i.quote, getAddress(platform.treasury), BigInt(i.launchFee)],
       })
       const buildHash = keccak256(data)
       let request, factory, kind
@@ -154,6 +160,7 @@ export default function SetupPage() {
             'Saved deployment uses a different build or treasury. Use its original build to finish, or export and clear the local record.',
           )
         const receipt = await publicClient.getTransactionReceipt({ hash: progress.factoryTx })
+        await assertCanonicalReceipt(publicClient, receipt)
         const original = await publicClient.getTransaction({ hash: progress.factoryTx })
         factory = getCreate2Address({
           from: i.create2,
@@ -178,18 +185,14 @@ export default function SetupPage() {
         kind = 'router'
       }
       setStatus('Simulating deployment and estimating gas…')
-      const gas = await publicClient.estimateGas({ ...request, account: wallet.account }),
-        gasPrice = await publicClient.getGasPrice(),
-        balance = await publicClient.getBalance({ address: wallet.account })
-      if (balance < (gas * gasPrice * 120n) / 100n)
-        throw Error('Your deployer wallet needs more native USDC for deployment gas.')
+      const { gasCost } = await estimateNativeTransaction(publicClient, wallet.account, request)
       if (version === generation.current) {
         setPrepared({
           request,
           factory,
           kind,
           buildHash,
-          gasCost: gas * gasPrice,
+          gasCost,
           account: wallet.account,
           at: Date.now(),
         })
@@ -211,7 +214,7 @@ export default function SetupPage() {
           'Hookbrew is already active. Continue to your token draft; no deployment was sent.',
         )
       const client = await checkWallet(wallet)
-      await publicClient.estimateGas({ ...prepared.request, account: wallet.account })
+      await estimateNativeTransaction(publicClient, wallet.account, prepared.request)
       setTxStatus(`Confirm ${prepared.kind} deployment in your wallet.`)
       const hash = await client.sendTransaction(prepared.request)
       return {
@@ -270,11 +273,11 @@ export default function SetupPage() {
     <>
       <PageHeading
         title="Your contracts. Your venue."
-        description="Deploy Hookbrew’s factory, vesting vault, and swap router on Arc. Protocol fees go to your treasury."
+        description="Deploy Hookbrew’s factory, vesting vault, and swap router on Robinhood Chain. Protocol fees go to your treasury."
       />
       <div className="setup-layout">
         <Glass className="setup-main" radius={26}>
-          <span className="eyebrow">HOOKBREW PROTOCOL / V1</span>
+          <span className="eyebrow">HOOKBREW PROTOCOL / V2</span>
           <h2>{platform.deployment ? 'Hookbrew is activated.' : 'Bring the brewery on-chain.'}</h2>
           <p>
             The factory is also your Uniswap V4 hook. Its constructor creates the vesting vault. The
@@ -283,12 +286,12 @@ export default function SetupPage() {
           <div className="review-list">
             <div>
               <span>Network</span>
-              <strong>Arc · chain 5042</strong>
+              <strong>Robinhood Chain · chain 4663</strong>
             </div>
             <div>
               <span>Protocol treasury</span>
               <a
-                href={`https://explorer.arc.io/address/${platform.treasury}`}
+                href={`${chainConfig.explorerUrl}/address/${platform.treasury}`}
                 target="_blank"
                 rel="noreferrer"
               >
@@ -297,7 +300,7 @@ export default function SetupPage() {
             </div>
             <div>
               <span>Flat launch fee</span>
-              <strong>1 native USDC</strong>
+              <strong>{formatUnits(BigInt(network.launchFee), network.quoteDecimals)} ETH</strong>
             </div>
             <div>
               <span>Seed-position fees</span>
@@ -319,6 +322,9 @@ export default function SetupPage() {
               </div>
               <Button primary to="/create" state={{ resumeLaunchReview: returningToDraft }}>
                 {returningToDraft ? 'Continue your token launch' : 'Open token launch studio'}
+              </Button>
+              <Button onClick={() => exportRecord(platform.deployment)}>
+                Export deployment record
               </Button>
             </>
           ) : (
@@ -345,7 +351,7 @@ export default function SetupPage() {
                     </div>
                     {hash && (
                       <a
-                        href={`https://explorer.arc.io/tx/${hash}`}
+                        href={`${chainConfig.explorerUrl}/tx/${hash}`}
                         target="_blank"
                         rel="noreferrer"
                       >
@@ -376,9 +382,9 @@ export default function SetupPage() {
                 <Button primary onClick={onConnect}>
                   Connect deployer wallet
                 </Button>
-              ) : wallet.chainId !== 5042 ? (
+              ) : wallet.chainId !== network.chainId ? (
                 <Button primary onClick={wallet.switchNetwork}>
-                  Switch to Arc
+                  Switch to Robinhood Chain
                 </Button>
               ) : progress.routerTx ? (
                 <Button primary onClick={activate} disabled={locked}>
@@ -399,7 +405,7 @@ export default function SetupPage() {
                   </p>
                   <p>
                     Estimated gas:{' '}
-                    <strong>{number(formatUnits(prepared.gasCost, 18), 6)} native USDC</strong>
+                    <strong>{number(formatUnits(prepared.gasCost, 18), 6)} native ETH</strong>
                   </p>
                   <p>
                     The fee destination is fixed at deployment. Review your treasury above before
@@ -420,17 +426,7 @@ export default function SetupPage() {
                   <pre>{JSON.stringify(progress, null, 2)}</pre>
                   <Button
                     disabled={locked || !progress.factoryTx}
-                    onClick={() => {
-                      const blob = new Blob([JSON.stringify(progress, null, 2)], {
-                        type: 'application/json',
-                      })
-                      const url = URL.createObjectURL(blob)
-                      const a = document.createElement('a')
-                      a.href = url
-                      a.download = 'hookbrew-deployment-progress.json'
-                      a.click()
-                      URL.revokeObjectURL(url)
-                    }}
+                    onClick={() => exportRecord(progress)}
                   >
                     Export record
                   </Button>
@@ -447,7 +443,8 @@ export default function SetupPage() {
                             throw Error('Deployment record is too large.')
                           const value = JSON.parse(await e.target.files[0].text())
                           if (
-                            value.chainId !== 5042 ||
+                            value.chainId !== network.chainId ||
+                            value.abiVersion !== protocolVersion ||
                             !/^0x[\da-f]{64}$/i.test(value.factoryTx) ||
                             (value.routerTx && !/^0x[\da-f]{64}$/i.test(value.routerTx))
                           )

@@ -13,14 +13,14 @@ import {
 import { candlesFor, priceFromSqrt, decodeTrade } from '../../server/market-math.mjs'
 const draft = () => ({ ...defaultDraft, name: 'Moon Milk', symbol: 'MILK', splits: [] })
 const wallet = '0x1111111111111111111111111111111111111111'
-test('Arc native budget reserves purchase plus flat fee plus gas against one USDC balance', () => {
-  assert.equal(nativeBudget(100000n, 1000000000n, 10n ** 18n, 25000000n), 26000120000000000000n)
+test('Robinhood Chain native budget reserves purchase plus flat fee plus gas against one ETH balance', () => {
+  assert.equal(nativeBudget(100000n, 1000000000n, 10n ** 18n), 1000120000000000000n)
   assert.equal(nativeBudget(100000n, 1000000000n), 120000000000000n)
-  assert.ok(nativeBudget(100000n, 1000000000n, 0n, 1000000n) > 10n ** 18n)
+  assert.ok(nativeBudget(100000n, 1000000000n, 10n ** 18n) > 10n ** 18n)
 })
 test('rejects rounded/exponential/negative amounts and computes exact integer slippage', () => {
-  assert.equal(amount('9007199254740993.123456'), 9007199254740993123456n)
-  for (const value of ['1e3', '-1', 'NaN', 'Infinity', '0', '0.0000001', '.5', '1.'])
+  assert.equal(amount('9007199254740993.123456'), 9007199254740993123456000000000000n)
+  for (const value of ['1e3', '-1', 'NaN', 'Infinity', '0', '0.0000000000000000001', '.5', '1.'])
     assert.throws(() => amount(value))
   assert.equal(minimum(100000001n, '1'), 99000000n)
   assert.throws(() => minimum(100n, '100'))
@@ -29,7 +29,10 @@ test('launch validation enforces byte limits, exact splits, vesting dependencies
   validateDraft(draft())
   assert.throws(() => validateDraft({ ...draft(), name: '🧪'.repeat(9) }), /32/)
   assert.throws(() => validateDraft({ ...draft(), website: 'javascript:alert(1)' }), /http/)
-  assert.throws(() => validateDraft({ ...draft(), targetMcap: '2000.0000001' }), /decimals/)
+  assert.throws(
+    () => validateDraft({ ...draft(), targetMcap: '1.0000000000000000001' }),
+    /decimals/,
+  )
   assert.throws(() => validateDraft({ ...draft(), guarded: true, endCap: '0.5' }), /Guard/)
   assert.throws(
     () =>
@@ -68,7 +71,7 @@ test('launch validation enforces byte limits, exact splits, vesting dependencies
     '0x' + '1'.repeat(64),
     123n,
   )
-  assert.equal(p.initialBuy, 25123456n)
+  assert.equal(p.initialBuy, 25123456000000000000n)
   assert.equal(p.splits[0].cliff, 604800)
   assert.equal(p.splits[0].duration, 2592000)
   assert.equal(p.splits[0].bps, 10000)
@@ -82,7 +85,7 @@ test('five-step validation permits pool and hook setup before token identity', (
   validateDraft({ ...draft(), initialBuy: '-1' }, 2)
   assert.throws(() => validateDraft({ ...draft(), initialBuy: '-1' }, 3), /positive/)
   const p = launchParams(draft(), 'https://example.com/token.json', '0x' + '1'.repeat(64))
-  assert.equal(p.targetMcap, 5000_000000n)
+  assert.equal(p.targetMcap, 1000000000000000000n)
   assert.equal(p.fee, 10000)
   assert.deepEqual(p.guard, { window: 0, startCapBps: 0, endCapBps: 0, interval: 0 })
 })
@@ -128,7 +131,7 @@ test('hour vesting assigns the connected creator and allows independent split sc
     ],
   )
 })
-test('OHLC orders same-time swaps by log index, preserves gaps and totals actual USDC volume', () => {
+test('OHLC orders same-time swaps by log index, preserves gaps and totals actual ETH volume', () => {
   const rows = [
     { timestamp: 121, blockNumber: 8, logIndex: 2, price: 3, quoteAmount: '2.25' },
     { timestamp: 121, blockNumber: 8, logIndex: 1, price: 2, quoteAmount: '1.25' },
@@ -145,7 +148,7 @@ test('market math accounts for quote decimals and address ordering without losin
   const low = '0x1000000000000000000000000000000000000000',
     high = '0xf000000000000000000000000000000000000000'
   const sqrt = 2n ** 96n
-  assert.equal(priceFromSqrt(sqrt, low, high), 1e12)
+  assert.equal(priceFromSqrt(sqrt, low, high), 1)
   const log = {
     transactionHash: '0x' + 'a'.repeat(64),
     logIndex: 2,
@@ -161,7 +164,7 @@ test('market math accounts for quote decimals and address ordering without losin
   const buy = decodeTrade(log, { address: low }, high, 100, wallet)
   assert.equal(buy.side, 'buy')
   assert.equal(buy.tokenAmount, '1.000000000000000001')
-  assert.equal(buy.quoteAmount, '1.234567')
+  assert.equal(buy.quoteAmount, '0.000000000001234567')
   const sell = decodeTrade(
     { ...log, args: { ...log.args, amount0: 1234567n, amount1: -1000000000000000001n } },
     { address: high },

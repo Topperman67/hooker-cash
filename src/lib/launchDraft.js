@@ -1,9 +1,10 @@
 import { defaultDraft, validateDraft } from './protocolDraft.js'
 import { restoreHookAllocations } from './hookAllocation.js'
+import { storageNamespace } from '../../shared/network.mjs'
 
-export const draftKey = 'hookbrew:launch-draft:v1'
-export const stepKey = 'hookbrew:launch-step:v2'
-export const legacyStepKey = 'hookbrew:launch-step:v1'
+export const draftKey = `${storageNamespace}:launch-draft`
+export const stepKey = `${storageNamespace}:launch-step`
+export const legacyStepKey = stepKey
 export function restoreDraft(storage = localStorage) {
   try {
     const saved = JSON.parse(storage.getItem(draftKey))

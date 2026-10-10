@@ -1,3 +1,4 @@
+import { network as chainConfig } from '../../shared/network.mjs'
 import { Button } from './UI'
 export default function TransactionStatus({ tx }) {
   return (
@@ -11,7 +12,7 @@ export default function TransactionStatus({ tx }) {
       {tx.pending && (
         <>
           <a
-            href={`https://explorer.arc.io/tx/${tx.pending.hash}`}
+            href={`${chainConfig.explorerUrl}/tx/${tx.pending.hash}`}
             target="_blank"
             rel="noreferrer"
           >

@@ -3,14 +3,19 @@ import assert from 'node:assert/strict'
 import { createApplication } from '../../server/application.mjs'
 import { createIndexer } from '../../server/indexer.mjs'
 import { sharedStore } from '../fixtures/shared-store.mjs'
-import { arcInfrastructure, treasury } from '../../server/settings.mjs'
+import { robinhoodInfrastructure, treasury } from '../../server/settings.mjs'
 import abi from '../../src/generated/protocol.json' with { type: 'json' }
 
 const hash = (n) => `0x${BigInt(n).toString(16).padStart(64, '0')}`
-const config = { ...arcInfrastructure, treasury, factory: `0x${'11'.repeat(20)}`, startBlock: 1 }
+const config = {
+  ...robinhoodInfrastructure,
+  treasury,
+  factory: `0x${'11'.repeat(20)}`,
+  startBlock: 1,
+}
 function clientFixture() {
   return {
-    getChainId: async () => arcInfrastructure.chainId,
+    getChainId: async () => robinhoodInfrastructure.chainId,
     getBlockNumber: async () => 5n,
     getBlock: async ({ blockNumber }) => ({
       hash: hash(blockNumber),
@@ -33,6 +38,7 @@ test('custom indexing rotates across cold instances and reaches every registered
       hash(i + 1),
       {
         ...config,
+        abiVersion: 'hookbrew-modular-v2',
         factory: `0x${(i + 100).toString(16).padStart(40, '0')}`,
         recipeHash: hash(i + 1),
       },

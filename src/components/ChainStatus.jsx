@@ -1,3 +1,4 @@
+import { network as chainConfig } from '../../shared/network.mjs'
 import { Link } from 'react-router-dom'
 import { useChain } from '../context/ChainContext'
 import { usePlatform } from '../context/PlatformContext'
@@ -10,7 +11,7 @@ export default function ChainStatus({ deploymentStatus = true }) {
   return (
     <Glass className="panel-pad chain-status" aria-label="Network and deployment status">
       <div className="preview-stat">
-        <span>Arc mainnet</span>
+        <span>Robinhood Chain mainnet</span>
         <strong>
           {status === 'ready'
             ? 'RPC connected'
@@ -23,7 +24,7 @@ export default function ChainStatus({ deploymentStatus = true }) {
         <div className="preview-stat">
           <span>{status === 'ready' ? 'Latest checked block' : 'Last successful block'}</span>
           <a
-            href={`https://explorer.arc.io/block/${network.blockNumber}`}
+            href={`${chainConfig.explorerUrl}/block/${network.blockNumber}`}
             target="_blank"
             rel="noreferrer"
           >
@@ -50,9 +51,9 @@ export default function ChainStatus({ deploymentStatus = true }) {
       )}
       {deploymentStatus && deployment?.factory && (
         <p className="fine-print">
-          Hookbrew v1 active ·{' '}
+          Hookbrew v2 active ·{' '}
           <a
-            href={`https://explorer.arc.io/address/${deployment.factory}`}
+            href={`${chainConfig.explorerUrl}/address/${deployment.factory}`}
             target="_blank"
             rel="noreferrer"
           >

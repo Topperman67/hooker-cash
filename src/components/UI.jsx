@@ -11,7 +11,7 @@ export function Button({ to, children, primary = false, className = '', ...props
       to={to}
       type={to ? undefined : 'button'}
       variant="control"
-      tone={primary ? 'violet' : 'neutral'}
+      tone={primary ? 'green' : 'neutral'}
       interactive
       className={`btn ${primary ? 'btn-primary' : 'btn-secondary'} ${className}`}
       {...props}
@@ -37,9 +37,9 @@ export function Logo({ compact = false }) {
 }
 
 const brandAssets = {
-  arc: '/brand/arc/arc-network.svg',
-  'arc-blue': '/brand/arc/arc-network-blue.svg',
-  usdc: '/brand/usdc/usdc.svg',
+  robinhood: '/brand/robinhood/robinhood-eth.png',
+  'robinhood-blue': '/brand/robinhood/robinhood-eth.png',
+  eth: '/brand/eth/eth.svg',
   uniswap: '/brand/uniswap/uniswap.svg',
 }
 

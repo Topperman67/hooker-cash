@@ -83,7 +83,7 @@ export default function AccessGate({ onEnter }) {
       </Glass>
       <div className="gate-footer">
         <span>
-          <BrandMark name="arc" /> Built on Arc
+          <BrandMark name="robinhood" /> Built on Robinhood Chain
         </span>
         <span>
           <BrandMark name="uniswap" /> Uniswap V4 hooks

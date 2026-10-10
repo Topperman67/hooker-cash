@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState } from 'react'
 import { getAddress, isAddress, toHex } from 'viem'
-import { arc } from '../config/network'
+import { robinhood } from '../config/network'
 import { publicClient, readableError } from '../lib/chain'
 
 const WalletContext = createContext(null)
@@ -80,13 +80,13 @@ export function WalletProvider({ children }) {
   useEffect(() => {
     setBalance(null)
     setBalanceError('')
-    if (!account || chainId !== arc.id) return
+    if (!account || chainId !== robinhood.id) return
     let active = true
     let timer
     async function refresh() {
       try {
         const rpcChain = await publicClient.getChainId()
-        if (rpcChain !== arc.id) throw new Error('Balance RPC returned the wrong network.')
+        if (rpcChain !== robinhood.id) throw new Error('Balance RPC returned the wrong network.')
         const value = await publicClient.getBalance({ address: account })
         if (active) {
           setBalance(value)
@@ -141,7 +141,7 @@ export function WalletProvider({ children }) {
       try {
         await selected.provider.request({
           method: 'wallet_switchEthereumChain',
-          params: [{ chainId: toHex(arc.id) }],
+          params: [{ chainId: toHex(robinhood.id) }],
         })
       } catch (error) {
         if (error.code !== 4902) throw error
@@ -149,22 +149,22 @@ export function WalletProvider({ children }) {
           method: 'wallet_addEthereumChain',
           params: [
             {
-              chainId: toHex(arc.id),
-              chainName: arc.name,
-              nativeCurrency: arc.nativeCurrency,
-              rpcUrls: arc.rpcUrls.default.http,
-              blockExplorerUrls: [arc.blockExplorers.default.url],
+              chainId: toHex(robinhood.id),
+              chainName: robinhood.name,
+              nativeCurrency: robinhood.nativeCurrency,
+              rpcUrls: robinhood.rpcUrls.default.http,
+              blockExplorerUrls: [robinhood.blockExplorers.default.url],
             },
           ],
         })
         await selected.provider.request({
           method: 'wallet_switchEthereumChain',
-          params: [{ chainId: toHex(arc.id) }],
+          params: [{ chainId: toHex(robinhood.id) }],
         })
       }
       const network = Number(await selected.provider.request({ method: 'eth_chainId' }))
       if (id === requestId.current) setChainId(network)
-      if (network !== arc.id) throw new Error('Your wallet is still on a different network.')
+      if (network !== robinhood.id) throw new Error('Your wallet is still on a different network.')
     } catch (error) {
       if (id === requestId.current) setError(readableError(error))
     } finally {

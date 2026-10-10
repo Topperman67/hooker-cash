@@ -1,3 +1,4 @@
+import { network as chainConfig } from '../../shared/network.mjs'
 import { hookModules as modules } from '../data/hookModules'
 import { useEffect, useRef, useState } from 'react'
 import {
@@ -27,6 +28,7 @@ import {
   mineHook,
 } from '../lib/hookRecipe'
 import { useTransaction } from '../lib/useTransaction'
+import { estimateNativeTransaction } from '../lib/transactionChecks'
 import {
   allocationTotal,
   balanceAllocations,
@@ -84,7 +86,7 @@ function FeeAllocation({ recipe }) {
       <h4>Where harvested fees go</h4>
       {[
         [
-          'USDC fees',
+          'ETH fees',
           [
             ['rewardBps', 'Holders'],
             ['buybackBps', 'Buyback'],
@@ -239,20 +241,18 @@ export default function HookBuilder({ draft, update, input, wallet, platform, on
           'This recipe is already on-chain but is not registered yet. Retry its original build confirmation to register it.',
         )
       const request = { to: i.create2, data: mined.data, value: 0n }
-      const [gas, gasPrice, balance] = await Promise.all([
-        estimateHookGas(request, wallet.account),
-        publicClient.getGasPrice(),
-        publicClient.getBalance({ address: wallet.account }),
-      ])
-      if (balance < (gas * gasPrice * 120n) / 100n)
-        throw Error('Your wallet needs more native USDC for the hook-build network fee.')
-      request.gas = (gas * 120n) / 100n
+      const { gasCost } = await estimateNativeTransaction(
+        publicClient,
+        wallet.account,
+        request,
+        estimateHookGas,
+      )
       if (generation.current === version) {
         setPrepared({
           ...mined,
           request,
           recipe: canonical,
-          gasCost: gas * gasPrice,
+          gasCost,
           account: wallet.account,
           at: Date.now(),
         })
@@ -280,11 +280,18 @@ export default function HookBuilder({ draft, update, input, wallet, platform, on
       const current = await platform.refresh()
       if (!current || current.storage?.ready === false)
         throw Error('Hook registration is unavailable. Retry before signing.')
-      await publicClient.call({ ...prepared.request, account: wallet.account })
+      setStatus('Refreshing the network fee and wallet balance…')
+      const { gas } = await estimateNativeTransaction(
+        publicClient,
+        wallet.account,
+        prepared.request,
+        estimateHookGas,
+      )
+      const request = { ...prepared.request, gas: (gas * 120n + 99n) / 100n }
       setStatus(
         'Confirm the hook build in your wallet. This deploys contracts; it does not launch your token.',
       )
-      const hash = await client.sendTransaction(prepared.request)
+      const hash = await client.sendTransaction(request)
       return {
         hash,
         recipe: prepared.recipe,
@@ -382,7 +389,7 @@ export default function HookBuilder({ draft, update, input, wallet, platform, on
                 <Flame />
               </span>
               <strong>Burn & reward</strong>
-              <p>Burn token fees and share USDC fees with holders. A ready-to-build recipe.</p>
+              <p>Burn token fees and share ETH fees with holders. A ready-to-build recipe.</p>
               <span className="hook-chips">
                 <small>20% fee burn</small>
                 <small>40% holder rewards</small>
@@ -467,7 +474,7 @@ export default function HookBuilder({ draft, update, input, wallet, platform, on
                     <Blocks size={20} />
                     <span>
                       <strong>{recipeModules(d.recipe).join(' + ') || 'Base recipe'}</strong>
-                      <small>{short(d.factory)} · Confirmed on Arc</small>
+                      <small>{short(d.factory)} · Confirmed on Robinhood Chain</small>
                     </span>
                     <ArrowUpRight size={16} />
                   </button>
@@ -714,7 +721,7 @@ export default function HookBuilder({ draft, update, input, wallet, platform, on
               {selected && (
                 <a
                   className="hook-contract-link"
-                  href={`https://explorer.arc.io/address/${selected.factory}`}
+                  href={`${chainConfig.explorerUrl}/address/${selected.factory}`}
                   target="_blank"
                   rel="noreferrer"
                 >
@@ -725,7 +732,7 @@ export default function HookBuilder({ draft, update, input, wallet, platform, on
               {prepared?.request && (
                 <div className="hook-build-cost">
                   <span>Estimated network fee</span>
-                  <strong>{number(formatUnits(prepared.gasCost, 18), 6)} USDC</strong>
+                  <strong>{number(formatUnits(prepared.gasCost, 18), 6)} ETH</strong>
                   <small>One-time contract deployment. No Hookbrew build fee.</small>
                   <span>
                     Hook address <b>{short(prepared.factory)}</b>
@@ -755,9 +762,9 @@ export default function HookBuilder({ draft, update, input, wallet, platform, on
                 <Button primary disabled={locked} onClick={onConnect}>
                   Connect wallet to build
                 </Button>
-              ) : wallet.chainId !== 5042 ? (
+              ) : wallet.chainId !== chainConfig.chainId ? (
                 <Button primary disabled={locked} onClick={wallet.switchNetwork}>
-                  Switch to Arc
+                  Switch to Robinhood Chain
                 </Button>
               ) : prepared?.request ? (
                 <Button primary disabled={locked} onClick={assemble}>

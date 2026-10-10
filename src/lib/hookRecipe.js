@@ -76,7 +76,7 @@ export function hookBuildData(packageArtifact, factoryArtifact, infrastructure, 
     infrastructure.poolManager,
     infrastructure.quote,
     treasury,
-    10n ** 18n,
+    BigInt(infrastructure.launchFee),
     normalizeRecipe(recipe),
   ]
   const data = encodeDeployData({ ...packageArtifact, args })

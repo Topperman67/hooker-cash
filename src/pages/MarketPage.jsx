@@ -5,7 +5,7 @@ import { ArrowUpRight, FlaskConical, Search } from 'lucide-react'
 import Glass from '../components/Glass'
 import { Button, PageHeading, TokenAvatar } from '../components/UI'
 import TokenLookup from '../components/TokenLookup'
-import { useResource, compact, number } from '../lib/api'
+import { useResource, number, eth } from '../lib/api'
 export default function MarketPage({ trading = false }) {
   const [params, setParams] = useSearchParams(),
     q = params.get('q') || '',
@@ -25,7 +25,7 @@ export default function MarketPage({ trading = false }) {
     setParams(p)
   }
   return (
-    <>
+    <div className="market-workspace">
       <PageHeading
         title={trading ? 'Find your next trade.' : 'Fresh brews. Open markets.'}
         description={
@@ -39,6 +39,18 @@ export default function MarketPage({ trading = false }) {
           </Button>
         }
       />
+      <div className="market-context">
+        <span>
+          <img src="/brand/robinhood/robinhood-eth.png" alt="" width="22" height="22" />
+          Robinhood Chain markets
+        </span>
+        <span>Native ETH pairs</span>
+        <span>
+          {result.data?.total != null
+            ? `${result.data.total} indexed tokens`
+            : 'Reading the index…'}
+        </span>
+      </div>
       <Glass className="product-market-toolbar" radius={20}>
         <form
           onSubmit={(e) => {
@@ -95,7 +107,7 @@ export default function MarketPage({ trading = false }) {
               <thead>
                 <tr>
                   <th>Token</th>
-                  <th>Price / USDC</th>
+                  <th>Price / ETH</th>
                   <th>Market cap</th>
                   <th>24h volume</th>
                   <th>24h change</th>
@@ -115,9 +127,9 @@ export default function MarketPage({ trading = false }) {
                         </span>
                       </Link>
                     </td>
-                    <td>{number(t.price, 10)}</td>
-                    <td>{compact(t.marketCap)}</td>
-                    <td>{compact(t.volume24h)}</td>
+                    <td>{eth(t.price)}</td>
+                    <td>{eth(t.marketCap)}</td>
+                    <td>{eth(t.volume24h)}</td>
                     <td className={t.change24h >= 0 ? 'text-mint' : 'text-rose'}>
                       {t.change24h == null
                         ? '—'
@@ -138,8 +150,10 @@ export default function MarketPage({ trading = false }) {
       ) : (
         !result.error && (
           <Glass className="product-empty market-empty" radius={26}>
-            <img src="/brand/hookbrew/hookbrew-icon.png" alt="" width="100" height="100" />
-            <span className="eyebrow">THE MARKET STARTS HERE</span>
+            <div className="market-empty-symbol" aria-hidden="true">
+              <img src="/brand/navigation/robinhood/market.svg" alt="" width="62" height="62" />
+            </div>
+            <span className="eyebrow">Room for your next idea</span>
             <h2>
               {result.loading
                 ? 'Reading the market…'
@@ -166,7 +180,7 @@ export default function MarketPage({ trading = false }) {
         )
       )}
       <div className="product-inline market-pagination">
-        <span>{result.data?.total ?? '—'} indexed tokens · USDC quote markets</span>
+        <span>{result.data?.total ?? '—'} indexed tokens · ETH quote markets</span>
         <div className="product-actions">
           {offset > 0 && (
             <Button onClick={() => filter('offset', String(Math.max(0, offset - 24)))}>
@@ -178,6 +192,6 @@ export default function MarketPage({ trading = false }) {
           )}
         </div>
       </div>
-    </>
+    </div>
   )
 }

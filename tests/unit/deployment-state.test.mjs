@@ -6,7 +6,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { createApplication } from '../../server/application.mjs'
 import { sharedStore } from '../fixtures/shared-store.mjs'
-import { treasury, arcInfrastructure } from '../../server/settings.mjs'
+import { treasury, robinhoodInfrastructure } from '../../server/settings.mjs'
 
 async function fixture(run, options = {}) {
   const dataDir = await mkdtemp(join(tmpdir(), 'hookbrew-state-test-'))
@@ -42,8 +42,9 @@ async function fixture(run, options = {}) {
 }
 const transactions = { factoryTx: `0x${'11'.repeat(32)}`, routerTx: `0x${'22'.repeat(32)}` }
 const deployment = {
-  ...arcInfrastructure,
+  ...robinhoodInfrastructure,
   ...transactions,
+  abiVersion: 'hookbrew-v2',
   treasury,
   factory: `0x${'33'.repeat(20)}`,
   startBlock: 1,

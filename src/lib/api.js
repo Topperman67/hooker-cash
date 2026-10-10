@@ -77,6 +77,9 @@ export function useResource(path, interval = 15000) {
 }
 export const number = (value, maximumFractionDigits = 2) =>
   value == null ? '—' : Number(value).toLocaleString('en-US', { maximumFractionDigits })
+// ETH prices/fees can be far below one cent: retain significant digits for display.
+export const eth = (value) =>
+  value == null ? '—' : Number(value).toLocaleString('en-US', { maximumSignificantDigits: 6 })
 export const compact = (value) =>
   value == null
     ? '—'

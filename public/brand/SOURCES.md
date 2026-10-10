@@ -1,6 +1,6 @@
 # Brand asset sources
 
-Assets are stored locally; the UI does not hotlink remote logos.
+Assets are stored locally; the UI does not hotlink remote logos. The active Robinhood network badge is the user-supplied Ethereum/Robinhood composite image, copied unchanged from `ChatGPT Image Sep 14, 2026, 06_14_20 AM.png` to `robinhood/robinhood-eth.png`. Both network badge variants use this image, preserving its transparency and colors. The native ETH icon is an app-authored geometric diamond. Arc and USDC files below are retained as historical source assets and are not referenced by the active interface.
 
 Wallet picker logos and their official download sources are documented in [wallet assets](wallets/README.md).
 
@@ -14,6 +14,6 @@ Wallet picker logos and their official download sources are documented in [walle
 | Hookbrew icon and wordmark | Original built-in image generation                                                                                                                                                                                        | See [Hookbrew generation prompts](hookbrew/README.md)                                                                                       |
 | Navigation glass symbols   | Original built-in image generation, with Hookbrew icon as style reference                                                                                                                                                 | See [original generation prompts](navigation/README.md)                                                                                     |
 
-Source assets retrieved on 2026-09-16. Third-party marks identify the network, quote asset and protocol; they do not imply endorsement. The seven original glass emblems now identify left-navigation sections. They do not identify coins or deployed contracts. Real token lookup uses neutral initials from contract-provided names and symbols.
+Original source assets retrieved on 2026-09-16. Third-party marks identify the network, quote asset and protocol; they do not imply endorsement. Navigation artwork identifies sections, not coins or deployed contracts. Real token lookup uses neutral initials from contract-provided names and symbols.
 
-The original prompts are retained in `navigation/README.md` as generation history. Their former token-theme wording is not a claim that those coins exist. Hookbrew's icon and wordmark remain in `hookbrew/`.
+The active left navigation uses nine original [Robinhood-inspired vector symbols](navigation/robinhood/README.md) in lime and sage. The platinum and glass image sets and their prompts remain in `navigation/` as generation history; they are no longer the active navigation artwork. Their former token-theme wording is not a claim that those coins exist. Hookbrew's icon and wordmark remain in `hookbrew/`.

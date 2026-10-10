@@ -1,3 +1,4 @@
+import { network as chainConfig } from '../../shared/network.mjs'
 import { useEffect, useState } from 'react'
 import { formatUnits } from 'viem'
 import { useWallet } from '../context/WalletContext'
@@ -12,7 +13,7 @@ import {
   same,
 } from '../lib/protocol'
 import { useTransaction } from '../lib/useTransaction'
-import { number, short } from '../lib/api'
+import { number, short, eth } from '../lib/api'
 import { Button } from './UI'
 import TransactionStatus from './TransactionStatus'
 export default function CreatorPosition({ token, deployment }) {
@@ -66,7 +67,7 @@ export default function CreatorPosition({ token, deployment }) {
           }
         }
         let modules = null
-        if (d.abiVersion === 'hookbrew-modular-v1') {
+        if (d.abiVersion === 'hookbrew-modular-v2') {
           const [rewards, buyback, tokenLiquidity, quoteLiquidity] = await Promise.all([
             wallet.account
               ? read(token.address, abis.HookbrewRewardToken, 'pendingReward', [wallet.account])
@@ -122,7 +123,7 @@ export default function CreatorPosition({ token, deployment }) {
     })
   }
   const p = position?.personal,
-    disabled = tx.busy || !!tx.pending || !wallet.account || wallet.chainId !== 5042
+    disabled = tx.busy || !!tx.pending || !wallet.account || wallet.chainId !== chainConfig.chainId
   return (
     <div className="creator-position">
       <h3>Creator rewards & vesting</h3>
@@ -146,8 +147,8 @@ export default function CreatorPosition({ token, deployment }) {
         <>
           <div className="product-grid-3">
             <div>
-              <small>Claimable USDC</small>
-              <h3>{number(formatUnits(p.quoteFees, 6), 6)}</h3>
+              <small>Claimable ETH</small>
+              <h3>{eth(formatUnits(p.quoteFees, 18))}</h3>
             </div>
             <div>
               <small>Claimable {token.symbol}</small>
@@ -193,7 +194,7 @@ export default function CreatorPosition({ token, deployment }) {
           <h3>Hook modules</h3>
           {d.recipe.rewardBps > 0 && (
             <>
-              <p>Your holder rewards: {number(formatUnits(position.modules.rewards, 6), 6)} USDC</p>
+              <p>Your holder rewards: {eth(formatUnits(position.modules.rewards, 18))} ETH</p>
               <Button
                 disabled={disabled || !position.modules.rewards}
                 onClick={() => action('claimRewards')}
@@ -205,9 +206,9 @@ export default function CreatorPosition({ token, deployment }) {
           {(d.recipe.buybackBps > 0 || d.recipe.liquidityBps > 0) && (
             <>
               <p>
-                Buyback reserve: {number(formatUnits(position.modules.buyback, 6), 6)} USDC.
-                Liquidity reserve: {number(formatUnits(position.modules.quoteLiquidity, 6), 6)} USDC
-                + {number(formatUnits(position.modules.tokenLiquidity, 18), 4)} {token.symbol}.
+                Buyback reserve: {eth(formatUnits(position.modules.buyback, 18))} ETH. Liquidity
+                reserve: {eth(formatUnits(position.modules.quoteLiquidity, 18))} ETH +{' '}
+                {number(formatUnits(position.modules.tokenLiquidity, 18), 4)} {token.symbol}.
               </p>
               <p className="fine-print">
                 Execution requires 30 minutes of price history and spot price within the permitted
@@ -234,7 +235,7 @@ export default function CreatorPosition({ token, deployment }) {
         <div className="trade-review">
           <h3>Protocol treasury</h3>
           <p>
-            {number(formatUnits(position.protocol.quoteFees, 6), 6)} USDC +{' '}
+            {eth(formatUnits(position.protocol.quoteFees, 18))} ETH +{' '}
             {number(formatUnits(position.protocol.tokenFees, 18), 4)} {token.symbol} claimable.
           </p>
           <Button

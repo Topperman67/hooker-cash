@@ -1,12 +1,19 @@
 import { useEffect, useRef, useState } from 'react'
 import { publicClient, readableError } from './chain'
 import { keccak256 } from 'viem'
-const key = 'hookbrew:pending-transaction:v1'
+import { network, protocolVersion, storageNamespace } from '../../shared/network.mjs'
+import { assertCanonicalReceipt } from './transactionChecks'
+const key = `${storageNamespace}:pending-transaction`
 let activeRequest = false
 function load(scope) {
   try {
     const v = JSON.parse(sessionStorage.getItem(key))
-    return v?.scope === scope && /^0x[\da-f]{64}$/i.test(v.hash) ? v : null
+    return v?.scope === scope &&
+      v.chainId === network.chainId &&
+      v.protocolVersion === protocolVersion &&
+      /^0x[\da-f]{64}$/i.test(v.hash)
+      ? v
+      : null
   } catch {
     return null
   }
@@ -28,7 +35,13 @@ export function useTransaction(scope, onSuccess) {
     }
   }, [])
   async function confirm(record) {
-    setStatus('Waiting for two confirmations…')
+    if (
+      record.chainId !== network.chainId ||
+      record.protocolVersion !== protocolVersion ||
+      (await publicClient.getChainId()) !== network.chainId
+    )
+      throw Error('Pending transaction belongs to a different chain or protocol version.')
+    setStatus('Waiting for two L2 confirmations…')
     const receipt = await publicClient.waitForTransactionReceipt({
       hash: record.hash,
       confirmations: 2,
@@ -39,6 +52,7 @@ export function useTransaction(scope, onSuccess) {
         setPending(record)
       },
     })
+    await assertCanonicalReceipt(publicClient, receipt)
     if (receipt.status !== 'success') {
       sessionStorage.removeItem(key)
       setPending(null)
@@ -62,7 +76,7 @@ export function useTransaction(scope, onSuccess) {
     await callback.current?.(receipt, record)
     sessionStorage.removeItem(key)
     setPending(null)
-    setStatus('Confirmed on Arc.')
+    setStatus('Confirmed on Robinhood Chain.')
   }
   async function run(prepare) {
     if (lock.current || pending) return
@@ -85,7 +99,7 @@ export function useTransaction(scope, onSuccess) {
       sessionStorage.setItem(`${key}:check`, '1')
       sessionStorage.removeItem(`${key}:check`)
       const { hash, ...details } = await prepare(setStatus)
-      const record = { ...details, scope, hash }
+      const record = { ...details, scope, hash, chainId: network.chainId, protocolVersion }
       setPending(record)
       sessionStorage.setItem(key, JSON.stringify(record))
       await confirm(record)

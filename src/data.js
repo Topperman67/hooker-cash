@@ -1,9 +1,9 @@
 export const BRAND = {
   name: 'Hookbrew',
   tagline: 'Brew your own tokenomics.',
-  chain: 'Arc',
-  chainId: 5042,
-  quote: 'USDC',
+  chain: 'Robinhood Chain',
+  chainId: 4663,
+  quote: 'ETH',
   x: 'https://x.com',
   terms: '/terms',
 }
@@ -22,7 +22,7 @@ export const ACCESS_RULES = [
   {
     id: 3,
     title: 'The floor is open to everyone',
-    body: 'Token contracts on Arc are permissionless. A listed address or readable token name does not establish legitimacy, liquidity, or safety. Verify the contract and its permissions before signing.',
+    body: 'Token contracts on Robinhood Chain are permissionless. A listed address or readable token name does not establish legitimacy, liquidity, or safety. Verify the contract and its permissions before signing.',
   },
   {
     id: 4,
@@ -107,15 +107,6 @@ export const VALUE_MODULES = [
 ]
 
 export const ALL_MODULES = [...GATE_MODULES, ...VALUE_MODULES]
-
-export function fmtUsd(n) {
-  if (n == null || Number.isNaN(n)) return '—'
-  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(2)}M`
-  if (n >= 1_000) return `$${(n / 1_000).toFixed(1)}K`
-  if (n >= 1) return `$${n.toFixed(2)}`
-  if (n >= 0.0001) return `$${n.toFixed(6)}`
-  return `$${n.toExponential(2)}`
-}
 
 export function fmtPct(n) {
   const sign = n > 0 ? '+' : ''

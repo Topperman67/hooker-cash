@@ -29,6 +29,7 @@ let node,
   client,
   creator,
   config,
+  applicationOptions,
   errors = []
 const rpc = 'http://127.0.0.1:8547'
 async function rpcCall(method, params = []) {
@@ -74,7 +75,7 @@ test.beforeAll(async () => {
     ],
     {
       cwd: resolve('contracts/protocol'),
-      env: { ...process.env, HOOKBREW_TEST_CHAIN_ID: '5042' },
+      env: { ...process.env, HOOKBREW_TEST_CHAIN_ID: '4663' },
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     },
@@ -111,7 +112,7 @@ test.beforeAll(async () => {
     await artifact('@uniswap/v4-core/src/PoolManager.sol/PoolManager.json'),
     [accounts[0]],
   )
-  const quote = await deploy(await artifact('contracts/TestImports.sol/TestQuote.json'))
+  const quote = { address: '0x0000000000000000000000000000000000000000' }
   const quoter = await deploy(
     await artifact('@uniswap/v4-periphery/src/lens/V4Quoter.sol/V4Quoter.json'),
     [manager.address],
@@ -132,7 +133,7 @@ test.beforeAll(async () => {
   const data = encodeDeployData({
       abi: factoryArtifact.abi,
       bytecode: factoryArtifact.bytecode,
-      args: [manager.address, quote.address, accounts[0], parseUnits('1', 18)],
+      args: [manager.address, quote.address, accounts[0], parseUnits('0.0001', 18)],
     }),
     hash = keccak256(data)
   let salt, factory
@@ -144,22 +145,16 @@ test.beforeAll(async () => {
   const factoryTx = await owner.sendTransaction({ to: proxy, data: salt + data.slice(2) })
   await client.waitForTransactionReceipt({ hash: factoryTx })
   const router = await deploy(routerArtifact, [factory])
-  await owner.writeContract({
-    address: quote.address,
-    abi: quote.abi,
-    functionName: 'mint',
-    args: [creator, parseUnits('2000', 6)],
-  })
   await rpcCall('hardhat_mine', ['0x3'])
   await rpcCall('evm_setIntervalMining', [500])
   process.env.HOOKBREW_PUBLIC_URL = 'https://fixture.hookbrew.test'
-  const applicationOptions = {
+  applicationOptions = {
     dataDir,
     store: sharedStore(),
     client,
     treasury: accounts[0],
     infrastructure: {
-      chainId: 5042,
+      chainId: 4663,
       poolManager: manager.address,
       quote: quote.address,
       quoter: quoter.address,
@@ -204,14 +199,136 @@ test.afterAll(async () => {
   }
   delete process.env.HOOKBREW_PUBLIC_URL
 })
+
+test('wallet setup deploys both contracts, refreshes gas funds, activates and exports verified receipts', async ({
+  page,
+}) => {
+  test.setTimeout(180000)
+  const setupApp = await createApplication({
+    ...applicationOptions,
+    store: sharedStore(),
+    serverless: true,
+  })
+  const setupServer = createServer(setupApp.middleware)
+  await new Promise((r) => setupServer.listen(0, '127.0.0.1', r))
+  const setupOrigin = `http://127.0.0.1:${setupServer.address().port}`
+  const account = applicationOptions.treasury
+  let insufficientFunds = false
+  const pageErrors = []
+  page.on('pageerror', (e) => pageErrors.push(e.message))
+  try {
+    await page.route(
+      /https:\/\/rpc\.mainnet\.chain\.robinhood\.com|\/test-wallet-rpc$/,
+      async (route) => {
+        const request = route.request().postDataJSON()
+        if (insufficientFunds && request.method === 'eth_getBalance') {
+          await route.fulfill({ json: { jsonrpc: '2.0', id: request.id, result: '0x1' } })
+          return
+        }
+        const response = await fetch(rpc, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: route.request().postData(),
+        })
+        await route.fulfill({ status: response.status, json: await response.json() })
+      },
+    )
+    await page.route('**/api/**', async (route) => {
+      const url = new URL(route.request().url())
+      const response = await fetch(setupOrigin + url.pathname + url.search, {
+        method: route.request().method(),
+        headers: { Origin: setupOrigin, 'Content-Type': 'application/json' },
+        ...(route.request().method() === 'POST' ? { body: route.request().postData() } : {}),
+      })
+      await route.fulfill({ status: response.status, json: await response.json() })
+    })
+    await page.addInitScript(
+      ({ account }) => {
+        localStorage.setItem('hooker_vamp_access_v1', '1')
+        window.__sends = []
+        window.__signatures = 0
+        window.ethereum = {
+          on() {},
+          removeListener() {},
+          async request({ method, params }) {
+            if (method === 'eth_accounts' || method === 'eth_requestAccounts') return [account]
+            if (method === 'eth_chainId') return '0x1237'
+            if (method === 'eth_sendTransaction') window.__sends.push(params[0])
+            if (method === 'personal_sign') window.__signatures++
+            const response = await fetch('/test-wallet-rpc', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params: params || [] }),
+            })
+            const body = await response.json()
+            if (body.error) throw body.error
+            return body.result
+          },
+        }
+      },
+      { account },
+    )
+    await page.goto('/setup')
+    await page.getByRole('button', { name: 'Connect deployer wallet' }).click()
+    await page.getByRole('button', { name: 'Browser wallet', exact: true }).click()
+    await page.getByRole('button', { name: 'Close dialog' }).click()
+    for (const kind of ['factory', 'router']) {
+      await page.getByRole('button', { name: `Prepare ${kind} deployment` }).click()
+      await expect(page.getByRole('button', { name: `Deploy ${kind} with wallet` })).toBeVisible({
+        timeout: 60000,
+      })
+      insufficientFunds = true
+      await page.getByRole('button', { name: `Deploy ${kind} with wallet` }).click()
+      await expect(page.getByRole('alert')).toContainText('Insufficient ETH')
+      expect(await page.evaluate(() => window.__sends.length)).toBe(kind === 'factory' ? 0 : 1)
+      insufficientFunds = false
+      await page.getByRole('button', { name: `Deploy ${kind} with wallet` }).click()
+      await expect(
+        page.getByRole('button', {
+          name: kind === 'factory' ? 'Prepare router deployment' : 'Authorize & activate Hookbrew',
+        }),
+      ).toBeVisible({ timeout: 45000 })
+    }
+    await page.getByRole('button', { name: 'Authorize & activate Hookbrew' }).click()
+    await expect(page.getByRole('heading', { name: 'Hookbrew is activated.' })).toBeVisible({
+      timeout: 15000,
+    })
+    expect(await page.evaluate(() => window.__sends.length)).toBe(2)
+    expect(await page.evaluate(() => window.__signatures)).toBe(1)
+    const download = page.waitForEvent('download')
+    await page.getByRole('button', { name: 'Export deployment record', exact: true }).click()
+    const record = JSON.parse(await readFile(await (await download).path(), 'utf8'))
+    expect(record.chainId).toBe(4663)
+    expect(record.abiVersion).toBe('hookbrew-v2')
+    expect(record.quoteDecimals).toBe(18)
+    expect(record.quoteIsNative).toBe(true)
+    expect(record.launchFee).toBe('100000000000000')
+    expect(record.treasury.toLowerCase()).toBe(account.toLowerCase())
+    for (const hash of [record.factoryTx, record.routerTx]) {
+      const receipt = await client.getTransactionReceipt({ hash })
+      expect(receipt.status).toBe('success')
+      expect((await client.getBlock({ blockNumber: receipt.blockNumber })).hash).toBe(
+        receipt.blockHash,
+      )
+    }
+    await page.reload()
+    await expect(page.getByRole('heading', { name: 'Hookbrew is activated.' })).toBeVisible()
+    expect(pageErrors).toEqual([])
+  } finally {
+    setupApp.close()
+    await new Promise((r) => setupServer.close(r))
+  }
+})
+
 for (const customHook of [false, true])
-  test(`${customHook ? 'custom hook build → ' : ''}wallet launch → real indexed chart → exact approval → buy → sell inside Hookbrew`, async ({
+  test(`${customHook ? 'custom hook build → ' : ''}wallet launch → real indexed chart → ETH buy → token approval → sell inside Hookbrew`, async ({
     page,
   }) => {
     test.setTimeout(180000)
     page.on('pageerror', (e) => errors.push(e.message))
     let holdReceipts = false
-    await page.route(/https:\/\/rpc\.(?:drpc\.)?mainnet\.arc\.io/, async (route) => {
+    let observedPending = false
+    await page.route(/https:\/\/rpc\.mainnet\.chain\.robinhood\.com/, async (route) => {
       const r = await fetch(rpc, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -220,6 +337,8 @@ for (const customHook of [false, true])
       const response = await r.json(),
         request = route.request().postDataJSON()
       if (holdReceipts && request.method === 'eth_getTransactionReceipt') response.result = null
+      if (request.method === 'eth_getTransactionByHash' && response.result?.blockNumber === null)
+        observedPending = true
       await route.fulfill({ status: r.status, json: response })
     })
     await page.route('**/test-wallet-rpc', async (route) => {
@@ -257,7 +376,7 @@ for (const customHook of [false, true])
           removeListener() {},
           async request({ method, params }) {
             if (method === 'eth_accounts' || method === 'eth_requestAccounts') return [creator]
-            if (method === 'eth_chainId') return '0x13b2'
+            if (method === 'eth_chainId') return '0x1237'
             if (method === 'eth_sendTransaction') {
               if (window.__rejectNext) {
                 window.__rejectNext = false
@@ -296,10 +415,12 @@ for (const customHook of [false, true])
       ).toBeVisible({ timeout: 60000 })
       await page.evaluate(() => (window.__rejectNext = true))
       await page.getByRole('button', { name: 'Confirm & build hook', exact: true }).click()
-      await expect(page.getByRole('alert')).toContainText('declined')
+      await expect(page.getByRole('alert')).toContainText('declined', { timeout: 30000 })
       holdReceipts = true
       await page.getByRole('button', { name: 'Confirm & build hook', exact: true }).click()
-      await expect(page.getByRole('link', { name: 'View submitted transaction' })).toBeVisible()
+      await expect(page.getByRole('link', { name: 'View submitted transaction' })).toBeVisible({
+        timeout: 30000,
+      })
       await page.reload()
       holdReceipts = false
       await page.getByRole('button', { name: /Continue/ }).click()
@@ -326,15 +447,13 @@ for (const customHook of [false, true])
       .getByLabel('Description', { exact: false })
       .fill('Local test token backed by real Uniswap V4 pool events.')
     await page.getByRole('button', { name: /Continue/ }).click()
-    await page.getByLabel('Founder buy', { exact: false }).fill('25')
+    await page.getByLabel('Founder buy', { exact: false }).fill('0.005')
     await page.getByRole('button', { name: /^Linear 24h/ }).click()
     await page.getByRole('button', { name: 'Review launch', exact: true }).click()
     await page.getByRole('button', { name: 'Simulate launch & refresh costs' }).click()
-    await page.getByRole('button', { name: 'Approve founder buy', exact: true }).click()
-    await expect(page.getByText('Confirmed on Arc.', { exact: true })).toBeVisible({
-      timeout: 15000,
-    })
-    await page.getByRole('button', { name: 'Simulate launch & refresh costs' }).click()
+    await expect(
+      page.getByRole('button', { name: 'Approve founder buy', exact: true }),
+    ).toHaveCount(0)
     await expect(page.getByRole('button', { name: /Confirm & launch token/ })).toBeVisible()
     holdReceipts = true
     await page.getByRole('button', { name: /Confirm & launch token/ }).click()
@@ -360,9 +479,22 @@ for (const customHook of [false, true])
     await page.getByRole('button', { name: 'Browser wallet', exact: true }).click()
     await expect(page.getByRole('dialog')).toContainText(new RegExp(creator, 'i'))
     await page.getByRole('button', { name: 'Close dialog' }).click()
-    await page.getByLabel('Amount of USDC to buy with').fill('2')
-    await expect(page.getByRole('button', { name: 'Approve USDC', exact: true })).toBeEnabled()
-    await page.getByRole('button', { name: 'Approve USDC', exact: true }).click()
+    // Real full-transaction MAX estimates leave ETH for gas, without buying or approving.
+    await expect(page.getByRole('heading', { name: 'Trade', exact: true })).toBeVisible({
+      timeout: 20000,
+    })
+    const originalBalance = await client.getBalance({ address: creator })
+    await rpcCall('hardhat_setBalance', [creator, toHex(parseUnits('0.02', 18))])
+    await expect(page.getByRole('button', { name: 'MAX', exact: true })).toBeEnabled()
+    await page.getByRole('button', { name: 'MAX', exact: true }).click()
+    await expect
+      .poll(async () => Number(await page.getByLabel('Amount of ETH to buy with').inputValue()))
+      .toBeGreaterThan(0.019)
+    const max = parseUnits(await page.getByLabel('Amount of ETH to buy with').inputValue(), 18)
+    expect(max).toBeLessThan(parseUnits('0.02', 18))
+    await rpcCall('hardhat_setBalance', [creator, toHex(originalBalance)])
+    await page.getByLabel('Amount of ETH to buy with').fill('0.0004')
+    await expect(page.getByRole('button', { name: 'Approve ETH', exact: true })).toHaveCount(0)
     await expect(page.getByRole('button', { name: 'Review buy', exact: true })).toBeEnabled({
       timeout: 15000,
     })
@@ -389,6 +521,44 @@ for (const customHook of [false, true])
         args: [creator],
       }),
     ).toBe(0n)
+    if (!customHook) {
+      // A same-nonce cancellation must never be accepted as the reviewed purchase.
+      await rpcCall('evm_setAutomine', [false])
+      await rpcCall('evm_setIntervalMining', [0])
+      await page.getByRole('button', { name: 'Confirm buy', exact: true }).click()
+      await expect(page.getByRole('link', { name: 'View submitted transaction' })).toBeVisible()
+      await expect.poll(() => observedPending).toBe(true)
+      const pending = await page.evaluate(() =>
+        JSON.parse(sessionStorage.getItem('hookbrew:4663:v2:pending-transaction')),
+      )
+      const original = await client.getTransaction({ hash: pending.hash })
+      await rpcCall('eth_sendTransaction', [
+        {
+          from: creator,
+          to: creator,
+          value: '0x0',
+          data: '0x',
+          nonce: toHex(original.nonce),
+          gas: '0x5208',
+          maxFeePerGas: toHex(original.maxFeePerGas * 2n + 1n),
+          maxPriorityFeePerGas: toHex(original.maxPriorityFeePerGas * 2n + 1n),
+        },
+      ])
+      await rpcCall('hardhat_mine', ['0x2'])
+      await rpcCall('evm_setAutomine', [true])
+      await rpcCall('evm_setIntervalMining', [500])
+      await expect(page.getByRole('alert')).toContainText('replaced with a different action', {
+        timeout: 20000,
+      })
+      expect(
+        await client.readContract({
+          address,
+          abi: erc20Abi,
+          functionName: 'balanceOf',
+          args: [creator],
+        }),
+      ).toBe(0n)
+    }
     await page.getByRole('button', { name: 'Confirm buy', exact: true }).click()
     await expect
       .poll(
@@ -402,7 +572,7 @@ for (const customHook of [false, true])
         { timeout: 15000 },
       )
       .toBeGreaterThan(0n)
-    await expect(page.getByText('Confirmed on Arc.', { exact: true })).toBeVisible({
+    await expect(page.getByText('Confirmed on Robinhood Chain.', { exact: true })).toBeVisible({
       timeout: 15000,
     })
     await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }))
@@ -435,7 +605,7 @@ for (const customHook of [false, true])
         { timeout: 15000 },
       )
       .toBeLessThan(before)
-    await expect(page.getByText('Confirmed on Arc.', { exact: true })).toBeVisible({
+    await expect(page.getByText('Confirmed on Robinhood Chain.', { exact: true })).toBeVisible({
       timeout: 15000,
     })
     await page.getByRole('tab', { name: 'Creator & vesting' }).click()
@@ -450,7 +620,7 @@ for (const customHook of [false, true])
     await page.screenshot({ path: 'artifacts/product-build/terminal-mobile.png', fullPage: true })
     expect(errors).toEqual([])
     const sends = await page.evaluate(() => window.__sends)
-    expect(sends).toHaveLength(customHook ? 7 : 6)
+    expect(sends).toHaveLength(5)
     expect(sends.every((tx) => tx.from.toLowerCase() === creator.toLowerCase())).toBe(true)
     expect(config.treasury.toLowerCase()).not.toBe('0x2e01dd8df4a4fb06ea62a944a658e9ae01db2ac4') // local fixture treasury only
   })

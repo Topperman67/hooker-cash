@@ -11,6 +11,7 @@ import '@fontsource-variable/dm-sans'
 import './index.css'
 import './product.css'
 import './landing.css'
+import './workspace.css'
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>

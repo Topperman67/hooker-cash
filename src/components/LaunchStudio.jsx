@@ -1,3 +1,4 @@
+import { network as chainConfig } from '../../shared/network.mjs'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate, useOutletContext } from 'react-router-dom'
 import { ArrowRight, ArrowLeft, Check, FlaskConical, LockKeyhole } from 'lucide-react'
@@ -7,10 +8,9 @@ import { Button } from './UI'
 import TransactionStatus from './TransactionStatus'
 import { usePlatform } from '../context/PlatformContext'
 import { useWallet } from '../context/WalletContext'
-import { api, number, short } from '../lib/api'
+import { api, number, short, eth } from '../lib/api'
 import {
   abis,
-  approval,
   amount,
   balances,
   eventFrom,
@@ -29,6 +29,7 @@ import { readableError } from '../lib/chain'
 import { draftKey, stepKey, legacyStepKey, restoreDraft, restoreStep } from '../lib/launchDraft'
 
 import HookBuilder from './HookBuilder'
+import LaunchPreview from './LaunchPreview'
 import { PoolStep, TokenStep, PayoutStep, ReviewStep } from './LaunchSteps'
 import './launch-flow.css'
 
@@ -140,12 +141,8 @@ export default function LaunchStudio() {
         const funds = await balances(deployment, null, wallet.account, deployment.factory)
         if (funds.balance < initialBuy)
           throw Error(
-            'Insufficient USDC for the founder buy. Keep additional USDC available for the launch fee and gas.',
+            'Insufficient ETH for the founder buy. Keep additional ETH available for the launch fee and gas.',
           )
-        if (funds.allowance < initialBuy) {
-          if (version === revision.current) setEstimate({ needsApproval: true, value: initialBuy })
-          return
-        }
       }
       const { uri } = await api('/api/metadata', {
         name: draft.name.trim(),
@@ -168,7 +165,7 @@ export default function LaunchStudio() {
         abi: abis.HookbrewFactory,
         functionName: 'launch',
         args: [params],
-        value,
+        value: value + initialBuy,
       }
       const first = await simulate(wallet, request)
       params.minTokensOut = minimum(first.result[1], draft.slippage)
@@ -209,17 +206,6 @@ export default function LaunchStudio() {
         'The active deployment changed. Your draft is saved; refresh the simulation before signing.',
       )
   }
-  async function approve() {
-    await tx.run(async (status) => {
-      await currentDeployment()
-      await verifyDeployment(deployment)
-      const request = approval(deployment.quote, deployment.factory, estimate.value)
-      const checked = await simulate(wallet, request)
-      status('Approve the exact founder-buy amount in your wallet.')
-      const hash = await send(wallet, checked.request)
-      return { hash, kind: 'approval', ...transactionIdentity(wallet, request) }
-    })
-  }
   async function launch() {
     await tx.run(async (status) => {
       if (
@@ -245,214 +231,207 @@ export default function LaunchStudio() {
     })
   }
   return (
-    <div className="launch-flow">
-      <Glass className="studio-editor launch-panel" radius={26}>
-        <header className="launch-header">
-          <div className="launch-title-row">
-            <span className="eyebrow">THE HOOKBREW LAUNCH STUDIO</span>
-            <span className="product-badge">
-              <span className="status-dot" />
-              Arc · V4
-            </span>
+    <div className={`launch-flow ${step === 1 ? 'launch-flow-hooks' : ''}`}>
+      <header className="launch-header">
+        <div className="launch-title-row">
+          <span className="eyebrow">The launch studio</span>
+          <span className="product-badge">
+            <span className="status-dot" />
+            Robinhood Chain · V4
+          </span>
+        </div>
+        <h1>Launch a token.</h1>
+        <p>
+          A fixed initial supply. A market from day one. Choose your pool, shape the hook, and make
+          it yours. Your seed liquidity stays permanently locked.
+        </p>
+      </header>
+      <div className="launch-workspace">
+        <Glass className="studio-editor launch-panel" radius={20}>
+          <nav className="launch-steps" aria-label="Launch steps">
+            {steps.map((label, i) => (
+              <button
+                key={label}
+                disabled={locked || checking || uploading || hookBusy || i > step + 1}
+                onClick={() => go(i)}
+                aria-current={i === step ? 'step' : undefined}
+                data-complete={i < step}
+              >
+                <span>{i < step ? <Check size={13} /> : i + 1}</span>
+                <strong>{label}</strong>
+              </button>
+            ))}
+          </nav>
+          <div className="studio-section-heading" tabIndex={-1} ref={editor}>
+            <h2>
+              {['The pool', 'Your hook', 'Your token', 'Your cut', 'Review your launch'][step]}
+            </h2>
+            <p>
+              {
+                [
+                  'Set your token’s pair, starting valuation, and trading fee.',
+                  'Choose the rules that sit on top of your pool’s base economics.',
+                  'Give your token an identity your community can recognize.',
+                  'Buy your founder allocation, then decide where tokens and fees go.',
+                  'One final look. Check every detail before signing in your wallet.',
+                ][step]
+              }
+            </p>
           </div>
-          <h1>
-            Launch a <span>token.</span>
-          </h1>
-          <p>
-            A fixed initial supply. A market from day one. Choose your pool, shape the hook, and
-            make it yours. Your seed liquidity stays permanently locked.
-          </p>
-        </header>
-        <nav className="launch-steps" aria-label="Launch steps">
-          {steps.map((label, i) => (
-            <button
-              key={label}
-              disabled={locked || checking || uploading || hookBusy || i > step + 1}
-              onClick={() => go(i)}
-              aria-current={i === step ? 'step' : undefined}
-              data-complete={i < step}
-            >
-              <span>{i < step ? <Check size={13} /> : i + 1}</span>
-              <strong>{label}</strong>
-            </button>
-          ))}
-        </nav>
-        <div className="studio-section-heading" tabIndex={-1} ref={editor}>
-          <h2>{['The pool', 'Your hook', 'Your token', 'Your cut', 'Review your launch'][step]}</h2>
-          <p>
-            {
-              [
-                'Set your token’s pair, starting valuation, and trading fee.',
-                'Choose the rules that sit on top of your pool’s base economics.',
-                'Give your token an identity your community can recognize.',
-                'Buy your founder allocation, then decide where tokens and fees go.',
-                'One final look. Check every detail before signing in your wallet.',
-              ][step]
-            }
-          </p>
-        </div>
-        <fieldset disabled={locked || checking} className="studio-fields">
-          {step === 0 && <PoolStep draft={draft} input={input} update={update} />}
-          {step === 1 && (
-            <HookBuilder
-              draft={draft}
-              input={input}
-              update={update}
-              wallet={wallet}
-              platform={platform}
-              onConnect={onConnect}
-              onBusy={setHookBusy}
-            />
-          )}
-          {step === 2 && (
-            <TokenStep
-              draft={draft}
-              input={input}
-              update={update}
-              upload={upload}
-              uploading={uploading}
-            />
-          )}
-          {step === 3 && <PayoutStep draft={draft} input={input} update={update} wallet={wallet} />}
-          {step === 4 && (
-            <>
-              <ReviewStep draft={draft} platform={platform} wallet={wallet} go={go} />
-              {platform.loading || platform.error || platform.storage?.ready === false ? (
-                <div className="product-note" role={platform.loading ? 'status' : 'alert'}>
-                  <div>
-                    <h3>
-                      {platform.loading
-                        ? 'Checking launch availability…'
-                        : 'Launch temporarily unavailable'}
-                    </h3>
-                    <p>
-                      {platform.error ||
-                        platform.storage?.error ||
-                        'Checking the active contracts before continuing.'}
-                    </p>
-                    <p>Your token draft and review step are saved.</p>
-                    {!platform.loading && <Button onClick={platform.refresh}>Retry status</Button>}
-                  </div>
-                </div>
-              ) : !deployment ? (
-                <div className="product-note">
-                  <FlaskConical size={23} />
-                  <div>
-                    <h3>Activate your Hookbrew contracts</h3>
-                    <p>
-                      Your draft is saved. Deploy the new factory and router with your treasury to
-                      open live launches.
-                    </p>
-                    <Button to="/setup?returnTo=launch">
-                      Open deployment setup <ArrowRight size={16} />
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <>
-                  <p className="fine-print">
-                    One USDC balance covers the founder buy, launch fee, and gas. Contract
-                    simulation checks the combined cost before signing.
-                  </p>
-                  {!wallet.account ? (
-                    <Button primary onClick={onConnect}>
-                      Connect wallet to review
-                    </Button>
-                  ) : wallet.chainId !== 5042 ? (
-                    <Button primary onClick={wallet.switchNetwork}>
-                      Switch to Arc
-                    </Button>
-                  ) : (
-                    <Button onClick={inspect} disabled={checking || locked}>
-                      {checking ? 'Simulating…' : 'Simulate launch & refresh costs'}
-                    </Button>
-                  )}
-                  {estimate?.needsApproval && (
-                    <div className="product-note">
-                      <div>
-                        <p>
-                          Approve exactly {formatUnits(estimate.value, 6)} ERC20 USDC for the
-                          Hookbrew factory, then simulate again.
-                        </p>
-                        <Button primary onClick={approve} disabled={locked}>
-                          Approve founder buy
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-                  {estimate?.request && (
-                    <>
-                      <div className="review-list">
-                        <div>
-                          <span>Launch fee</span>
-                          <strong>{formatUnits(estimate.launchFee, 18)} native USDC</strong>
-                        </div>
-                        <div>
-                          <span>Estimated network fee</span>
-                          <strong>
-                            {number(formatUnits(estimate.gasCost, 18), 6)} native USDC
-                          </strong>
-                        </div>
-                        <div>
-                          <span>Founder tokens received</span>
-                          <strong>
-                            {number(formatUnits(estimate.bought, 18), 2)} {draft.symbol}
-                          </strong>
-                        </div>
-                        <div>
-                          <span>Predicted contract</span>
-                          <strong>{short(estimate.token)}</strong>
-                        </div>
-                      </div>
-                      <Button primary className="full-width" onClick={launch} disabled={locked}>
-                        Confirm & launch token <ArrowRight size={17} />
-                      </Button>
-                      <p className="fine-print">
-                        Simulation expires after 60 seconds. Your wallet signs the exact reviewed
-                        call. New Hookbrew contracts have not had an independent security audit.
+          <fieldset disabled={locked || checking} className="studio-fields">
+            {step === 0 && <PoolStep draft={draft} input={input} update={update} />}
+            {step === 1 && (
+              <HookBuilder
+                draft={draft}
+                input={input}
+                update={update}
+                wallet={wallet}
+                platform={platform}
+                onConnect={onConnect}
+                onBusy={setHookBusy}
+              />
+            )}
+            {step === 2 && (
+              <TokenStep
+                draft={draft}
+                input={input}
+                update={update}
+                upload={upload}
+                uploading={uploading}
+              />
+            )}
+            {step === 3 && (
+              <PayoutStep draft={draft} input={input} update={update} wallet={wallet} />
+            )}
+            {step === 4 && (
+              <>
+                <ReviewStep draft={draft} platform={platform} wallet={wallet} go={go} />
+                {platform.loading || platform.error || platform.storage?.ready === false ? (
+                  <div className="product-note" role={platform.loading ? 'status' : 'alert'}>
+                    <div>
+                      <h3>
+                        {platform.loading
+                          ? 'Checking launch availability…'
+                          : 'Launch temporarily unavailable'}
+                      </h3>
+                      <p>
+                        {platform.error ||
+                          platform.storage?.error ||
+                          'Checking the active contracts before continuing.'}
                       </p>
-                    </>
-                  )}
-                </>
-              )}
-            </>
+                      <p>Your token draft and review step are saved.</p>
+                      {!platform.loading && (
+                        <Button onClick={platform.refresh}>Retry status</Button>
+                      )}
+                    </div>
+                  </div>
+                ) : !deployment ? (
+                  <div className="product-note">
+                    <FlaskConical size={23} />
+                    <div>
+                      <h3>Activate your Hookbrew contracts</h3>
+                      <p>
+                        Your draft is saved. Deploy the new factory and router with your treasury to
+                        open live launches.
+                      </p>
+                      <Button to="/setup?returnTo=launch">
+                        Open deployment setup <ArrowRight size={16} />
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <p className="fine-print">
+                      One ETH balance covers the founder buy, launch fee, and gas. Contract
+                      simulation checks the combined cost before signing.
+                    </p>
+                    {!wallet.account ? (
+                      <Button primary onClick={onConnect}>
+                        Connect wallet to review
+                      </Button>
+                    ) : wallet.chainId !== chainConfig.chainId ? (
+                      <Button primary onClick={wallet.switchNetwork}>
+                        Switch to Robinhood Chain
+                      </Button>
+                    ) : (
+                      <Button onClick={inspect} disabled={checking || locked}>
+                        {checking ? 'Simulating…' : 'Simulate launch & refresh costs'}
+                      </Button>
+                    )}
+
+                    {estimate?.request && (
+                      <>
+                        <div className="review-list">
+                          <div>
+                            <span>Launch fee</span>
+                            <strong>{formatUnits(estimate.launchFee, 18)} native ETH</strong>
+                          </div>
+                          <div>
+                            <span>Estimated network fee</span>
+                            <strong>{eth(formatUnits(estimate.gasCost, 18))} native ETH</strong>
+                          </div>
+                          <div>
+                            <span>Founder tokens received</span>
+                            <strong>
+                              {number(formatUnits(estimate.bought, 18), 2)} {draft.symbol}
+                            </strong>
+                          </div>
+                          <div>
+                            <span>Predicted contract</span>
+                            <strong>{short(estimate.token)}</strong>
+                          </div>
+                        </div>
+                        <Button primary className="full-width" onClick={launch} disabled={locked}>
+                          Confirm & launch token <ArrowRight size={17} />
+                        </Button>
+                        <p className="fine-print">
+                          Simulation expires after 60 seconds. Your wallet signs the exact reviewed
+                          call. New Hookbrew contracts have not had an independent security audit.
+                        </p>
+                      </>
+                    )}
+                  </>
+                )}
+              </>
+            )}
+          </fieldset>
+          {uploading && <p role="status">Uploading artwork…</p>}
+          {error && (
+            <p className="form-error" role="alert">
+              {error}
+            </p>
           )}
-        </fieldset>
-        {uploading && <p role="status">Uploading artwork…</p>}
-        {error && (
-          <p className="form-error" role="alert">
-            {error}
-          </p>
-        )}
-        <TransactionStatus tx={tx} />
-        <div className="studio-navigation launch-navigation">
-          {step > 0 && (
-            <Button
-              disabled={locked || checking || uploading || hookBusy}
-              onClick={() => go(step - 1)}
-            >
-              <ArrowLeft size={15} />
-              Back
-            </Button>
-          )}
-          {step < 4 && (
-            <Button
-              primary
-              className="launch-continue"
-              disabled={locked || checking || uploading || hookBusy}
-              onClick={() => go(step + 1)}
-            >
-              {step === 3 ? 'Review launch' : 'Continue'}
-              <ArrowRight size={16} />
-            </Button>
-          )}
-          {step === 4 && (
-            <span>
-              <LockKeyhole size={13} /> You confirm every transaction in your wallet
-            </span>
-          )}
-        </div>
-      </Glass>
+          <TransactionStatus tx={tx} />
+          <div className="studio-navigation launch-navigation">
+            {step > 0 && (
+              <Button
+                disabled={locked || checking || uploading || hookBusy}
+                onClick={() => go(step - 1)}
+              >
+                <ArrowLeft size={15} />
+                Back
+              </Button>
+            )}
+            {step < 4 && (
+              <Button
+                primary
+                className="launch-continue"
+                disabled={locked || checking || uploading || hookBusy}
+                onClick={() => go(step + 1)}
+              >
+                {step === 3 ? 'Review launch' : 'Continue'}
+                <ArrowRight size={16} />
+              </Button>
+            )}
+            {step === 4 && (
+              <span>
+                <LockKeyhole size={13} /> You confirm every transaction in your wallet
+              </span>
+            )}
+          </div>
+        </Glass>
+        <LaunchPreview draft={draft} step={step} />
+      </div>
       <p className="launch-draft-status">
         <Check size={13} /> Draft saved on this device<span>Step {step + 1} of 5</span>
       </p>

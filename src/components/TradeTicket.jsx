@@ -1,3 +1,4 @@
+import { network as chainConfig } from '../../shared/network.mjs'
 import { useEffect, useRef, useState } from 'react'
 import { formatUnits } from 'viem'
 import { ArrowDownUp, Settings2 } from 'lucide-react'
@@ -24,7 +25,8 @@ import {
   verifyDeployment,
 } from '../lib/protocol'
 import { publicClient, readableError } from '../lib/chain'
-import { api, number } from '../lib/api'
+import { api, number, eth } from '../lib/api'
+import { maximumNativeSpend } from '../lib/protocolDraft'
 export default function TradeTicket({ token, onTrade, venue }) {
   const wallet = useWallet(),
     { onConnect } = useOutletContext(),
@@ -41,9 +43,9 @@ export default function TradeTicket({ token, onTrade, venue }) {
     [refresh, setRefresh] = useState(0),
     [review, setReview] = useState(null)
   const revision = useRef(0)
-  const decimals = buy ? 6 : 18,
-    inputSymbol = buy ? 'USDC' : token.symbol,
-    outputSymbol = buy ? token.symbol : 'USDC'
+  const decimals = 18,
+    inputSymbol = buy ? 'ETH' : token.symbol,
+    outputSymbol = buy ? token.symbol : 'ETH'
   const tx = useTransaction(`trade:${token.address.toLowerCase()}`, async (receipt, record) => {
     if (record.kind === 'swap') {
       const event = eventFrom(receipt, record.router, abis.HookbrewRouter, 'Trade')
@@ -69,7 +71,7 @@ export default function TradeTicket({ token, onTrade, venue }) {
   }, [input, buy, slippage, wallet.account, wallet.chainId, deployment])
   useEffect(() => {
     setFunds(null)
-    if (!deployment || !wallet.account || wallet.chainId !== 5042) return
+    if (!deployment || !wallet.account || wallet.chainId !== chainConfig.chainId) return
     let active = true,
       timer
     const load = async () => {
@@ -128,7 +130,7 @@ export default function TradeTicket({ token, onTrade, venue }) {
       clearTimeout(timer)
     }
   }, [deployment, input, decimals, buy, slippage, token.address, wallet.account, refresh])
-  const needsApproval = quote && funds && funds.allowance < quote.input
+  const needsApproval = !buy && quote && funds && funds.allowance < quote.input
   const insufficient = quote && funds && funds.balance < quote.input
   async function approve() {
     await tx.run(async (status) => {
@@ -162,6 +164,7 @@ export default function TradeTicket({ token, onTrade, venue }) {
         address: deployment.router,
         abi: abis.HookbrewRouter,
         functionName: 'swap',
+        value: buy ? n : 0n,
         args: [token.address, buy, n, minOut, BigInt(Math.floor(Date.now() / 1000) + 300)],
       }
       const checked = await simulate(wallet, request)
@@ -209,10 +212,16 @@ export default function TradeTicket({ token, onTrade, venue }) {
           publicClient.getBalance({ address: wallet.account }),
           publicClient.getGasPrice(),
         ])
-        const reserve = ((quote?.gasEstimate || 300000n) + 200000n) * gasPrice * 2n
-        const available = native > reserve ? (native - reserve) / 10n ** 12n : 0n
-        if (spend > available) spend = available
-        if (!spend) throw Error('Keep enough USDC available for network gas.')
+        spend = await maximumNativeSpend(native, gasPrice, (value) =>
+          publicClient.estimateContractGas({
+            address: deployment.router,
+            abi: abis.HookbrewRouter,
+            functionName: 'swap',
+            args: [token.address, true, value, 1n, BigInt(Math.floor(Date.now() / 1000) + 300)],
+            account: wallet.account,
+            value,
+          }),
+        )
       }
       if (version === revision.current) setInput(formatUnits(spend, decimals))
     } catch (e) {
@@ -285,7 +294,8 @@ export default function TradeTicket({ token, onTrade, venue }) {
             autoComplete="off"
           />
           <small>
-            Balance: {funds ? number(formatUnits(funds.balance, decimals), 6) : '—'} {inputSymbol}
+            Balance: {funds ? (buy ? eth : number)(formatUnits(funds.balance, decimals), 6) : '—'}{' '}
+            {inputSymbol}
           </small>
         </div>
         <div className="trade-percent">
@@ -301,7 +311,7 @@ export default function TradeTicket({ token, onTrade, venue }) {
         <div className="trade-output">
           <span>You receive · estimated</span>
           <strong>
-            {quote ? number(formatUnits(quote.output, buy ? 18 : 6), 6) : '—'}{' '}
+            {quote ? (buy ? number : eth)(formatUnits(quote.output, 18), 6) : '—'}{' '}
             <small>{outputSymbol}</small>
           </strong>
         </div>
@@ -317,7 +327,7 @@ export default function TradeTicket({ token, onTrade, venue }) {
           <div>
             <span>Minimum received</span>
             <strong>
-              {quote ? number(formatUnits(quote.minOut, buy ? 18 : 6), 6) : '—'} {outputSymbol}
+              {quote ? (buy ? number : eth)(formatUnits(quote.minOut, 18), 6) : '—'} {outputSymbol}
             </strong>
           </div>
           <div>
@@ -331,9 +341,9 @@ export default function TradeTicket({ token, onTrade, venue }) {
           <Button primary className="full-width" onClick={onConnect}>
             Connect wallet
           </Button>
-        ) : wallet.chainId !== 5042 ? (
+        ) : wallet.chainId !== chainConfig.chainId ? (
           <Button primary className="full-width" onClick={wallet.switchNetwork}>
-            Switch to Arc
+            Switch to Robinhood Chain
           </Button>
         ) : needsApproval ? (
           <Button
@@ -362,10 +372,11 @@ export default function TradeTicket({ token, onTrade, venue }) {
           <div className="trade-review">
             <h3>Review your trade</h3>
             <p>
-              Pay {number(formatUnits(review.input, decimals), 6)} {inputSymbol}. Receive at least{' '}
-              {number(formatUnits(review.minOut, buy ? 18 : 6), 6)} {outputSymbol}.
+              Pay {(buy ? eth : number)(formatUnits(review.input, decimals), 6)} {inputSymbol}.
+              Receive at least {(buy ? number : eth)(formatUnits(review.minOut, 18), 6)}{' '}
+              {outputSymbol}.
             </p>
-            <p>Estimated gas: {number(formatUnits(review.gasCost, 18), 6)} native USDC.</p>
+            <p>Estimated gas: {eth(formatUnits(review.gasCost, 18))} native ETH.</p>
             <Button primary className="full-width" onClick={submit} disabled={locked}>
               Confirm {buy ? 'buy' : 'sell'}
             </Button>
@@ -380,7 +391,7 @@ export default function TradeTicket({ token, onTrade, venue }) {
       )}
       <TransactionStatus tx={tx} />
       <p className="fine-print">
-        Quotes include the pool fee. Your USDC balance also pays gas; MAX keeps a gas reserve.
+        Quotes include the pool fee. Your ETH balance also pays gas; MAX keeps a gas reserve.
       </p>
     </Glass>
   )

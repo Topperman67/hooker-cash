@@ -1,6 +1,6 @@
-# Hookbrew navigation glass symbols
+# Historical Hookbrew navigation glass symbols
 
-Generated individually with the built-in image tool using `../hookbrew/hookbrew-icon.png` as the visual style reference. Original generated PNGs are preserved with their transparency. These now identify navigation sections; they are not coin logos. The prompts below are the unchanged generation history from the previous design iteration.
+Generated individually with the built-in image tool using `../hookbrew/hookbrew-icon.png` as the visual style reference. Original generated PNGs are preserved with their transparency. These previously identified navigation sections; the active interface now uses [Robinhood-inspired SVGs](robinhood/README.md). They are not coin logos. The prompts below are the unchanged generation history from the previous design iteration.
 
 | Current file | Original filename | Sidebar use |
 | --- | --- | --- |
