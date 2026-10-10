@@ -380,7 +380,7 @@
               },
               {
                 "kind": "account",
-                "path": "token_program"
+                "path": "lp_token_program"
               },
               {
                 "kind": "account",
@@ -428,6 +428,16 @@
         },
         {
           "name": "token_program",
+          "docs": [
+            "The coin mint's owner: Token-2022 for `create_v2` coins, SPL Token for coins made with",
+            "pump.fun's legacy `create` (bound by the `mint::token_program` constraint)."
+          ]
+        },
+        {
+          "name": "lp_token_program",
+          "docs": [
+            "PumpSwap always mints LP tokens with Token-2022."
+          ],
           "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
         },
         {
@@ -871,6 +881,15 @@
       ],
       "accounts": [
         {
+          "name": "rent_payer",
+          "docs": [
+            "Gets back the rent of the well's WSOL ATA when this pulse closes it. The PumpSwap collect",
+            "leg creates that ATA at the transaction payer's expense; only creator fees are split."
+          ],
+          "writable": true,
+          "signer": true
+        },
+        {
           "name": "config",
           "pda": {
             "seeds": [
@@ -1127,7 +1146,10 @@
         },
         {
           "name": "token_program",
-          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+          "docs": [
+            "The coin mint's owner: Token-2022 for `create_v2` coins, SPL Token for coins made with",
+            "pump.fun's legacy `create` (bound by the `mint::token_program` constraint)."
+          ]
         },
         {
           "name": "quote_token_program",
@@ -1715,7 +1737,7 @@
     {
       "code": 6003,
       "name": "InvalidSplitWallet",
-      "msg": "Split wallets must not be the default key, the well or duplicates"
+      "msg": "Split wallets must be distinct ordinary wallets: not the default key, the well, the Quantum account, a sysvar or a program"
     },
     {
       "code": 6004,
@@ -2270,7 +2292,8 @@
           {
             "name": "unwrapped",
             "docs": [
-              "Lamports unwrapped from the well's WSOL account before allocation."
+              "WSOL (creator fees) unwrapped from the well's WSOL account before allocation, without the",
+              "account's rent (see `rent_refunded`)."
             ],
             "type": "u64"
           },
@@ -2310,6 +2333,13 @@
             "docs": [
               "Payments skipped because the recipient could not hold them (would stay below its rent",
               "minimum, or is executable). They stay in the well and are re-pulsed later."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "rent_refunded",
+            "docs": [
+              "Rent of the closed WSOL account, returned to the pulse's `rent_payer` (not fees)."
             ],
             "type": "u64"
           }

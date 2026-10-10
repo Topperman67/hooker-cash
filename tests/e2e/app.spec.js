@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { enter, stubApi, MINT } from './fixtures.js'
+import { enter, stubApi, stubTrades, MINT } from './fixtures.js'
 
 test('risk notice gates the app once', async ({ page }) => {
   await stubApi(page)
@@ -9,6 +9,20 @@ test('risk notice gates the app once', async ({ page }) => {
   await expect(page.getByRole('heading', { level: 1 })).toContainText('Launch on pump.fun')
   await page.reload()
   await expect(page.getByRole('heading', { level: 1 })).toContainText('Launch on pump.fun')
+})
+
+test('the terms can be read before accepting the risk notice', async ({ page }) => {
+  await stubApi(page)
+  await page.goto('/terms')
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Terms of use')
+  await page.goto('/')
+  await expect(page.getByRole('main')).toContainText('Before you enter')
+  await page.getByRole('main').getByRole('link', { name: 'terms of use' }).click()
+  await expect(page).toHaveURL(/\/terms$/)
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Terms of use')
+  // Every other page still asks first.
+  await page.goto('/market')
+  await expect(page.getByRole('heading', { name: 'Before you enter' })).toBeVisible()
 })
 
 test('home shows live coins, hook catalog and navigates', async ({ page }) => {
@@ -111,6 +125,7 @@ for (const path of ['/', '/market', '/launch', '/hooks', '/docs', `/coin/${MINT}
   test(`no horizontal overflow on mobile: ${path}`, async ({ page }) => {
     await page.setViewportSize({ width: 360, height: 780 })
     await stubApi(page)
+    await stubTrades(page)
     await enter(page)
     await page.goto(path)
     await page.waitForTimeout(600)
@@ -118,6 +133,23 @@ for (const path of ['/', '/market', '/launch', '/hooks', '/docs', `/coin/${MINT}
       () => document.documentElement.scrollWidth - window.innerWidth,
     )
     expect(overflow).toBeLessThanOrEqual(1)
+    // .app clips sideways overflow, so also look for content cut off at the edge: anything wider
+    // than the screen must sit inside its own scroll container (like the trades table).
+    const cutOff = await page.evaluate(() => {
+      const scrolls = (el) => {
+        for (let p = el.parentElement; p && !p.classList.contains('app'); p = p.parentElement)
+          if (getComputedStyle(p).overflowX !== 'visible') return true
+        return false
+      }
+      return [...document.querySelectorAll('.app-main *')]
+        .filter((el) => !el.closest('[aria-hidden="true"], svg'))
+        .filter((el) => {
+          const r = el.getBoundingClientRect()
+          return r.width > 0 && (r.right > window.innerWidth + 1 || r.left < -1) && !scrolls(el)
+        })
+        .map((el) => el.className || el.tagName)
+    })
+    expect(cutOff).toEqual([])
   })
 }
 
@@ -133,4 +165,79 @@ test('mobile menu opens and navigates', async ({ page }) => {
     'aria-expanded',
     'false',
   )
+})
+
+test('Escape closes the mobile menu and returns focus to its toggle', async ({ page }) => {
+  await page.setViewportSize({ width: 360, height: 780 })
+  await stubApi(page)
+  await enter(page)
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open menu' }).focus()
+  await page.keyboard.press('Enter')
+  await expect(page.locator('#mobile-nav')).toBeVisible()
+  await page.locator('#mobile-nav').getByRole('link', { name: 'Market' }).focus()
+  await page.keyboard.press('Escape')
+  await expect(page.locator('#mobile-nav')).toBeHidden()
+  await expect(page.getByRole('button', { name: 'Open menu' })).toBeFocused()
+})
+
+test('the header keeps its links on one line until it collapses into the menu', async ({
+  page,
+}) => {
+  await stubApi(page)
+  await enter(page)
+  await page.setViewportSize({ width: 1180, height: 800 })
+  await page.goto('/market')
+  const nav = page.getByRole('navigation', { name: 'Main' }).first()
+  for (const height of await nav
+    .getByRole('link')
+    .evaluateAll((links) => links.map((a) => a.getBoundingClientRect().height)))
+    expect(height).toBeLessThan(44)
+  await page.setViewportSize({ width: 1024, height: 800 })
+  await expect(page.getByRole('button', { name: 'Open menu' })).toBeVisible()
+})
+
+test('the wallet dialog keeps keyboard focus inside and hands it back on Escape', async ({
+  page,
+}) => {
+  await stubApi(page)
+  await enter(page)
+  await page.goto('/market')
+  await page.getByRole('button', { name: 'Connect' }).focus()
+  await page.keyboard.press('Enter')
+  const dialog = page.getByRole('dialog', { name: 'Connect a Solana wallet' })
+  await expect(dialog).toBeVisible()
+  for (const key of ['Tab', 'Tab', 'Tab', 'Shift+Tab', 'Shift+Tab', 'Shift+Tab']) {
+    await page.keyboard.press(key)
+    expect(await page.evaluate(() => !!document.activeElement?.closest('[role=dialog]'))).toBe(true)
+  }
+  await page.keyboard.press('Escape')
+  await expect(dialog).toBeHidden()
+  await expect(page.getByRole('button', { name: 'Connect' })).toBeFocused()
+})
+
+test('a page whose code fails to load can be retried and does not break other pages', async ({
+  page,
+}) => {
+  await stubApi(page)
+  await enter(page)
+  let block = true
+  await page.route('**/src/pages/LaunchPage.jsx*', (route) =>
+    block ? route.fulfill({ status: 404, body: 'gone' }) : route.continue(),
+  )
+  await page.goto('/market')
+  const nav = page.getByRole('navigation', { name: 'Main' }).first()
+  await nav.getByRole('link', { name: 'Launch' }).click()
+  await expect(
+    page.getByRole('alert').filter({ hasText: 'This page could not load' }),
+  ).toBeVisible()
+  await nav.getByRole('link', { name: 'Market' }).click()
+  await expect(page.getByRole('heading', { level: 1 })).toHaveText('Market')
+  await nav.getByRole('link', { name: 'Launch' }).click()
+  await expect(
+    page.getByRole('alert').filter({ hasText: 'This page could not load' }),
+  ).toBeVisible()
+  block = false
+  await page.getByRole('button', { name: 'Try again' }).click()
+  await expect(page.getByRole('heading', { level: 1 })).toContainText('Launch')
 })

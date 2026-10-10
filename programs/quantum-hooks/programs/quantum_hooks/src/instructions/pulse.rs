@@ -9,6 +9,10 @@ use crate::utils::*;
 
 #[derive(Accounts)]
 pub struct Pulse<'info> {
+    /// Gets back the rent of the well's WSOL ATA when this pulse closes it. The PumpSwap collect
+    /// leg creates that ATA at the transaction payer's expense; only creator fees are split.
+    #[account(mut)]
+    pub rent_payer: Signer<'info>,
     #[account(seeds = [CONFIG_SEED], bump = config.bump)]
     pub config: Box<Account<'info, Config>>,
     #[account(mut, seeds = [QUANTUM_SEED, quantum.mint.as_ref()], bump = quantum.bump)]
@@ -39,8 +43,10 @@ pub(crate) fn pulse<'info>(mut ctx: Context<'_, '_, 'info, 'info, Pulse<'info>>)
     let system_program = accounts.system_program.to_account_info();
     let rent = Rent::get()?;
 
-    // Post-graduation creator fees arrive as WSOL; unwrap them into the well first.
+    // Post-graduation creator fees arrive as WSOL; unwrap them into the well first. The ATA's
+    // rent goes back to `rent_payer`, so only the wrapped SOL counts as fees.
     let mut unwrapped = 0u64;
+    let mut rent_refunded = 0u64;
     if let Some(wsol_ata) = &accounts.well_wsol_ata {
         let wsol_ata = wsol_ata.to_account_info();
         if is_token_account(&wsol_ata) {
@@ -49,7 +55,16 @@ pub(crate) fn pulse<'info>(mut ctx: Context<'_, '_, 'info, 'info, Pulse<'info>>)
                 .as_ref()
                 .ok_or(QuantumError::MissingTokenProgram)?
                 .to_account_info();
-            unwrapped = unwrap_to_well(&well, &wsol_ata, &token_program, signer)?;
+            let closed = unwrap_to_well(&well, &wsol_ata, &token_program, signer)?;
+            (rent_refunded, unwrapped) =
+                split_closed_ata(closed, rent.minimum_balance(TOKEN_ACCOUNT_LEN));
+            pay_from_well(
+                &well,
+                &accounts.rent_payer.to_account_info(),
+                &system_program,
+                rent_refunded,
+                signer,
+            )?;
         }
     }
 
@@ -62,7 +77,12 @@ pub(crate) fn pulse<'info>(mut ctx: Context<'_, '_, 'info, 'info, Pulse<'info>>)
     );
     for (i, account) in ctx.remaining_accounts.iter().enumerate() {
         require!(
-            *account.key == splits[i].wallet && account.is_writable,
+            split_account_ok(
+                account.key,
+                &splits[i].wallet,
+                account.is_writable,
+                account.executable
+            ),
             QuantumError::SplitAccountsMismatch
         );
     }
@@ -104,7 +124,8 @@ pub(crate) fn pulse<'info>(mut ctx: Context<'_, '_, 'info, 'info, Pulse<'info>>)
         if share == 0 {
             continue;
         }
-        if can_receive(account, share, &rent) {
+        // A read-only split (reserved or executable, see `split_account_ok`) can never be paid.
+        if account.is_writable && can_receive(account, share, &rent) {
             pay_from_well(&well, account, &system_program, share, signer)?;
             splits_paid = add(splits_paid, share)?;
         } else {
@@ -146,6 +167,7 @@ pub(crate) fn pulse<'info>(mut ctx: Context<'_, '_, 'info, 'info, Pulse<'info>>)
         entangle_added,
         fusion_added,
         deferred,
+        rent_refunded,
     });
     Ok(())
 }

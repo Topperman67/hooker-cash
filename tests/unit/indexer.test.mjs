@@ -3,7 +3,9 @@ import assert from 'node:assert/strict'
 import { mkdtempSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createIndexer, stats, summarize } from '../../server/indexer.mjs'
+import { Keypair } from '@solana/web3.js'
+import { createIndexer, issuedUriKey, stats, summarize } from '../../server/indexer.mjs'
+import { extractEvents } from '../../server/solana.mjs'
 import { createFileStore } from '../../server/storage.mjs'
 import { candlesFor } from '../../server/market-math.mjs'
 
@@ -103,23 +105,28 @@ test('registerLaunch indexes a real create transaction and its dev buy', async (
   const originalFetch = globalThis.fetch
   globalThis.fetch = async (url, init) => {
     assert.equal(url, rpcEndpoint)
-    const calls = JSON.parse(init.body)
-    return new Response(
-      JSON.stringify(
-        calls.map((c) => ({
-          jsonrpc: '2.0',
-          id: c.id,
-          result: c.params[0] === signature ? tx : null,
-        })),
-      ),
-    )
+    const body = JSON.parse(init.body)
+    const answer = (c) => ({
+      jsonrpc: '2.0',
+      id: c.id,
+      result: c.params[0] === signature ? tx : null,
+    })
+    return new Response(JSON.stringify(Array.isArray(body) ? body.map(answer) : answer(body)))
   }
   const connection = {
     rpcEndpoint,
     getSignaturesForAddress: async () => [{ signature, err: null }],
   }
+  // A plain pump.fun coin: native only because this server issued its metadata URI (C2).
+  const quantum = { wellPda: () => Keypair.generate().publicKey }
+  const create = extractEvents(tx).find((e) => e.name === 'CreateEvent').event
   try {
-    const indexer = createIndexer({ connection, store, isQuantumCreator: async () => false })
+    const indexer = createIndexer({ connection, store, quantum })
+    await assert.rejects(() => indexer.registerLaunch(signature), {
+      status: 400,
+      code: 'not_quantpad',
+    })
+    await store.set(issuedUriKey(create.uri), { at: Date.now() })
     const coin = await indexer.registerLaunch(signature)
     assert.equal(coin.signature, signature)
     assert.equal(coin.external, false)
@@ -143,10 +150,11 @@ test('registerLaunch rejects signatures that are not coin creations', async () =
   )
   const store = createFileStore(mkdtempSync(join(tmpdir(), 'qp-launch-')))
   const originalFetch = globalThis.fetch
-  globalThis.fetch = async (_, init) =>
-    new Response(
-      JSON.stringify(JSON.parse(init.body).map((c) => ({ jsonrpc: '2.0', id: c.id, result: tx }))),
-    )
+  globalThis.fetch = async (_, init) => {
+    const body = JSON.parse(init.body)
+    const answer = (c) => ({ jsonrpc: '2.0', id: c.id, result: tx })
+    return new Response(JSON.stringify(Array.isArray(body) ? body.map(answer) : answer(body)))
+  }
   try {
     const indexer = createIndexer({ connection: { rpcEndpoint: 'http://x.invalid' }, store })
     await assert.rejects(() => indexer.registerLaunch(signature), /did not create a pump\.fun coin/)

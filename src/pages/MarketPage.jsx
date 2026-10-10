@@ -139,7 +139,7 @@ export default function MarketPage() {
             >
               Previous
             </button>
-            <span className="faint num">
+            <span className="muted num">
               {offset + 1}–{offset + items.length} of {market.data.total}
             </span>
             <button

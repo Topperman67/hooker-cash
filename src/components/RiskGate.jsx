@@ -1,21 +1,23 @@
 import { useState } from 'react'
+import { Link, useLocation } from 'react-router-dom'
 import Logo from './Logo.jsx'
+import { gateExempt, readAccepted, saveAccepted } from './gate.js'
 
-const KEY = 'quantpad:risk-accepted:v1'
-const read = () => {
+const storage = () => {
   try {
-    return localStorage.getItem(KEY) === '1'
+    return window.localStorage
   } catch {
-    return false
+    return null
   }
 }
 
-// Shown once per browser before anything else.
+// Shown once per browser before anything else, except on the pages it points to (terms, docs).
 export default function RiskGate({ children }) {
-  const [accepted, setAccepted] = useState(read)
-  if (accepted) return children
+  const [accepted, setAccepted] = useState(() => readAccepted(storage()))
+  const { pathname } = useLocation()
+  if (accepted || gateExempt(pathname)) return children
   return (
-    <div className="gate">
+    <main className="gate">
       <div className="gate-card">
         <Logo className="gate-lockup" />
         <h1>Before you enter</h1>
@@ -37,16 +39,16 @@ export default function RiskGate({ children }) {
         <button
           className="btn btn-primary btn-lg"
           onClick={() => {
-            try {
-              localStorage.setItem(KEY, '1')
-            } catch {}
+            saveAccepted(storage())
             setAccepted(true)
           }}
         >
           I understand, enter
         </button>
-        <p className="faint">The full terms are on the Terms page.</p>
+        <p className="gate-note">
+          Read the full <Link to="/terms">terms of use</Link> before you enter.
+        </p>
       </div>
-    </div>
+    </main>
   )
 }

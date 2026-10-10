@@ -2,6 +2,11 @@ import { Link, useNavigate } from 'react-router-dom'
 import { CoinAvatar, CurveProgress } from './UI.jsx'
 import { usePlatform } from '../context/PlatformContext.jsx'
 import { ago, pct, price, sol, usd } from '../lib/format.js'
+import { lowerBound, PARTIAL_NOTE } from './figures.js'
+
+const partialTitle = (coin) => (coin.statsPartial ? PARTIAL_NOTE : undefined)
+const volume = (coin) =>
+  lowerBound(coin.volume24h, sol(coin.volume24h, { digits: 2 }), coin.statsPartial)
 
 function Badges({ coin }) {
   return (
@@ -39,7 +44,9 @@ export function CoinCard({ coin }) {
         </div>
         <div>
           <dt>24h volume</dt>
-          <dd className="num">{sol(coin.volume24h, { digits: 2 })}</dd>
+          <dd className="num" title={partialTitle(coin)}>
+            {volume(coin)}
+          </dd>
         </div>
         <div>
           <dt>Age</dt>
@@ -100,8 +107,12 @@ export function CoinTable({ items }) {
                   ? usd(c.marketCap * solUsd)
                   : sol(c.marketCap, { digits: 1 })}
               </td>
-              <td className="right num">{sol(c.volume24h, { digits: 2 })}</td>
-              <td className="right num">{c.trades24h || 0}</td>
+              <td className="right num" title={partialTitle(c)}>
+                {volume(c)}
+              </td>
+              <td className="right num" title={partialTitle(c)}>
+                {lowerBound(c.trades24h, String(c.trades24h || 0), c.statsPartial)}
+              </td>
               <td style={{ minWidth: 120 }}>
                 <CurveProgress progress={c.progress} complete={c.complete} />
               </td>

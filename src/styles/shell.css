@@ -42,11 +42,13 @@
 .nav a {
   position: relative;
   text-decoration: none;
-  color: var(--steel);
+  /* ink-2: the header glass can float over the graphite chart when the page scrolls */
+  color: var(--ink-2);
   font-weight: 600;
   font-size: var(--t-sm);
   padding: 8px 12px;
   border-radius: var(--r-pill);
+  white-space: nowrap;
 }
 .nav a:hover {
   color: var(--ink);
@@ -68,6 +70,7 @@
   margin-left: auto;
   position: relative;
   width: min(320px, 28vw);
+  min-width: 180px;
 }
 .topbar-search input {
   width: 100%;
@@ -216,7 +219,9 @@
   text-decoration: underline;
 }
 
-@media (max-width: 960px) {
+/* The five links, a usable search box and the wallet button need about 1140px; below that the
+   header collapses into the menu (which carries the search too). */
+@media (max-width: 1140px) {
   .nav,
   .topbar-search {
     display: none;
@@ -226,9 +231,6 @@
   }
   .topbar-actions {
     margin-left: auto;
-  }
-  .brand-lockup {
-    height: 28px;
   }
   .mobile-nav {
     display: block;
@@ -243,7 +245,7 @@
     padding: 10px 0;
     text-decoration: none;
     font-weight: 600;
-    color: var(--steel);
+    color: var(--ink-2);
   }
   .mobile-nav a.active {
     color: var(--ink);
@@ -251,7 +253,13 @@
   .mobile-nav .topbar-search {
     display: block;
     width: 100%;
+    min-width: 0;
     margin: 4px 0 8px;
+  }
+}
+@media (max-width: 960px) {
+  .brand-lockup {
+    height: 28px;
   }
   .footer-inner {
     grid-template-columns: 1fr;

@@ -3,7 +3,7 @@
 use anchor_lang::prelude::*;
 use anchor_spl::associated_token::AssociatedToken;
 use anchor_spl::token::Token;
-use anchor_spl::token_2022;
+use anchor_spl::token_2022::Token2022;
 use anchor_spl::token_interface::{self, Burn, Mint, TokenAccount, TokenInterface};
 
 use crate::constants::*;
@@ -48,7 +48,7 @@ pub struct Fusion<'info> {
     pub pool: UncheckedAccount<'info>,
     #[account(
         address = lp_mint_address(&pool.key()) @ QuantumError::NotCanonicalPool,
-        mint::token_program = token_program
+        mint::token_program = lp_token_program
     )]
     pub lp_mint: Box<InterfaceAccount<'info, Mint>>,
     #[account(
@@ -56,11 +56,14 @@ pub struct Fusion<'info> {
         payer = caller,
         associated_token::mint = lp_mint,
         associated_token::authority = well,
-        associated_token::token_program = token_program
+        associated_token::token_program = lp_token_program
     )]
     pub well_lp_ata: Box<InterfaceAccount<'info, TokenAccount>>,
-    #[account(address = token_2022::ID)]
+    /// The coin mint's owner: Token-2022 for `create_v2` coins, SPL Token for coins made with
+    /// pump.fun's legacy `create` (bound by the `mint::token_program` constraint).
     pub token_program: Interface<'info, TokenInterface>,
+    /// PumpSwap always mints LP tokens with Token-2022.
+    pub lp_token_program: Program<'info, Token2022>,
     pub quote_token_program: Program<'info, Token>,
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,

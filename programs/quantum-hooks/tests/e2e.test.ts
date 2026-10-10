@@ -18,6 +18,7 @@ import {
 } from '@solana/web3.js'
 import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
+  NATIVE_MINT,
   TOKEN_2022_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
   getAssociatedTokenAddressSync,
@@ -29,6 +30,8 @@ import {
   OnlinePumpAmmSdk,
   PUMP_AMM_SDK,
   canonicalPumpPoolPda,
+  coinCreatorVaultAtaPda,
+  coinCreatorVaultAuthorityPda,
   lpMintPda,
 } from '@pump-fun/pump-swap-sdk'
 import * as q from '../../../shared/quantum.mjs'
@@ -89,8 +92,8 @@ async function tokenBalance(ata: PublicKey, program = T22) {
   const info = await connection.getAccountInfo(ata, 'confirmed')
   return info ? unpackAccount(ata, info, program).amount : 0n
 }
-async function supply(m = mint) {
-  return unpackMint(m, await connection.getAccountInfo(m, 'confirmed'), T22).supply
+async function supply(m = mint, program = T22) {
+  return unpackMint(m, await connection.getAccountInfo(m, 'confirmed'), program).supply
 }
 async function chainNow() {
   const info = await connection.getAccountInfo(SYSVAR_CLOCK_PUBKEY, 'confirmed')
@@ -105,7 +108,7 @@ async function airdrop(key: PublicKey, sol: number) {
   await connection.confirmTransaction({ signature: sig, ...bh }, 'confirmed')
 }
 
-type Sent = { sig: string; logs: string[]; events: any[]; size: number; cu: number }
+type Sent = { sig: string; logs: string[]; events: any[]; size: number; cu: number; fee: bigint }
 async function send(
   instructions: any[],
   signers: Keypair[],
@@ -151,6 +154,7 @@ async function send(
     events: q.decodeQuantumEvents(logs),
     size: raw.length,
     cu: info?.meta?.computeUnitsConsumed ?? 0,
+    fee: BigInt(info?.meta?.fee ?? 0),
   }
 }
 // An address lookup table holding every non-signer key of `instructions` (create_v2 + dev buy
@@ -235,18 +239,18 @@ async function rawBurn(cpi: any, spend: bigint, caller: PublicKey, target = cpi.
     .instruction()
 }
 
-async function curveBuy(user: Keypair, sol: number, m = mint) {
+async function curveBuy(user: Keypair, sol: number, m = mint, tokenProgram = T22) {
   const online = new OnlinePumpSdk(connection)
   const [global, feeConfig, state] = await Promise.all([
     online.fetchGlobal(),
     online.fetchFeeConfig(),
-    online.fetchBuyState(m, user.publicKey, T22),
+    online.fetchBuyState(m, user.publicKey, tokenProgram),
   ])
   const quoteAmount = new BN(Math.round(sol * LAMPORTS_PER_SOL))
   const amount = getBuyTokenAmountFromSolAmount({
     global,
     feeConfig,
-    mintSupply: new BN((await supply(m)).toString()),
+    mintSupply: new BN((await supply(m, tokenProgram)).toString()),
     bondingCurve: state.bondingCurve,
     amount: quoteAmount,
     quoteMint: state.bondingCurve.quoteMint,
@@ -261,9 +265,49 @@ async function curveBuy(user: Keypair, sol: number, m = mint) {
     amount,
     quoteAmount,
     slippage: 5,
-    tokenProgram: T22,
+    tokenProgram,
   })
   return send(ixs, [user])
+}
+
+// Buys the rest of a curve and migrates it to PumpSwap (the canonical pool).
+async function graduate(m: PublicKey, buyer: Keypair, tokenProgram = T22) {
+  const online = new OnlinePumpSdk(connection)
+  const global = await online.fetchGlobal()
+  const state = await online.fetchBuyState(m, buyer.publicKey, tokenProgram)
+  const ixs = await PUMP_SDK.buyV2Instructions({
+    global,
+    bondingCurveAccountInfo: state.bondingCurveAccountInfo,
+    bondingCurve: state.bondingCurve,
+    associatedUserAccountInfo: state.associatedUserAccountInfo,
+    mint: m,
+    user: buyer.publicKey,
+    amount: state.bondingCurve.realTokenReserves,
+    quoteAmount: new BN((150n * SOL).toString()),
+    slippage: 0,
+    tokenProgram,
+  })
+  await send(ixs, [buyer])
+  const curve = PUMP_SDK.decodeBondingCurve((await connection.getAccountInfo(bondingCurvePda(m)))!)
+  assert.ok(curve.complete, 'curve complete')
+  const migrate = await PUMP_SDK.migrateV2Instruction({
+    withdrawAuthority: global.withdrawAuthority,
+    mint: m,
+    user: buyer.publicKey,
+    quoteMint: curve.quoteMint,
+    baseTokenProgram: tokenProgram,
+    quoteTokenProgram: TOKEN_PROGRAM_ID,
+  })
+  return send([migrate], [buyer], { cu: 1_000_000 })
+}
+
+async function poolBuys(m: PublicKey, buyers: Keypair[], lamports: bigint) {
+  const pool = canonicalPumpPoolPda(m)
+  const amm = new OnlinePumpAmmSdk(connection)
+  for (const t of buyers) {
+    const st = await amm.swapSolanaState(pool, t.publicKey)
+    await send(await PUMP_AMM_SDK.buyQuoteInput(st, new BN(lamports.toString()), 5), [t])
+  }
 }
 
 async function curveSell(user: Keypair, amount: bigint) {
@@ -510,6 +554,42 @@ describe('quantum_hooks on a local validator with mainnet pump.fun', () => {
       })
       .instruction()
     await expectFail(send([dupe], [launcher, bad]), /InvalidSplitWallet|InvalidLockTerms/)
+    // Keys the runtime always makes read-only (sysvars, builtin programs) and programs could
+    // never be paid by `pulse`: the program and the client refuse them as split wallets.
+    for (const reserved of [
+      new PublicKey('SysvarRent111111111111111111111111111111111'),
+      new PublicKey('Vote111111111111111111111111111111111111111'),
+      new PublicKey('ComputeBudget111111111111111111111111111111'),
+      q.QUANTUM_PROGRAM_ID,
+    ]) {
+      const ix = await program()
+        .methods.register({
+          creatorBps: 10000,
+          burnBps: 0,
+          entangleBps: 0,
+          fusionBps: 0,
+          splits: [{ wallet: reserved, bps: 100 }],
+          lock: null,
+        })
+        .accountsStrict({
+          launcher: launcher.publicKey,
+          mint: bad.publicKey,
+          config: q.configPda(),
+          quantum: q.quantumPda(bad.publicKey),
+          well: q.wellPda(bad.publicKey),
+          systemProgram: SystemProgram.programId,
+        })
+        .instruction()
+      await expectFail(send([ix], [launcher, bad]), /InvalidSplitWallet/)
+      assert.throws(
+        () =>
+          q.validateHooks({
+            creatorBps: 10000,
+            splits: [{ wallet: reserved.toBase58(), bps: 100 }],
+          }),
+        /cannot be a split wallet/,
+      )
+    }
   })
 
   test('release before the cliff fails; only the launcher may release', async () => {
@@ -569,6 +649,7 @@ describe('quantum_hooks on a local validator with mainnet pump.fun', () => {
     const a = pct(slice, 2500),
       b = pct(slice, 100)
     const launcherShare = slice - a - b
+    assert.equal(pulsed.rentRefunded, 0n, 'no WSOL account on the curve')
     assert.equal(pulsed.protocol, protocol)
     assert.equal(pulsed.burnAdded, burn)
     assert.equal(pulsed.entangleAdded, entangle)
@@ -927,23 +1008,53 @@ describe('quantum_hooks on a local validator with mainnet pump.fun', () => {
     assert.ok(decoded.coinCreator.equals(q.wellPda(mint)), 'pool coin creator is the well')
   })
 
-  test('post-graduation pulse: PumpSwap sweep + collect (WSOL) unwrapped by pulse', async () => {
-    const pool = canonicalPumpPoolPda(mint)
-    const amm = new OnlinePumpAmmSdk(connection)
-    for (const t of traders) {
-      const st = await amm.swapSolanaState(pool, t.publicKey)
-      await send(await PUMP_AMM_SDK.buyQuoteInput(st, new BN((3n * SOL).toString()), 5), [t])
-    }
+  test('post-graduation pulse: PumpSwap sweep + collect (WSOL) unwrapped by pulse, ATA rent refunded', async () => {
+    await poolBuys(mint, traders, 3n * SOL)
     const pending = await q.pendingCreatorFees(connection, mint)
     assert.ok(pending > 1_000_000n)
+    assert.equal(await connection.getAccountInfo(q.wellWsolAta(mint)), null, 'no WSOL ATA yet')
+    const vaultAta = coinCreatorVaultAtaPda(
+      coinCreatorVaultAuthorityPda(q.wellPda(mint)),
+      NATIVE_MINT,
+      TOKEN_PROGRAM_ID,
+    )
+    const vaultExisted = !!(await connection.getAccountInfo(vaultAta))
+    const keeper0 = await bal(keeper.publicKey)
     const ixs = await q.buildPulseInstructions({ connection, payer: keeper.publicKey, mint })
     const sent = await send(ixs, [keeper], { cu: 600_000 })
     const pulsed = event(sent, 'Pulsed')
     console.log(
-      `    pool pulse tx ${sent.size} B, ${sent.cu} CU, unwrapped ${pulsed.unwrapped}, collected ${pulsed.collected}`,
+      `    pool pulse tx ${sent.size} B, ${sent.cu} CU, unwrapped ${pulsed.unwrapped}, collected ${pulsed.collected}, rent refunded ${pulsed.rentRefunded}`,
     )
     assert.ok(pulsed.unwrapped > 0n, 'WSOL creator fees were unwrapped into the well')
     assert.equal(await connection.getAccountInfo(q.wellWsolAta(mint)), null, 'WSOL ATA closed')
+    // The collect leg created the WSOL ATA at the keeper's expense; pulse refunds that rent and
+    // splits only the fees (before the fix `collected` was `pending` + 2 039 280).
+    assert.equal(pulsed.rentRefunded, q.RENT_EXEMPT_TOKEN_ACCOUNT)
+    assert.equal(pulsed.collected, pending, 'exactly the pending creator fees are split')
+    const vaultRent = vaultExisted ? 0n : q.RENT_EXEMPT_TOKEN_ACCOUNT
+    assert.equal(
+      await bal(keeper.publicKey),
+      keeper0 - sent.fee - vaultRent,
+      'the keeper pays only the network fee',
+    )
+  })
+
+  test('post-graduation pulse with fees below 0.001 SOL fails with NothingToPulse (ATA rent is not fees)', async () => {
+    // A small trade leaves a few thousand lamports of creator fees in the PumpSwap coin-creator
+    // vault, so the client includes the collect leg, which creates the WSOL ATA (≈ 0.002 SOL of
+    // rent) again. Before the fix that rent lifted the pulse over the 0.001 SOL floor.
+    const before = await q.pendingCreatorFees(connection, mint)
+    await poolBuys(mint, [traders[0]], SOL / 20n)
+    const pending = await q.pendingCreatorFees(connection, mint)
+    assert.ok(pending > before, 'creator fees accrued')
+    assert.ok(pending < q.MIN_PULSE_LAMPORTS, `pending ${pending}`)
+    const ixs = await q.buildPulseInstructions({ connection, payer: keeper.publicKey, mint })
+    assert.ok(
+      ixs.some((ix: any) => ix.programId.equals(q.PUMP_AMM_PROGRAM_ID)),
+      'the pool collect leg is included',
+    )
+    await expectFail(send(ixs, [keeper], { cu: 600_000 }), /NothingToPulse/)
   })
 
   test('quantum_burn through the canonical PumpSwap pool (non-canonical pool rejected)', async () => {
@@ -1056,6 +1167,139 @@ describe('quantum_hooks on a local validator with mainnet pump.fun', () => {
     assert.equal(
       await tokenBalance(getAssociatedTokenAddressSync(m.publicKey, launcher.publicKey, true, T22)),
       built.devBuyTokens,
+    )
+  })
+
+  test('legacy SPL Token coin (pump.fun `create`, creator = well): curve pulse and burn, graduation, pool pulse and burn, fusion', async () => {
+    const SPL = TOKEN_PROGRAM_ID
+    const legacyKp = Keypair.generate()
+    const m = legacyKp.publicKey
+    const well = q.wellPda(m)
+    const meta = { name: 'Legacy', symbol: 'LEGACY', uri: 'https://example.invalid/legacy.json' }
+    const built = await q.buildQuantumLaunchInstructions({
+      connection,
+      launcher: launcher.publicKey,
+      mint: m,
+      ...meta,
+      hooks: { ...HOOKS, splits: [{ wallet: splitA.publicKey.toBase58(), bps: 2500 }], lock: null },
+    })
+    await send(built.stages.register, [launcher, legacyKp])
+    // A third-party script can still use pump.fun's legacy `create` (SPL Token mint).
+    const create = await PUMP_SDK.createInstruction({
+      mint: m,
+      ...meta,
+      creator: well,
+      user: launcher.publicKey,
+    })
+    await send([create], [launcher, legacyKp])
+    const mintInfo = await connection.getAccountInfo(m)
+    assert.ok(mintInfo!.owner.equals(SPL), 'legacy create makes an SPL Token mint')
+    assert.ok(q.mintTokenProgram(mintInfo).equals(SPL))
+
+    for (const t of traders) await curveBuy(t, 4, m, SPL)
+    event(
+      await send(await q.buildPulseInstructions({ connection, payer: keeper.publicKey, mint: m }), [
+        keeper,
+      ]),
+      'Pulsed',
+    )
+    let quantum = await q.fetchQuantum(connection, m)
+    assert.ok(quantum.burnReserve > 0n && quantum.fusionReserve > 0n)
+
+    // Curve burn with the coin's own token program (it used to require Token-2022).
+    await waitForChainTime(quantum.lastBurnAt + CONFIG.minActionInterval)
+    const supply0 = await supply(m, SPL)
+    const curveBurn = event(
+      await send(
+        await q.buildBurnInstructions({
+          connection,
+          caller: keeper.publicKey,
+          mint: m,
+          spendLamports: quantum.burnReserve / 2n,
+        }),
+        [keeper],
+      ),
+      'Burned',
+    )
+    assert.equal(curveBurn.venue, 0)
+    assert.ok(curveBurn.tokensBurned > 0n)
+    assert.equal(await supply(m, SPL), supply0 - curveBurn.tokensBurned)
+    assert.equal(await tokenBalance(q.wellTokenAta(m, undefined, SPL), SPL), 0n)
+
+    // Graduation, then collect what the buy-out paid the well on the curve.
+    const buyer = Keypair.generate()
+    await airdrop(buyer.publicKey, 200)
+    await graduate(m, buyer, SPL)
+    if ((await q.pendingCreatorFees(connection, m)) >= q.MIN_PULSE_LAMPORTS)
+      await send(
+        await q.buildPulseInstructions({ connection, payer: keeper.publicKey, mint: m }),
+        [keeper],
+        {
+          cu: 600_000,
+        },
+      )
+
+    // Pool pulse: WSOL unwrapped, ATA rent back to the keeper.
+    await poolBuys(m, traders, 2n * SOL)
+    const pending = await q.pendingCreatorFees(connection, m)
+    const poolPulse = event(
+      await send(
+        await q.buildPulseInstructions({ connection, payer: keeper.publicKey, mint: m }),
+        [keeper],
+        {
+          cu: 600_000,
+        },
+      ),
+      'Pulsed',
+    )
+    assert.ok(poolPulse.unwrapped > 0n)
+    assert.equal(poolPulse.rentRefunded, q.RENT_EXEMPT_TOKEN_ACCOUNT)
+    assert.equal(poolPulse.collected, pending)
+
+    // Pool burn.
+    quantum = await q.fetchQuantum(connection, m)
+    await waitForChainTime(quantum.lastBurnAt + CONFIG.minActionInterval)
+    const supply1 = await supply(m, SPL)
+    const poolBurn = event(
+      await send(
+        await q.buildBurnInstructions({
+          connection,
+          caller: keeper.publicKey,
+          mint: m,
+          spendLamports: quantum.burnReserve / 2n,
+        }),
+        [keeper],
+        { cu: 600_000 },
+      ),
+      'Burned',
+    )
+    assert.equal(poolBurn.venue, 1)
+    assert.equal(await supply(m, SPL), supply1 - poolBurn.tokensBurned)
+
+    // Fusion: base on SPL Token, LP on Token-2022.
+    quantum = await q.fetchQuantum(connection, m)
+    const fused = event(
+      await send(
+        await q.buildFusionInstructions({
+          connection,
+          caller: keeper.publicKey,
+          mint: m,
+          spendLamports: quantum.fusionReserve,
+        }),
+        [keeper],
+        { cu: 800_000 },
+      ),
+      'Fused',
+    )
+    console.log(
+      `    legacy coin: curve burn ${curveBurn.tokensBurned}, pool burn ${poolBurn.tokensBurned}, fusion lp ${fused.lpReceived}`,
+    )
+    assert.ok(fused.lpReceived > 0n && fused.spent > 0n)
+    const lpAta = getAssociatedTokenAddressSync(lpMintPda(canonicalPumpPoolPda(m)), well, true, T22)
+    assert.equal(await tokenBalance(lpAta), fused.lpReceived)
+    assert.equal(
+      (await q.fetchQuantum(connection, m)).fusionReserve,
+      quantum.fusionReserve - fused.spent,
     )
   })
 

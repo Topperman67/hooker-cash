@@ -3,6 +3,7 @@ import { createHash } from 'node:crypto'
 import { Connection, PublicKey } from '@solana/web3.js'
 import bs58 from 'bs58'
 import { PUMP_SDK, bondingCurvePda, canonicalPumpPoolPda } from '#pump-sdk'
+import { PUMP_AMM_SDK } from '@pump-fun/pump-swap-sdk'
 import { getTokenMetadata, TOKEN_2022_PROGRAM_ID } from '@solana/spl-token'
 import { network, priceFromReserves, curveProgress } from '../shared/network.mjs'
 
@@ -95,6 +96,7 @@ function accountKeys(tx) {
 }
 
 const str = (v) => (v === undefined || v === null ? null : v.toString())
+const big = (v) => BigInt(v?.toString() || '0')
 
 export function normalizeCreate(event, { signature, slot }) {
   return {
@@ -119,7 +121,9 @@ export function normalizeCreate(event, { signature, slot }) {
   }
 }
 
-// Normalized trades for one coin from one confirmed transaction.
+// Normalized trades for one coin from one confirmed transaction. `index` is the event's position in
+// the transaction, so trades sort in execution order within a transaction. The coin's CreateEvent
+// and CompleteEvent come back as markers (`side: 'create'` / `'complete'`) without a price.
 export function tradesFrom(tx, { signature, mint, pool }) {
   const trades = []
   extractEvents(tx).forEach(({ name, event }, index) => {
@@ -127,6 +131,7 @@ export function tradesFrom(tx, { signature, mint, pool }) {
       id: `${signature}:${index}`,
       signature,
       slot: tx.slot,
+      index,
       timestamp: Number(event.timestamp) || tx.blockTime || 0,
     }
     if (name === 'TradeEvent' && event.mint.toBase58() === mint) {
@@ -157,9 +162,23 @@ export function tradesFrom(tx, { signature, mint, pool }) {
       event.pool.toBase58() === pool
     ) {
       const buy = name === 'BuyEvent'
+      // PumpSwap events carry the pool reserves from BEFORE the swap (curve TradeEvents carry them
+      // after). Price the trade from the reserves it left behind: the LP fee stays in the pool,
+      // the protocol and creator fees do not count as liquidity.
+      const baseReserves = buy
+        ? big(event.poolBaseTokenReserves) - big(event.baseAmountOut)
+        : big(event.poolBaseTokenReserves) + big(event.baseAmountIn)
+      const lpFee = big(event.lpFee)
       const quoteReserves =
-        BigInt(event.poolQuoteTokenReserves.toString()) +
-        BigInt(event.virtualQuoteReserves?.toString() || '0')
+        (buy
+          ? big(event.poolQuoteTokenReserves) +
+            (event.quoteAmountInWithLpFee
+              ? big(event.quoteAmountInWithLpFee)
+              : big(event.quoteAmountIn) + lpFee)
+          : big(event.poolQuoteTokenReserves) -
+            (event.quoteAmountOutWithoutLpFee
+              ? big(event.quoteAmountOutWithoutLpFee)
+              : big(event.quoteAmountOut) - lpFee)) + big(event.virtualQuoteReserves)
       trades.push({
         ...base,
         venue: 'pool',
@@ -167,11 +186,13 @@ export function tradesFrom(tx, { signature, mint, pool }) {
         trader: event.user.toBase58(),
         solAmount: str(buy ? event.quoteAmountIn : event.quoteAmountOut),
         tokenAmount: str(buy ? event.baseAmountOut : event.baseAmountIn),
-        price: priceFromReserves(quoteReserves, event.poolBaseTokenReserves),
+        price: priceFromReserves(quoteReserves, baseReserves),
         creatorFee: str(event.coinCreatorFee),
       })
     } else if (name === 'CompleteEvent' && event.mint.toBase58() === mint) {
       trades.push({ ...base, venue: 'curve', side: 'complete' })
+    } else if (name === 'CreateEvent' && event.mint.toBase58() === mint) {
+      trades.push({ ...base, venue: 'curve', side: 'create', createdAt: Number(event.timestamp) })
     }
   })
   return trades
@@ -179,90 +200,192 @@ export function tradesFrom(tx, { signature, mint, pool }) {
 
 // Raw JSON-RPC: mainnet carries version-1 transactions that web3.js v1 cannot deserialize, and
 // the indexer only needs logs, inner instructions and account keys from the JSON encoding.
-// Missing transactions (not yet visible to this RPC node) are returned in `missing` so callers
-// never advance a cursor past them.
 const rateLimited = (status, error) =>
   status === 429 || /too many requests|rate limit/i.test(error?.message || '')
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const rpcError = (message, status, code) => Object.assign(Error(message), { status, code })
 
-export async function fetchTransactions(connection, signatures) {
-  // The free public endpoint throttles getTransaction hard; a provider endpoint takes batches.
-  const publicRpc = connection.rpcEndpoint.includes('api.mainnet-beta.solana.com')
-  const chunk = publicRpc ? 2 : 10
-  const out = []
-  for (let i = 0; i < signatures.length; i += chunk) {
-    const batch = signatures.slice(i, i + chunk)
-    const body = JSON.stringify(
-      batch.map((signature, id) => ({
-        jsonrpc: '2.0',
-        id,
-        method: 'getTransaction',
-        params: [
-          signature,
-          { encoding: 'json', maxSupportedTransactionVersion: 1, commitment: 'confirmed' },
-        ],
-      })),
-    )
-    let results
-    for (let attempt = 0; ; attempt++) {
-      const response = await fetch(connection.rpcEndpoint, {
+// Largest getTransaction batch per endpoint. The free public endpoint throttles hard and providers
+// take batches, but some cap them (PublicNode allows one call per batch) or refuse them: the first
+// refusal drops that endpoint to single requests for the life of the process.
+const BATCH = Math.max(1, Math.floor(Number(process.env.QUANTPAD_RPC_BATCH) || 10))
+const batchLimits = new Map()
+const batchSize = (endpoint) =>
+  batchLimits.get(endpoint) || (endpoint.includes('api.mainnet-beta.solana.com') ? 2 : BATCH)
+
+// One request for `batch`, retried with backoff (and Retry-After) while rate limited, but never past
+// `deadline`. A single signature goes out as a plain request, so endpoints without batches work.
+async function requestTransactions(endpoint, batch, deadline) {
+  const calls = batch.map((signature, id) => ({
+    jsonrpc: '2.0',
+    id,
+    method: 'getTransaction',
+    params: [
+      signature,
+      { encoding: 'json', maxSupportedTransactionVersion: 1, commitment: 'confirmed' },
+    ],
+  }))
+  const body = JSON.stringify(calls.length === 1 ? calls[0] : calls)
+  for (let attempt = 0; ; attempt++) {
+    let response
+    try {
+      response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body,
-        signal: AbortSignal.timeout(20000),
+        signal: AbortSignal.timeout(Math.max(2000, Math.min(20000, deadline - Date.now()))),
       })
-      const parsed =
-        response.ok || response.status === 429 ? await response.json().catch(() => null) : null
-      const items = Array.isArray(parsed) ? parsed : parsed ? [parsed] : []
-      const limited =
-        rateLimited(response.status, null) || items.some((x) => rateLimited(0, x?.error))
-      if (!limited && response.ok) {
-        results = items
-        break
-      }
-      if (!limited || attempt >= 5)
-        throw Object.assign(
-          Error(
-            limited
-              ? 'Solana RPC is rate limiting requests.'
-              : `Solana RPC returned ${response.status}.`,
-          ),
-          { status: 502 },
-        )
-      await sleep(800 * 2 ** attempt)
+    } catch {
+      throw rpcError('Solana RPC did not respond. Try again shortly.', 502, 'rpc_unavailable')
     }
-    for (const item of results.sort((a, b) => a.id - b.id)) {
+    const parsed = await response.json().catch(() => null)
+    const items = Array.isArray(parsed) ? parsed : parsed ? [parsed] : []
+    if (!(rateLimited(response.status, null) || items.some((x) => rateLimited(0, x?.error)))) {
+      if (
+        calls.length > 1 &&
+        (response.status === 400 ||
+          response.status === 413 ||
+          (response.ok && !Array.isArray(parsed)) ||
+          items.some((x) => /batch/i.test(x?.error?.message || '')))
+      )
+        throw Object.assign(rpcError('Solana RPC refused a batch.', 502, 'rpc_batch'), {
+          batchRefused: true,
+        })
+      if (!response.ok)
+        throw rpcError(`Solana RPC returned ${response.status}.`, 502, 'rpc_unavailable')
+      return items
+    }
+    const retryAfter = Number(response.headers.get('retry-after')) * 1000
+    const wait = Math.min(20000, Math.max(800 * 2 ** attempt, retryAfter || 0))
+    if (attempt >= 5 || Date.now() + wait > deadline)
+      throw rpcError(
+        'Solana RPC is rate limiting requests. Try again shortly.',
+        429,
+        'rpc_rate_limited',
+      )
+    await sleep(wait)
+  }
+}
+
+// getTransaction for each signature, in order, as { signature, tx }. `tx` is null when this RPC
+// node cannot see the transaction yet; failed transactions are left out. Callers advance cursors
+// only over the entries before the first null. When the RPC keeps rate limiting, an item errors,
+// or `deadline` (ms since epoch) passes, reading stops and what was read so far comes back with
+// `partial: true` (and `error`), so a throttled pass still makes progress. It throws only when
+// nothing at all could be read.
+export async function fetchTransactions(connection, signatures, { deadline = Infinity } = {}) {
+  const endpoint = connection.rpcEndpoint
+  const publicRpc = endpoint.includes('api.mainnet-beta.solana.com')
+  const out = []
+  out.partial = false
+  const stop = (error) => {
+    if (!out.length && error) throw error
+    out.partial = true
+    if (error) out.error = error
+    return out
+  }
+  for (let i = 0; i < signatures.length;) {
+    if (Date.now() >= deadline) return stop(null)
+    const batch = signatures.slice(i, i + batchSize(endpoint))
+    let items
+    try {
+      items = await requestTransactions(endpoint, batch, deadline)
+    } catch (error) {
+      if (!error.batchRefused) return stop(error)
+      batchLimits.set(endpoint, 1)
+      continue
+    }
+    const byId = new Map(items.map((item) => [item?.id, item]))
+    for (let k = 0; k < batch.length; k++) {
+      const item = byId.get(k)
       if (item?.error)
-        throw Object.assign(Error(item.error.message || 'RPC error'), { status: 502 })
-      const tx = item?.result
-      if (!tx) out.push({ signature: batch[item.id], tx: null })
-      else if (!tx.meta?.err) out.push({ signature: batch[item.id], tx })
+        return stop(rpcError(item.error.message || 'Solana RPC error.', 502, 'rpc_error'))
+      const tx = item?.result || null
+      if (!tx) out.push({ signature: batch[k], tx: null })
+      else if (!tx.meta?.err) out.push({ signature: batch[k], tx })
     }
-    if (publicRpc) await sleep(350)
+    i += batch.length
+    if (publicRpc && i < signatures.length) await sleep(350)
   }
   return out
 }
 
-// New signatures for an address since `until` (newest first), bounded to `max`.
-export async function newSignatures(connection, address, until, max = 600) {
-  const out = []
+const PAGE = 1000 // getSignaturesForAddress maximum
+const succeeded = (s) => !s.err
+
+/**
+ * Unread signatures of `address`, oldest first, without ever skipping any.
+ *
+ * getSignaturesForAddress pages newest-first from the tip. When more than a page accumulated after
+ * `cursor` (the newest signature already read), this pages back toward it with `before`, at most
+ * `pages` requests per call, and returns an `anchor` to persist: the next call resumes from the
+ * anchor instead of the tip. Once the cursor is reached, `window` holds the oldest page of the
+ * backlog and `anchor` the boundary above it, so later calls read the rest of that window with one
+ * request each until it drains, then return to the tip.
+ *
+ * Without a cursor, `fromStart` pages back to the address's first signature (complete history).
+ * Otherwise a first read takes the newest `initial` signatures, and `historyFrom` says where the
+ * history starts: 0 when complete, else the block time of the oldest signature read.
+ *
+ * Returns { window, anchor, reached, historyFrom? }; `reached` is false while still paging back.
+ */
+export async function pendingSignatures(
+  connection,
+  address,
+  { cursor = null, anchor = null, fromStart = false, pages = 3, initial = 200 } = {},
+) {
+  const key = new PublicKey(address)
+  const list = (options) => connection.getSignaturesForAddress(key, options)
+  if (!cursor && !anchor && !fromStart) {
+    const page = await list({ limit: initial })
+    return {
+      window: page.filter(succeeded).reverse(),
+      anchor: null,
+      reached: true,
+      historyFrom: page.length < initial ? 0 : (page.at(-1).blockTime ?? null),
+    }
+  }
+  const found = (page, above) => ({
+    window: page.filter(succeeded).reverse(),
+    anchor: above || null,
+    reached: true,
+    ...(cursor ? {} : { historyFrom: 0 }),
+  })
+  let before = anchor || undefined
+  let previous = null // the last full page read by this call, and the boundary above it
+  for (let n = 0; n < Math.max(2, pages); n++) {
+    const page = await list({ until: cursor || undefined, before, limit: PAGE })
+    if (page.length >= PAGE) {
+      previous = { page, above: before }
+      before = page.at(-1).signature
+      continue
+    }
+    if (page.length) return found(page, before)
+    if (previous) return found(previous.page, previous.above)
+    if (!before) return found([], null)
+    before = undefined // nothing left between the cursor and the anchor: back to the tip
+  }
+  // Resume above the last full page, so it is read again rather than assumed.
+  return { window: [], anchor: previous?.above || null, reached: false }
+}
+
+// The first successful signature of `address` (for a bonding curve, the coin's create transaction),
+// paging back at most `pages` pages: { signature } (null when there is no history yet), or
+// { signature: null, tooDeep: true } when the history is longer than that.
+export async function firstSignature(connection, address, { pages = 5 } = {}) {
+  const key = new PublicKey(address)
   let before
-  while (out.length < max) {
-    const page = await connection.getSignaturesForAddress(new PublicKey(address), {
-      until: until || undefined,
-      before,
-      limit: Math.min(200, max - out.length),
-    })
-    out.push(...page.filter((s) => !s.err))
-    if (page.length < Math.min(200, max - out.length + page.length)) break
+  let oldest = null
+  for (let n = 0; n < pages; n++) {
+    const page = await connection.getSignaturesForAddress(key, { before, limit: PAGE })
+    oldest = page.filter(succeeded).at(-1)?.signature || oldest
+    if (page.length < PAGE) return { signature: oldest }
     before = page.at(-1).signature
   }
-  return out
+  return { signature: null, tooDeep: true }
 }
 
-export async function readCurve(connection, mint) {
-  const info = await connection.getAccountInfo(bondingCurvePda(new PublicKey(mint)))
-  if (!info) return null
+function decodeCurve(info) {
   const curve = PUMP_SDK.decodeBondingCurveNullable(info)
   if (!curve) return null
   return {
@@ -277,6 +400,53 @@ export async function readCurve(connection, mint) {
     totalSupply: curve.tokenTotalSupply.toString(),
     price: priceFromReserves(curve.virtualQuoteReserves, curve.virtualTokenReserves),
     progress: curve.complete ? 100 : curveProgress(curve.realTokenReserves),
+  }
+}
+
+export async function readCurve(connection, mint) {
+  const info = await connection.getAccountInfo(bondingCurvePda(new PublicKey(mint)))
+  return info ? decodeCurve(info) : null
+}
+
+// SPL and Token-2022 share the base layouts: a mint's supply is at byte 36, an account's amount at 64.
+const u64At = (data, offset) => Buffer.from(data).readBigUInt64LE(offset)
+
+/**
+ * Live market state in one or two account reads: the bonding curve and, once it has completed, the
+ * canonical PumpSwap pool priced from its vaults (fee buckets excluded, virtual quote included).
+ * With `supply`, also the mint's current raw supply: mayhem coins mint 2B, and burns reduce it.
+ */
+export async function readMarket(connection, mint, { supply = true } = {}) {
+  const key = new PublicKey(mint)
+  const poolKey = canonicalPumpPoolPda(key)
+  const [curveInfo, poolInfo, mintInfo] = await connection.getMultipleAccountsInfo(
+    [bondingCurvePda(key), poolKey, ...(supply ? [key] : [])],
+    'confirmed',
+  )
+  const curve = curveInfo ? decodeCurve(curveInfo) : null
+  let pool = null
+  if (poolInfo && (!curve || curve.complete)) {
+    const decoded = PUMP_AMM_SDK.decodePool(poolInfo)
+    const [baseInfo, quoteInfo] = await connection.getMultipleAccountsInfo(
+      [decoded.poolBaseTokenAccount, decoded.poolQuoteTokenAccount],
+      'confirmed',
+    )
+    if (baseInfo && quoteInfo) {
+      const base = u64At(baseInfo.data, 64)
+      const real = u64At(quoteInfo.data, 64) - big(decoded.protocolFees) - big(decoded.creatorFees)
+      const quote = (real > 0n ? real : 0n) + big(decoded.virtualQuoteReserves)
+      pool = {
+        address: poolKey.toBase58(),
+        baseReserves: base.toString(),
+        quoteReserves: quote.toString(),
+        price: priceFromReserves(quote, base),
+      }
+    }
+  }
+  return {
+    curve,
+    pool,
+    supply: mintInfo?.data?.length >= 44 ? u64At(mintInfo.data, 36).toString() : null,
   }
 }
 

@@ -11,14 +11,31 @@ import { MODULES, PRESETS, MAX_SPLITS, setAllocation } from '../lib/hooks.js'
 import { bps, formatUnits, parseUnits, sol, toSol } from '../lib/format.js'
 import { friendlyWalletError, packTransactions } from '../lib/solana.js'
 import {
+  assertQuantumOpen,
   devBuyQuote,
   grindMint,
-  launchInstructions,
+  launchTooLargeError,
   publishMetadata,
+  reconcileLaunch,
+  remainingLaunchGroups,
   uploadArtwork,
   MINT_SUFFIX,
 } from '../lib/launch.js'
-import { isAddress } from '../../shared/network.mjs'
+import {
+  createSignature,
+  hasProgress,
+  launchComplete,
+  launchSnapshot,
+  needsRegister,
+  newJob,
+  pruneJobs,
+  recordConfirmed,
+  recordPending,
+  registerOnce,
+  saveJob,
+  stagesPerTransaction,
+} from '../lib/launchPlan.js'
+import { explorer, isAddress } from '../../shared/network.mjs'
 import Glass from '../components/Glass.jsx'
 
 const DRAFT_KEY = 'quantpad:launch-draft:v1'
@@ -38,6 +55,33 @@ const EMPTY = {
   slippage: 2,
 }
 const bytes = (s) => new TextEncoder().encode(s).length
+const storage = () => {
+  try {
+    return localStorage
+  } catch {
+    return null
+  }
+}
+
+// Field error → the control that should take focus and carry aria-describedby.
+const ERROR_TARGETS = [
+  ['name', 'coin-name'],
+  ['symbol', 'coin-symbol'],
+  ['image', 'coin-art'],
+  ['description', 'coin-description'],
+  ['website', 'coin-website'],
+  ['twitter', 'coin-twitter'],
+  ['telegram', 'coin-telegram'],
+  ['splits', 'split-wallet-0'],
+  ['lock', 'lock-share'],
+  ['devBuy', 'dev-buy'],
+]
+const errorId = (key) => `${key}-error`
+// Props that tie a control to its error message.
+const invalid = (errors, key) =>
+  errors[key]
+    ? { 'aria-invalid': true, 'aria-describedby': errorId(key) }
+    : { 'aria-invalid': false }
 
 function loadDraft() {
   try {
@@ -64,6 +108,7 @@ export default function LaunchPage() {
   const wantsQuantum = draft.mode === 'quantum'
   const quantumMode = wantsQuantum && quantum.available
   const quantumBlocked = wantsQuantum && !quantum.available
+  const quantumPaused = quantumBlocked && !!quantum.paused
   const set = (patch) => setDraft((d) => ({ ...d, ...patch }))
   useEffect(() => {
     try {
@@ -103,8 +148,12 @@ export default function LaunchPage() {
     if (!draft.image) e.image = 'Add artwork for your coin.'
     for (const key of ['website', 'twitter', 'telegram'])
       if (draft[key] && !/^https?:\/\/\S+$/i.test(draft[key]))
-        e[key] = 'Use a full link starting with https://'
+        e[key] = 'Use a full link starting with https:// or http://'
     if (devLamports === null) e.devBuy = 'Enter a SOL amount, or 0 to skip the dev buy.'
+    // create_v2 + dev buy only fit in one transaction with the lookup table, and they are never split.
+    else if (devLamports > 0n && !lookupTable)
+      e.devBuy =
+        'A dev buy must land in the same transaction as the create, which needs the Quant Pad lookup table. This site has none configured, so set the dev buy to 0.'
     if (quantumMode) {
       draft.splits.forEach((s, i) => {
         if (!isAddress(s.wallet)) e[`split-${i}`] = 'Enter a valid Solana wallet address.'
@@ -120,16 +169,49 @@ export default function LaunchPage() {
         if (Number(draft.lock.durationDays) > 1460) e.lock = 'Vesting can last at most four years.'
       }
     }
+    // The dev buy may cost up to its amount plus the slippage limit.
+    const devBuyCap = devLamports
+      ? devLamports + (devLamports * BigInt(Math.round(draft.slippage * 100))) / 10_000n
+      : 0n
     if (
+      !e.devBuy &&
       connected &&
       balance != null &&
       devLamports != null &&
-      devLamports + fee + 40_000_000n > balance
+      devBuyCap + fee + 40_000_000n > balance
     )
-      e.devBuy = 'Your wallet needs the dev buy plus about 0.04 SOL for fees and account rent.'
+      e.devBuy =
+        'Your wallet needs the dev buy, its slippage limit and about 0.04 SOL for fees and account rent.'
     setErrors(e)
-    return !Object.keys(e).length
+    return e
   }
+
+  // After a failed submit, move focus to the first invalid field, in form order.
+  function focusFirstError(e) {
+    const order = [
+      ...ERROR_TARGETS.slice(0, 7),
+      ...draft.splits.map((_, i) => [`split-${i}`, `split-wallet-${i}`]),
+      ...ERROR_TARGETS.slice(7),
+    ]
+    const id = order.find(([key]) => e[key])?.[1]
+    if (id) document.getElementById(id)?.focus()
+  }
+
+  const launchHooks = () =>
+    quantumMode
+      ? {
+          ...draft.hooks,
+          splits: draft.splits.map((s) => ({ wallet: s.wallet, bps: Number(s.bps) })),
+          lock:
+            draft.lock.enabled && devLamports
+              ? {
+                  bps: Number(draft.lock.bps),
+                  cliffSecs: Math.round(Number(draft.lock.cliffDays) * 86400),
+                  durationSecs: Math.round(Number(draft.lock.durationDays) * 86400),
+                }
+              : null,
+        }
+      : null
 
   async function onImage(file) {
     if (!file) return
@@ -144,92 +226,145 @@ export default function LaunchPage() {
     }
   }
 
+  // A launch is a job: inputs frozen at the first submit, plus the stages that landed (persisted
+  // per mint). "Finish the remaining steps" resumes the same job and never reads the form again.
   async function launch(resume = false) {
     if (!connected) return openDialog()
-    if (!resume && !validate()) return
+    if (!resume) {
+      const found = validate()
+      if (Object.keys(found).length) return focusFirstError(found)
+    }
     setFailure(null)
+    let job = resume ? pendingLaunch.current : null
     try {
-      let job = resume ? pendingLaunch.current : null
       if (!job) {
+        // check before publishing anything: a paused program would strand the metadata
+        if (quantumMode) {
+          setProgress('Checking that Quantum launches are open')
+          await assertQuantumOpen()
+        }
         setProgress('Publishing metadata')
         const uri = await publishMetadata(draft, draft.image)
         setProgress(`Finding a mint address ending in ${MINT_SUFFIX}`)
         const { keypair } = await grindMint()
-        job = { uri, keypair, done: 0 }
+        job = newJob({
+          mint: keypair.publicKey.toBase58(),
+          keypair,
+          snapshot: launchSnapshot({
+            launcher: address,
+            name: draft.name.trim(),
+            symbol: draft.symbol.trim(),
+            uri,
+            quantum: quantumMode,
+            hooks: launchHooks(),
+            devBuyLamports: devLamports || 0n,
+            slippagePct: draft.slippage,
+            platform,
+            lookupTable,
+          }),
+        })
         pendingLaunch.current = job
+      } else if (job.snapshot.launcher !== address) {
+        throw Object.assign(
+          Error('Switch back to the wallet that started this launch to finish it.'),
+          { friendly: true },
+        )
       }
-      setProgress('Building transactions')
-      const hooks = quantumMode
-        ? {
-            ...draft.hooks,
-            splits: draft.splits.map((s) => ({ wallet: s.wallet, bps: Number(s.bps) })),
-            lock:
-              draft.lock.enabled && devLamports
-                ? {
-                    bps: Number(draft.lock.bps),
-                    cliffSecs: Math.round(Number(draft.lock.cliffDays) * 86400),
-                    durationSecs: Math.round(Number(draft.lock.durationDays) * 86400),
-                  }
-                : null,
-          }
-        : null
-      const { groups } = await launchInstructions({
-        launcher: address,
-        mint: job.keypair.publicKey,
-        name: draft.name.trim(),
-        symbol: draft.symbol.trim(),
-        uri: job.uri,
-        quantum: quantumMode,
-        hooks,
-        devBuyLamports: devLamports || 0n,
-        slippagePct: draft.slippage,
-        platform,
-      })
-      const { transactions, lastValidBlockHeight } = await packTransactions(address, groups, {
-        units: 500_000,
-        lookupTableAddresses: lookupTable ? [lookupTable] : [],
-      })
-      const remaining = transactions.slice(job.done)
-      const signatures = await sendTransactions(remaining, {
-        lastValidBlockHeight,
-        signers: [job.keypair],
-        onStatus: ({ phase, index, total }) =>
-          setProgress(
-            phase === 'sign'
-              ? `Approve ${total > 1 ? `${total} transactions` : 'the transaction'} in your wallet`
-              : `${phase === 'send' ? 'Sending' : 'Confirming'} ${total > 1 ? `${index + 1} of ${total}` : 'launch'}`,
-          ),
-      }).catch((err) => {
-        job.done += err.completed?.length || 0
-        throw err
-      })
-      const mint = job.keypair.publicKey.toBase58()
-      setProgress('Indexing your coin')
-      const createSignature = signatures.at(-1)
-      let registered = false
-      for (const signature of [...signatures].reverse()) {
+      if (resume) {
+        setProgress('Checking what already landed')
+        await reconcileLaunch(job)
+        saveJob(storage(), job)
+      }
+      // register fails while Quantum Hooks is paused, and the status this page loaded can be a
+      // minute old: read the config right before asking the wallet to sign.
+      if (needsRegister(job)) {
+        setProgress('Checking that Quantum launches are open')
+        await assertQuantumOpen()
+      }
+      // One pass for a normal launch. A resume after the coin was created may take one pass for a
+      // dev buy rebuilt from the live curve and one for a lock sized from the tokens received.
+      for (let pass = 0; pass < 3 && !launchComplete(job); pass++) {
+        setProgress('Building transactions')
+        const plan = await remainingLaunchGroups(job)
+        if (!plan.groups.length) break
+        const { transactions, groupIndexes, lastValidBlockHeight } = await packTransactions(
+          address,
+          plan.groups,
+          {
+            units: 500_000,
+            lookupTableAddresses: job.snapshot.lookupTable ? [job.snapshot.lookupTable] : [],
+            requireLookupTables: true,
+          },
+        ).catch((e) => {
+          throw launchTooLargeError(e, { devBuy: job.snapshot.devBuyLamports > 0n })
+        })
+        const txStages = stagesPerTransaction(groupIndexes, plan.stages)
         try {
-          await api('/api/launches', { signature })
-          registered = true
-          break
-        } catch {}
+          const signatures = await sendTransactions(transactions, {
+            lastValidBlockHeight,
+            signers: job.keypair ? [job.keypair] : [],
+            onStatus: ({ phase, index, total }) =>
+              setProgress(
+                phase === 'sign'
+                  ? `Approve ${total > 1 ? `${total} transactions` : 'the transaction'} in your wallet`
+                  : `${phase === 'send' ? 'Sending' : 'Confirming'} ${total > 1 ? `${index + 1} of ${total}` : 'launch'}`,
+              ),
+          })
+          recordConfirmed(job, txStages, signatures)
+        } catch (err) {
+          recordConfirmed(job, txStages, err.completed || [])
+          recordPending(job, txStages, err)
+          throw err
+        } finally {
+          saveJob(storage(), job)
+        }
       }
-      if (!registered) await api('/api/coins/track', { mint }).catch(() => {})
+      if (!launchComplete(job))
+        throw Object.assign(Error('Some launch steps did not complete. Finish them to go live.'), {
+          friendly: true,
+        })
+      setProgress('Indexing your coin')
+      const registration = await registerOnce(job, { post: api, storage: storage() })
       pendingLaunch.current = null
-      localStorage.removeItem(DRAFT_KEY)
+      try {
+        localStorage.removeItem(DRAFT_KEY)
+      } catch {}
       toast({
-        title: `${draft.symbol.trim()} is live`,
-        body: 'Your coin is on pump.fun.',
+        title: `${job.snapshot.symbol} is live`,
+        body:
+          registration.status === 'failed'
+            ? 'Your coin is on pump.fun. Quant Pad is still indexing it.'
+            : registration.status === 'capped'
+              ? 'Your coin is on pump.fun. Quant Pad is not listing new launches right now.'
+              : 'Your coin is on pump.fun.',
         tone: 'success',
-        signature: createSignature,
+        signature: createSignature(job) || undefined,
       })
-      navigate(`/coin/${mint}`)
+      navigate(`/coin/${job.mint}`)
     } catch (err) {
-      setFailure({ message: friendlyWalletError(err), partial: !!pendingLaunch.current?.done })
+      // The coin exists: register it now (with retries) even though a later step failed.
+      if (job?.done.launch && !job.registered)
+        registerOnce(job, { post: api, storage: storage() }).catch(() => {})
+      setFailure({
+        message: friendlyWalletError(err),
+        // Resumable: something landed or may have, or a retryable error (the lookup table did not
+        // load) before anything was sent, which the same job can simply retry.
+        partial: hasProgress(job) || (!!job && !!err?.retryable),
+        created: !!job?.done.launch,
+        progressed: hasProgress(job),
+        signature: err?.unknown ? err.failedSignature || err.signature : null,
+      })
     } finally {
       setProgress(null)
     }
   }
+
+  function discardLaunch() {
+    pendingLaunch.current = null
+    setFailure(null)
+  }
+
+  useEffect(() => pruneJobs(storage()), [])
 
   const preview = useMemo(
     () => ({ name: draft.name || 'Your coin', symbol: draft.symbol || 'TICKER' }),
@@ -254,10 +389,12 @@ export default function LaunchPage() {
             </h2>
             <div className="identity-row">
               <button
+                id="coin-art"
                 type="button"
                 className={`art-drop ${errors.image ? 'art-drop-error' : ''}`}
                 onClick={() => fileInput.current?.click()}
                 aria-label={draft.image ? 'Replace artwork' : 'Upload artwork'}
+                {...invalid(errors, 'image')}
               >
                 {uploading ? (
                   <Spinner />
@@ -282,10 +419,14 @@ export default function LaunchPage() {
                     className="input"
                     value={draft.name}
                     maxLength={40}
-                    aria-invalid={!!errors.name}
+                    {...invalid(errors, 'name')}
                     onChange={(e) => set({ name: e.target.value })}
                   />
-                  {errors.name && <span className="error-text">{errors.name}</span>}
+                  {errors.name && (
+                    <span className="error-text" id={errorId('name')}>
+                      {errors.name}
+                    </span>
+                  )}
                 </div>
                 <div className="field">
                   <label htmlFor="coin-symbol">Ticker</label>
@@ -294,16 +435,24 @@ export default function LaunchPage() {
                     className="input"
                     value={draft.symbol}
                     maxLength={12}
-                    aria-invalid={!!errors.symbol}
+                    {...invalid(errors, 'symbol')}
                     onChange={(e) =>
                       set({ symbol: e.target.value.replace(/^\$/, '').toUpperCase() })
                     }
                   />
-                  {errors.symbol && <span className="error-text">{errors.symbol}</span>}
+                  {errors.symbol && (
+                    <span className="error-text" id={errorId('symbol')}>
+                      {errors.symbol}
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
-            {errors.image && <p className="error-text">{errors.image}</p>}
+            {errors.image && (
+              <p className="error-text" id={errorId('image')}>
+                {errors.image}
+              </p>
+            )}
             <div className="field" style={{ marginTop: 16 }}>
               <label htmlFor="coin-description">Description</label>
               <textarea
@@ -311,9 +460,15 @@ export default function LaunchPage() {
                 className="textarea"
                 value={draft.description}
                 maxLength={500}
+                {...invalid(errors, 'description')}
                 onChange={(e) => set({ description: e.target.value })}
               />
               <span className="hint">{draft.description.length}/500</span>
+              {errors.description && (
+                <span className="error-text" id={errorId('description')}>
+                  {errors.description}
+                </span>
+              )}
             </div>
             <div className="links-row">
               {[
@@ -328,10 +483,14 @@ export default function LaunchPage() {
                     className="input"
                     placeholder="https://"
                     value={draft[key]}
-                    aria-invalid={!!errors[key]}
+                    {...invalid(errors, key)}
                     onChange={(e) => set({ [key]: e.target.value.trim() })}
                   />
-                  {errors[key] && <span className="error-text">{errors[key]}</span>}
+                  {errors[key] && (
+                    <span className="error-text" id={errorId(key)}>
+                      {errors[key]}
+                    </span>
+                  )}
                 </div>
               ))}
             </div>
@@ -352,8 +511,9 @@ export default function LaunchPage() {
             />
             {quantumBlocked && (
               <p className="notice notice-warn" style={{ marginTop: 14 }}>
-                Quantum Hooks are not live on mainnet yet. You can design your hooks now; to launch
-                today, switch to a standard pump.fun launch.
+                {quantumPaused
+                  ? 'Quantum launches are paused right now. You can design your hooks now; to launch today, switch to a standard pump.fun launch.'
+                  : 'Quantum Hooks are not live on mainnet yet. You can design your hooks now; to launch today, switch to a standard pump.fun launch.'}
               </p>
             )}
             {wantsQuantum ? (
@@ -394,6 +554,7 @@ export default function LaunchPage() {
                           max={10000}
                           step={100}
                           value={value}
+                          aria-valuetext={bps(value)}
                           style={{ '--p': `${value / 100}%` }}
                           onChange={(e) =>
                             set({ hooks: setAllocation(draft.hooks, m.key, e.target.value) })
@@ -413,11 +574,12 @@ export default function LaunchPage() {
                   {draft.splits.map((s, i) => (
                     <div className="split-row" key={i}>
                       <input
+                        id={`split-wallet-${i}`}
                         className="input"
                         placeholder="Wallet address"
                         value={s.wallet}
                         aria-label={`Split wallet ${i + 1}`}
-                        aria-invalid={!!errors[`split-${i}`]}
+                        {...invalid(errors, `split-${i}`)}
                         onChange={(e) =>
                           set({
                             splits: draft.splits.map((x, j) =>
@@ -431,6 +593,7 @@ export default function LaunchPage() {
                           className="input num"
                           inputMode="decimal"
                           aria-label={`Share for wallet ${i + 1}`}
+                          {...invalid(errors, 'splits')}
                           value={Number(s.bps) / 100}
                           onChange={(e) => {
                             const v = Math.max(0, Math.min(100, Number(e.target.value) || 0))
@@ -452,11 +615,17 @@ export default function LaunchPage() {
                         <Trash2 size={16} />
                       </button>
                       {errors[`split-${i}`] && (
-                        <span className="error-text split-error">{errors[`split-${i}`]}</span>
+                        <span className="error-text split-error" id={errorId(`split-${i}`)}>
+                          {errors[`split-${i}`]}
+                        </span>
                       )}
                     </div>
                   ))}
-                  {errors.splits && <p className="error-text">{errors.splits}</p>}
+                  {errors.splits && (
+                    <p className="error-text" id={errorId('splits')}>
+                      {errors.splits}
+                    </p>
+                  )}
                   {draft.splits.length < MAX_SPLITS && (
                     <button
                       type="button"
@@ -487,6 +656,7 @@ export default function LaunchPage() {
                             id="lock-share"
                             className="input num"
                             inputMode="decimal"
+                            {...invalid(errors, 'lock')}
                             value={Number(draft.lock.bps) / 100}
                             onChange={(e) =>
                               set({
@@ -509,6 +679,7 @@ export default function LaunchPage() {
                             id="lock-cliff"
                             className="input num"
                             inputMode="numeric"
+                            {...invalid(errors, 'lock')}
                             value={draft.lock.cliffDays}
                             onChange={(e) =>
                               set({
@@ -529,6 +700,7 @@ export default function LaunchPage() {
                             id="lock-duration"
                             className="input num"
                             inputMode="numeric"
+                            {...invalid(errors, 'lock')}
                             value={draft.lock.durationDays}
                             onChange={(e) =>
                               set({
@@ -544,7 +716,11 @@ export default function LaunchPage() {
                       </div>
                     </div>
                   )}
-                  {errors.lock && <p className="error-text">{errors.lock}</p>}
+                  {errors.lock && (
+                    <p className="error-text" id={errorId('lock')}>
+                      {errors.lock}
+                    </p>
+                  )}
                 </div>
               </>
             ) : (
@@ -571,7 +747,7 @@ export default function LaunchPage() {
                   className="input num"
                   inputMode="decimal"
                   value={draft.devBuy}
-                  aria-invalid={!!errors.devBuy}
+                  {...invalid(errors, 'devBuy')}
                   onChange={(e) => set({ devBuy: e.target.value.replace(',', '.') })}
                 />
                 <span className="affix">SOL</span>
@@ -588,7 +764,11 @@ export default function LaunchPage() {
                   </button>
                 ))}
               </div>
-              {errors.devBuy && <span className="error-text">{errors.devBuy}</span>}
+              {errors.devBuy && (
+                <span className="error-text" id={errorId('devBuy')}>
+                  {errors.devBuy}
+                </span>
+              )}
               {devTokens > 0n && (
                 <span className="hint">
                   About {formatUnits(devTokens, 6, 0)} {preview.symbol} ({supplyPct.toFixed(2)}% of
@@ -660,14 +840,33 @@ export default function LaunchPage() {
             {failure && (
               <div className="notice notice-error" role="alert">
                 <p>{failure.message}</p>
+                {failure.signature && (
+                  <p>
+                    <a href={explorer.tx(failure.signature)} target="_blank" rel="noreferrer">
+                      Check the transaction on Solscan
+                    </a>
+                  </p>
+                )}
                 {failure.partial && (
-                  <button
-                    className="btn btn-sm"
-                    style={{ marginTop: 10 }}
-                    onClick={() => launch(true)}
-                  >
-                    Finish the remaining steps
-                  </button>
+                  <>
+                    <p className="faint">
+                      {failure.created
+                        ? 'Your coin is already on pump.fun. '
+                        : failure.progressed
+                          ? 'Part of this launch may already be on-chain. '
+                          : ''}
+                      Finishing uses the settings you started it with; edits to the form apply only
+                      to a new launch.
+                    </p>
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 10 }}>
+                      <button className="btn btn-sm" onClick={() => launch(true)}>
+                        Finish the remaining steps
+                      </button>
+                      <button className="btn btn-sm btn-ghost" onClick={discardLaunch}>
+                        Discard
+                      </button>
+                    </div>
+                  </>
                 )}
               </div>
             )}
@@ -683,7 +882,11 @@ export default function LaunchPage() {
               ) : !connected ? (
                 'Connect wallet to launch'
               ) : quantumBlocked ? (
-                'Quantum Hooks are not live yet'
+                quantumPaused ? (
+                  'Quantum launches are paused'
+                ) : (
+                  'Quantum Hooks are not live yet'
+                )
               ) : (
                 `Launch ${draft.symbol ? '$' + draft.symbol : 'coin'}`
               )}

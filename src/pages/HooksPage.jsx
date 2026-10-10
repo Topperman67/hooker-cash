@@ -114,7 +114,7 @@ export default function HooksPage() {
           <li>The Quantum Hooks program has not been independently audited yet.</li>
         </ul>
         {quantum.programId && (
-          <p className="faint">
+          <p className="muted">
             Program:{' '}
             <a
               href={explorer.account(quantum.programId)}

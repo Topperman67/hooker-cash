@@ -86,6 +86,24 @@ export async function stubApi(
   })
 }
 
+// Indexed trades for the test coin: a full trades table is wider than a phone screen.
+export async function stubTrades(page, count = 20) {
+  const now = Math.floor(Date.now() / 1000)
+  const items = Array.from({ length: count }, (_, i) => ({
+    id: `t${i}`,
+    timestamp: now - i * 97,
+    side: i % 3 ? 'buy' : 'sell',
+    solAmount: String(1_234_567_890 + i * 10_000_000),
+    tokenAmount: String(12_345_678_901_234 + i),
+    price: 0.0000000412 + i * 1e-11,
+    trader: WALLET_ADDRESS,
+    signature: `5${'x'.repeat(80)}${i}`,
+  }))
+  await page.route(`**/api/coins/${MINT}/trades*`, (route) =>
+    route.fulfill({ json: { items, total: items.length, next: null } }),
+  )
+}
+
 export async function enter(page, { wallet = false } = {}) {
   await page.addInitScript(() => localStorage.setItem('quantpad:risk-accepted:v1', '1'))
   if (wallet)

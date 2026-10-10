@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "engines": {
+    "node": "24.x"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -21,6 +24,7 @@
     "@fontsource-variable/hubot-sans": "^5.3.0",
     "@fontsource-variable/martian-mono": "^5.3.0",
     "@fontsource-variable/mona-sans": "^5.3.0",
+    "@noble/hashes": "^1.8.0",
     "@pump-fun/pump-sdk": "^4.0.0",
     "@pump-fun/pump-swap-sdk": "^2.1.0",
     "@solana/spl-token": "^0.4.15",

@@ -1,7 +1,10 @@
 // Node loads pump.fun's CommonJS build. Its ESM build imports { BN } from Anchor's CommonJS entry,
 // which Node cannot name-import. Browsers resolve #pump-sdk to the package itself (see package.json imports).
 import { createRequire } from 'node:module'
-const sdk = createRequire(import.meta.url)('@pump-fun/pump-sdk')
+// Keep `require` a named binding: Vercel's file tracer (@vercel/nft) only follows createRequire when
+// its result is assigned to a variable, and would otherwise leave the SDK out of the function bundle.
+const require = createRequire(import.meta.url)
+const sdk = require('@pump-fun/pump-sdk')
 export const {
   ADMIN_CTO_COMPUTE_UNIT_LIMIT,
   AMM_GLOBAL_PDA,

@@ -49,6 +49,48 @@ export const MIN_PULSE_LAMPORTS = 1_000_000n
 export const MAX_LOCK_DURATION = 4 * 365 * 86_400
 // Rent-exempt minimum of a 0-byte account (the well, pump.fun's creator vault).
 export const RENT_EXEMPT_EMPTY = 890_880n
+// Rent-exempt minimum of a 165-byte SPL Token account (the well's WSOL ATA). `pulse` refunds it to
+// the transaction payer when it closes that ATA; it is never creator fees.
+export const RENT_EXEMPT_TOKEN_ACCOUNT = 2_039_280n
+
+// Keys the runtime never lets a transaction write-lock (sysvars, builtin and loader programs). A
+// split at one of them could never be paid, so `register` rejects them. Same list as
+// RESERVED_ACCOUNT_KEYS in programs/quantum-hooks/programs/quantum_hooks/src/constants.rs.
+export const RESERVED_ACCOUNT_KEYS = Object.freeze([
+  '11111111111111111111111111111111',
+  'AddressLookupTab1e1111111111111111111111111',
+  'BPFLoader1111111111111111111111111111111111',
+  'BPFLoader2111111111111111111111111111111111',
+  'BPFLoaderUpgradeab1e11111111111111111111111',
+  'ComputeBudget111111111111111111111111111111',
+  'Config1111111111111111111111111111111111111',
+  'Ed25519SigVerify111111111111111111111111111',
+  'Feature111111111111111111111111111111111111',
+  'KeccakSecp256k11111111111111111111111111111',
+  'LoaderV411111111111111111111111111111111111',
+  'NativeLoader1111111111111111111111111111111',
+  'Secp256r1SigVerify1111111111111111111111111',
+  'Stake11111111111111111111111111111111111111',
+  'StakeConfig11111111111111111111111111111111',
+  'Vote111111111111111111111111111111111111111',
+  'ZkE1Gama1Proof11111111111111111111111111111',
+  'ZkTokenProof1111111111111111111111111111111',
+  'Sysvar1111111111111111111111111111111111111',
+  'Sysvar1nstructions1111111111111111111111111',
+  'SysvarC1ock11111111111111111111111111111111',
+  'SysvarEpochRewards1111111111111111111111111',
+  'SysvarEpochSchedu1e111111111111111111111111',
+  'SysvarFees111111111111111111111111111111111',
+  'SysvarLastRestartS1ot1111111111111111111111',
+  'SysvarRecentB1ockHashes11111111111111111111',
+  'SysvarRent111111111111111111111111111111111',
+  'SysvarRewards111111111111111111111111111111',
+  'SysvarS1otHashes111111111111111111111111111',
+  'SysvarS1otHistory11111111111111111111111111',
+  'SysvarStakeHistory1111111111111111111111111',
+])
+const RESERVED = new Set(RESERVED_ACCOUNT_KEYS)
+export const isReservedAccountKey = (key) => RESERVED.has(b58(key))
 
 const coder = new BorshCoder(idl)
 const READONLY_WALLET = Object.freeze({
@@ -97,8 +139,8 @@ export const epochPda = (mint, index, programId) =>
   find([Buffer.from('epoch'), pk(mint).toBuffer(), u32le(Number(index))], programId)
 export const lockAta = (mint, programId) =>
   getAssociatedTokenAddressSync(pk(mint), quantumPda(mint, programId), true, TOKEN_2022_PROGRAM_ID)
-export const wellTokenAta = (mint, programId) =>
-  getAssociatedTokenAddressSync(pk(mint), wellPda(mint, programId), true, TOKEN_2022_PROGRAM_ID)
+export const wellTokenAta = (mint, programId, tokenProgram = TOKEN_2022_PROGRAM_ID) =>
+  getAssociatedTokenAddressSync(pk(mint), wellPda(mint, programId), true, pk(tokenProgram))
 export const wellWsolAta = (mint, programId) =>
   getAssociatedTokenAddressSync(NATIVE_MINT, wellPda(mint, programId), true, TOKEN_PROGRAM_ID)
 export const programDataPda = (programId) =>
@@ -205,16 +247,24 @@ export function isLeafClaimed(epoch, leafIndex) {
 
 const reservedOf = (q) => q.burnReserve + q.entangleReserve + q.entangleOwed + q.fusionReserve
 
+// The well's lamports above rent and module ledgers. fetchWellBalance().unallocated and the
+// well term of pendingCreatorFees must be this same amount: the keeper subtracts one from the
+// other to see creator fees still outside the well.
+function wellLedger(wellInfo, quantumInfo) {
+  const lamports = BigInt(wellInfo?.lamports ?? 0)
+  const reserved = quantumInfo ? reservedOf(decodeQuantum(quantumInfo.data)) : 0n
+  const free = lamports - RENT_EXEMPT_EMPTY - reserved
+  return { lamports, reserved, unallocated: free > 0n ? free : 0n }
+}
+
 /** The well's lamports split into rent, module ledgers and what the next pulse would allocate. */
 export async function fetchWellBalance(connection, mint, programId) {
   const [wellInfo, quantumInfo] = await connection.getMultipleAccountsInfo([
     wellPda(mint, programId),
     quantumPda(mint, programId),
   ])
-  const lamports = BigInt(wellInfo?.lamports ?? 0)
-  const reserved = quantumInfo ? reservedOf(decodeQuantum(quantumInfo.data)) : 0n
-  const free = lamports - RENT_EXEMPT_EMPTY - reserved
-  return { lamports, rentExempt: RENT_EXEMPT_EMPTY, reserved, unallocated: free > 0n ? free : 0n }
+  const { lamports, reserved, unallocated } = wellLedger(wellInfo, quantumInfo)
+  return { lamports, rentExempt: RENT_EXEMPT_EMPTY, reserved, unallocated }
 }
 
 function tokenAmount(address, info, programId) {
@@ -226,10 +276,17 @@ function tokenAmount(address, info, programId) {
   }
 }
 
+/** Lamports of the well's WSOL ATA that `pulse` counts as fees (everything above its rent). */
+export function wsolFeeLamports(wsolInfo) {
+  if (!wsolInfo || !wsolInfo.owner.equals(TOKEN_PROGRAM_ID)) return 0n
+  const fees = BigInt(wsolInfo.lamports) - RENT_EXEMPT_TOKEN_ACCOUNT
+  return fees > 0n ? fees : 0n
+}
+
 /**
  * Lamports a pulse would allocate right now: pump.fun creator vault (curve, above rent) and the
  * unswept curve bucket, the PumpSwap coin-creator vault and unswept pool bucket, WSOL already in
- * the well's WSOL ATA, and unallocated lamports in the well.
+ * the well's WSOL ATA (not its rent, which `pulse` refunds), and unallocated lamports in the well.
  */
 export async function pendingCreatorFees(connection, mint, programId) {
   mint = pk(mint)
@@ -263,12 +320,8 @@ export async function pendingCreatorFees(connection, mint, programId) {
     if (decoded.coinCreator.equals(well)) total += big(decoded.creatorFees)
   }
   total += tokenAmount(ammVaultAta, ammVaultInfo, TOKEN_PROGRAM_ID)
-  if (wsolInfo && wsolInfo.owner.equals(TOKEN_PROGRAM_ID)) total += BigInt(wsolInfo.lamports)
-  if (wellInfo) {
-    const reserved = quantumInfo ? reservedOf(decodeQuantum(quantumInfo.data)) : 0n
-    const free = BigInt(wellInfo.lamports) - RENT_EXEMPT_EMPTY - reserved
-    if (free > 0n) total += free
-  }
+  total += wsolFeeLamports(wsolInfo)
+  total += wellLedger(wellInfo, quantumInfo).unallocated
   return total
 }
 
@@ -345,7 +398,26 @@ export function decodeQuantumEvents(logMessages, programId) {
 // Launch
 // ---------------------------------------------------------------------------------------------
 
-export function validateHooks(hooks) {
+/**
+ * Split wallets `register` refuses: sysvars, builtin and loader programs (the runtime never lets
+ * them be written, so they could never be paid), this program, pump.fun and PumpSwap, and, when
+ * `mint` is known, the coin's well and Quantum account.
+ */
+function unpayableSplitWallets({ mint, programId } = {}) {
+  const out = new Set([
+    ...RESERVED_ACCOUNT_KEYS,
+    pid(programId).toBase58(),
+    PUMP_PROGRAM_ID.toBase58(),
+    PUMP_AMM_PROGRAM_ID.toBase58(),
+  ])
+  if (mint) {
+    out.add(wellPda(mint, programId).toBase58())
+    out.add(quantumPda(mint, programId).toBase58())
+  }
+  return out
+}
+
+export function validateHooks(hooks, { mint, programId } = {}) {
   const {
     creatorBps = 0,
     burnBps = 0,
@@ -354,6 +426,7 @@ export function validateHooks(hooks) {
     splits = [],
     lock = null,
   } = hooks || {}
+  const unpayable = unpayableSplitWallets({ mint, programId })
   for (const v of [creatorBps, burnBps, entangleBps, fusionBps])
     if (!Number.isInteger(v) || v < 0 || v > BPS)
       throw new Error('Allocation bps must be integers in 0..10000')
@@ -366,8 +439,11 @@ export function validateHooks(hooks) {
     if (!Number.isInteger(s.bps) || s.bps < 1 || s.bps > BPS)
       throw new Error('Split bps must be 1..10000')
     const wallet = b58(s.wallet)
-    if (wallet === PublicKey.default.toBase58() || seen.has(wallet))
-      throw new Error('Split wallets must be unique')
+    if (unpayable.has(wallet))
+      throw new Error(
+        `${wallet} cannot be a split wallet: use an ordinary wallet address, not a system or program address`,
+      )
+    if (seen.has(wallet)) throw new Error('Split wallets must be unique')
     seen.add(wallet)
     sum += s.bps
   }
@@ -457,7 +533,7 @@ export async function buildQuantumLaunchInstructions({
 }) {
   launcher = pk(launcher)
   mint = pk(mint)
-  const valid = validateHooks(hooks)
+  const valid = validateHooks(hooks, { mint, programId })
   const program = quantumProgram(connection, programId)
   const well = wellPda(mint, programId)
 
@@ -562,6 +638,16 @@ export async function buildStandardLaunchInstructions({
 // Keeper actions
 // ---------------------------------------------------------------------------------------------
 
+/**
+ * The coin mint's token program, read from the mint account's owner: Token-2022 for `create_v2`
+ * coins, SPL Token for coins made with pump.fun's legacy `create`.
+ */
+export function mintTokenProgram(mintInfo) {
+  if (mintInfo?.owner?.equals(TOKEN_2022_PROGRAM_ID)) return TOKEN_2022_PROGRAM_ID
+  if (mintInfo?.owner?.equals(TOKEN_PROGRAM_ID)) return TOKEN_PROGRAM_ID
+  throw new Error(mintInfo ? 'Mint is not an SPL Token mint' : 'Mint account not found')
+}
+
 /** Where the coin trades now: the bonding curve until it completes, then the canonical pool. */
 export async function fetchVenue(connection, mint) {
   mint = pk(mint)
@@ -647,8 +733,8 @@ export async function buildPulseInstructions({ connection, payer, mint, programI
         collect = true
       }
       if (collect) {
-        // Creates the vault ATA and the well's WSOL ATA when missing (payer pays); the program
-        // closes the WSOL ATA into the well inside `pulse`.
+        // Creates the vault ATA and the well's WSOL ATA when missing (payer pays); `pulse` closes
+        // the WSOL ATA into the well and refunds its rent to the payer (`rent_payer`).
         poolLeg.push(
           ...(await PUMP_AMM_SDK.collectCoinCreatorFee(
             {
@@ -678,6 +764,7 @@ export async function buildPulseInstructions({ connection, payer, mint, programI
     await program.methods
       .pulse()
       .accountsStrict({
+        rentPayer: payer,
         config: configPda(programId),
         quantum: quantumPda(mint, programId),
         well,
@@ -688,7 +775,12 @@ export async function buildPulseInstructions({ connection, payer, mint, programI
         systemProgram: SystemProgram.programId,
       })
       .remainingAccounts(
-        quantum.splits.map((s) => ({ pubkey: pk(s.wallet), isWritable: true, isSigner: false })),
+        // A reserved key is always read-only on-chain (the program defers its share).
+        quantum.splits.map((s) => ({
+          pubkey: pk(s.wallet),
+          isWritable: !isReservedAccountKey(s.wallet),
+          isSigner: false,
+        })),
       )
       .instruction(),
   )
@@ -777,18 +869,21 @@ export async function buildBurnInstructions({
   if (spend <= 0n) throw new Error('spendLamports must be positive')
   const program = quantumProgram(connection, programId)
   const well = wellPda(mint, programId)
-  const venue = await fetchVenue(connection, mint)
+  const [venue, mintInfo] = await Promise.all([
+    fetchVenue(connection, mint),
+    connection.getAccountInfo(mint),
+  ])
+  const tokenProgram = mintTokenProgram(mintInfo)
   const pre = []
   let buy
   if (venue.kind === 'curve') {
     pre.push(...(await ensureVolumeAccumulators(connection, caller, well, { curve: true })))
     const online = new OnlinePumpSdk(connection)
-    const [global, feeConfig, mintInfo] = await Promise.all([
+    const [global, feeConfig] = await Promise.all([
       online.fetchGlobal(),
       online.fetchFeeConfig().catch(() => null),
-      connection.getAccountInfo(mint),
     ])
-    const supply = unpackMint(mint, mintInfo, TOKEN_2022_PROGRAM_ID).supply
+    const supply = unpackMint(mint, mintInfo, tokenProgram).supply
     const amount = getBuyTokenAmountFromSolAmount({
       global,
       feeConfig,
@@ -807,7 +902,7 @@ export async function buildBurnInstructions({
       amount,
       solAmount: bn(spend),
       feeRecipient: getFeeRecipient(global, venue.curve.isMayhemMode),
-      tokenProgram: TOKEN_2022_PROGRAM_ID,
+      tokenProgram,
     })
   } else if (venue.kind === 'pool') {
     pre.push(...(await ensureVolumeAccumulators(connection, caller, well, { pool: true })))
@@ -824,10 +919,10 @@ export async function buildBurnInstructions({
       quantum: quantumPda(mint, programId),
       well,
       mint,
-      wellTokenAta: wellTokenAta(mint, programId),
+      wellTokenAta: wellTokenAta(mint, programId, tokenProgram),
       wellWsolAta: poolRoute ? wellWsolAta(mint, programId) : null,
       wsolMint: poolRoute ? NATIVE_MINT : null,
-      tokenProgram: TOKEN_2022_PROGRAM_ID,
+      tokenProgram,
       quoteTokenProgram: poolRoute ? TOKEN_PROGRAM_ID : null,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
@@ -855,8 +950,12 @@ export async function buildFusionInstructions({
   const spend = BigInt(spendLamports)
   const program = quantumProgram(connection, programId)
   const well = wellPda(mint, programId)
-  const venue = await fetchVenue(connection, mint)
+  const [venue, mintInfo] = await Promise.all([
+    fetchVenue(connection, mint),
+    connection.getAccountInfo(mint),
+  ])
   if (venue.kind !== 'pool') throw new Error('Fusion needs a graduated coin with a PumpSwap pool')
+  const tokenProgram = mintTokenProgram(mintInfo)
   const pre = await ensureVolumeAccumulators(connection, caller, well, { pool: true })
 
   const buySpend = (spend * 45n) / 100n
@@ -898,18 +997,20 @@ export async function buildFusionInstructions({
       quantum: quantumPda(mint, programId),
       well,
       mint,
-      wellTokenAta: wellTokenAta(mint, programId),
+      wellTokenAta: wellTokenAta(mint, programId, tokenProgram),
       wellWsolAta: wellWsolAta(mint, programId),
       wsolMint: NATIVE_MINT,
       pool: venue.pool,
       lpMint: lpMintPda(venue.pool),
+      // PumpSwap LP mints are always Token-2022, whatever the coin's token program.
       wellLpAta: getAssociatedTokenAddressSync(
         lpMintPda(venue.pool),
         well,
         true,
         TOKEN_2022_PROGRAM_ID,
       ),
-      tokenProgram: TOKEN_2022_PROGRAM_ID,
+      tokenProgram,
+      lpTokenProgram: TOKEN_2022_PROGRAM_ID,
       quoteTokenProgram: TOKEN_PROGRAM_ID,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,

@@ -3,7 +3,14 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 import { getWallets } from '@wallet-standard/app'
 import { VersionedTransaction } from '@solana/web3.js'
-import { connection, confirmSignature, friendlyWalletError, solBalance } from '../lib/solana.js'
+import {
+  connection,
+  confirmSignature,
+  friendlyWalletError,
+  instructionPrograms,
+  solBalance,
+} from '../lib/solana.js'
+import { sendAndConfirmAll, sendSigned } from '../lib/txflow.js'
 
 const CHAIN = 'solana:mainnet'
 const STORAGE_KEY = 'quantpad:wallet'
@@ -118,10 +125,14 @@ export function WalletProvider({ children }) {
     writeStored(null)
   }, [wallet])
 
-  // Sign every transaction in one wallet prompt, then send and confirm them in order.
+  // Sign every transaction in one wallet prompt, then send and confirm them in order. Resolves to
+  // confirmed signatures only. On failure the error carries `completed` (the signatures that
+  // confirmed), `failedIndex` / `failedSignature` (the one that did not) and `unknown` when that
+  // transaction may still land.
   const sendTransactions = useCallback(
     async (transactions, { lastValidBlockHeight, signers = [], onStatus } = {}) => {
       if (!wallet || !account) throw Error('Connect a wallet first.')
+      if (!transactions.length) return []
       for (const tx of transactions) {
         const needed = tx.message.staticAccountKeys
           .slice(0, tx.message.header.numRequiredSignatures)
@@ -139,46 +150,62 @@ export function WalletProvider({ children }) {
           signed = outputs.map((o) => VersionedTransaction.deserialize(o.signedTransaction))
         }
       } catch (e) {
-        throw Error(friendlyWalletError(e))
+        throw Object.assign(Error(friendlyWalletError(e)), { friendly: true, completed: [] })
       }
-      const signatures = []
-      for (let i = 0; i < transactions.length; i++) {
-        onStatus?.({ phase: 'send', index: i, total: transactions.length })
-        let signature
-        try {
-          if (signed) {
-            signature = await connection.sendRawTransaction(signed[i].serialize(), {
-              skipPreflight: false,
-              preflightCommitment: 'confirmed',
-              maxRetries: 3,
-            })
-          } else {
-            const [output] = await wallet.features[
-              'solana:signAndSendTransaction'
-            ].signAndSendTransaction({
-              account,
-              chain: CHAIN,
-              transaction: transactions[i].serialize(),
-            })
-            const { default: bs58 } = await import('bs58')
-            signature = bs58.encode(output.signature)
-          }
-        } catch (e) {
-          throw Object.assign(Error(friendlyWalletError(e)), { completed: signatures })
+      const { default: bs58 } = await import('bs58')
+      const programs = transactions.map(instructionPrograms)
+      const send = async (i) => {
+        if (signed) {
+          // The signature is known before sending, so a send whose outcome is unclear can still
+          // be looked up; re-sending the same bytes cannot execute twice, and a re-send refused
+          // as "already processed" is confirmed by polling like any other send (sendSigned).
+          return sendSigned(
+            bs58.encode(signed[i].signatures[0]),
+            () =>
+              connection.sendRawTransaction(signed[i].serialize(), {
+                skipPreflight: false,
+                preflightCommitment: 'confirmed',
+                maxRetries: 3,
+              }),
+            { explain: (e) => friendlyWalletError(e, { programIds: programs[i] }) },
+          )
         }
-        signatures.push(signature)
-        onStatus?.({ phase: 'confirm', index: i, total: transactions.length, signature })
         try {
-          await confirmSignature(signature, lastValidBlockHeight)
+          const [output] = await wallet.features[
+            'solana:signAndSendTransaction'
+          ].signAndSendTransaction({
+            account,
+            chain: CHAIN,
+            transaction: transactions[i].serialize(),
+          })
+          return bs58.encode(output.signature)
         } catch (e) {
-          throw Object.assign(e, { completed: signatures })
+          throw Object.assign(Error(friendlyWalletError(e, { programIds: programs[i] })), {
+            friendly: true,
+            cause: e,
+          })
         }
       }
-      refreshBalance()
-      return signatures
+      try {
+        return await sendAndConfirmAll(transactions.length, {
+          send,
+          confirm: (signature, i) =>
+            confirmSignature(signature, lastValidBlockHeight, { programIds: programs[i] }),
+          onStatus,
+        })
+      } finally {
+        refreshBalance()
+      }
     },
     [wallet, account, refreshBalance],
   )
+
+  // Stable identities: they do not change when wallets, busy, error or balance do.
+  const openDialog = useCallback(() => {
+    setError('')
+    setDialogOpen(true)
+  }, [])
+  const closeDialog = useCallback(() => setDialogOpen(false), [])
 
   const value = useMemo(
     () => ({
@@ -190,11 +217,8 @@ export function WalletProvider({ children }) {
       error,
       connected: !!address,
       dialogOpen,
-      openDialog: () => {
-        setError('')
-        setDialogOpen(true)
-      },
-      closeDialog: () => setDialogOpen(false),
+      openDialog,
+      closeDialog,
       select,
       disconnect,
       refreshBalance,
@@ -208,6 +232,8 @@ export function WalletProvider({ children }) {
       busy,
       error,
       dialogOpen,
+      openDialog,
+      closeDialog,
       select,
       disconnect,
       refreshBalance,

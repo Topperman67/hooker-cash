@@ -39,6 +39,8 @@ function patchEnd(res) {
 }
 
 export default async function handler(req, res) {
+  // The 60 s limit covers the request and the background pass together.
+  const startedAt = Date.now()
   try {
     const app = await getApp()
     const done = patchEnd(res)
@@ -52,15 +54,29 @@ export default async function handler(req, res) {
     // Serverless instances can stop as soon as the response ends. Register the
     // bounded index pass with the platform instead of relying on setInterval.
     waitUntil(
-      Promise.resolve(app.sync()).catch((error) =>
+      Promise.resolve(app.sync({ startedAt })).catch((error) =>
         console.error('Quant Pad background:', error.message),
       ),
     )
   } catch (e) {
+    // Same rule as the application's own handler: only 4xx messages, and 5xx ones marked `expose`,
+    // are meant for clients. Others (a failed start-up, a missing module) can name files or
+    // configuration, so they are logged instead.
+    const status = Number(e?.status)
+    const client =
+      Number.isInteger(status) &&
+      status >= 400 &&
+      (status < 500 || (e.expose === true && status < 600))
+    if (!client) console.error('Quant Pad API:', e)
     if (!res.headersSent) {
-      res.statusCode = e.status || 500
+      res.statusCode = client ? status : 500
       res.setHeader('Content-Type', 'application/json')
-      res.end(JSON.stringify({ error: e.message || 'Server error' }))
+      res.setHeader('Cache-Control', 'no-store')
+      res.end(
+        JSON.stringify({
+          error: client ? String(e.message) : 'Something went wrong. Try again.',
+        }),
+      )
     }
   }
 }

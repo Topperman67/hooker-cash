@@ -1,9 +1,34 @@
 // Persistent key/value storage. Redis (Upstash REST) for serverless, the filesystem for a single
 // long-running server. Both expose the same interface so application code has one path.
-import { readFile, writeFile, mkdir, link, unlink, rename, stat, readdir } from 'node:fs/promises'
+import {
+  readFile,
+  writeFile,
+  mkdir,
+  link,
+  unlink,
+  rename,
+  stat,
+  readdir,
+  utimes,
+} from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { createHash, randomBytes } from 'node:crypto'
 import { storageNamespace } from '../shared/network.mjs'
+
+// Media (artwork and metadata blobs) share one byte quota, `limit` in putMedia.
+//   putMedia(name, bytes, limit, { ttl }) resolves to true when it stored a new blob and false
+//   when the blob already existed. With `ttl` (milliseconds) the upload is pending: it is served
+//   like any other blob, but it expires and gives its bytes back to the quota unless
+//   promoteMedia(name) makes it permanent first. Putting a blob that is already pending extends its
+//   expiry (or, without `ttl`, makes it permanent).
+//   promoteMedia(name) resolves to true when the blob now exists permanently, false when it is
+//   missing or has expired.
+const mediaTtl = (ttl) => Math.max(0, Math.floor(Number(ttl) || 0))
+const mediaFull = () =>
+  Object.assign(Error('Media storage is full. Contact the operator.'), {
+    status: 507,
+    expose: true,
+  })
 
 export function createRedisStore({ url, token, prefix = storageNamespace, request = fetch }) {
   if (!url?.startsWith('https://') || !token) throw Error('Configure both Redis REST credentials.')
@@ -26,10 +51,12 @@ export function createRedisStore({ url, token, prefix = storageNamespace, reques
       syncToken = response.headers.get('upstash-sync-token') || syncToken
       return data.result
     } catch {
-      // Transport and JSON errors can contain upstream URLs or echoed credentials.
+      // Transport and JSON errors can contain upstream URLs or echoed credentials. This message is
+      // written for users, so the API may show it (`expose`).
       throw Object.assign(Error('Persistent storage is unavailable. Try again shortly.'), {
         status: 503,
         code: 'STORAGE_UNAVAILABLE',
+        expose: true,
       })
     }
   }
@@ -76,25 +103,92 @@ export function createRedisStore({ url, token, prefix = storageNamespace, reques
         JSON.stringify(owner),
       )
     },
-    async putMedia(name, bytes, limit) {
+    // See the media notes above createFileStore. The quota counts what Redis stores: base64 inside
+    // JSON, about 4/3 of the raw size. Pending blobs carry a PEXPIREAT and are listed in
+    // media:pending (score = expiry) with their size in media:pending-size, so the bytes of an
+    // expired upload are given back to the quota by the next put.
+    async putMedia(name, bytes, limit, { ttl = 0 } = {}) {
+      const encoded = JSON.stringify(bytes.toString('base64'))
+      const result = Number(
+        await command(
+          'EVAL',
+          `
+          local ttl, now, name = tonumber(ARGV[4]), tonumber(ARGV[5]), ARGV[6]
+          local pending = redis.call('ZSCORE', KEYS[3], name)
+          local exists = redis.call('EXISTS', KEYS[1]) == 1
+          if pending and not exists then
+            redis.call('DECRBY', KEYS[2], tonumber(redis.call('HGET', KEYS[4], name) or '0'))
+            redis.call('ZREM', KEYS[3], name)
+            redis.call('HDEL', KEYS[4], name)
+          elseif pending and ttl > 0 then
+            local expires = math.max(tonumber(pending), now + ttl)
+            redis.call('ZADD', KEYS[3], expires, name)
+            redis.call('PEXPIREAT', KEYS[1], expires)
+            return 0
+          elseif pending then
+            redis.call('PERSIST', KEYS[1])
+            redis.call('ZREM', KEYS[3], name)
+            redis.call('HDEL', KEYS[4], name)
+            return 0
+          elseif exists and redis.call('PTTL', KEYS[1]) == -1 then
+            return 0
+          end
+          local expired = redis.call('ZRANGEBYSCORE', KEYS[3], '-inf', now, 'LIMIT', 0, 500)
+          for _, member in ipairs(expired) do
+            redis.call('DECRBY', KEYS[2], tonumber(redis.call('HGET', KEYS[4], member) or '0'))
+            redis.call('ZREM', KEYS[3], member)
+            redis.call('HDEL', KEYS[4], member)
+          end
+          local used = tonumber(redis.call('GET', KEYS[2]) or '0')
+          if used + tonumber(ARGV[2]) > tonumber(ARGV[3]) then return -1 end
+          redis.call('SET', KEYS[1], ARGV[1])
+          if ttl > 0 then
+            redis.call('PEXPIREAT', KEYS[1], now + ttl)
+            redis.call('ZADD', KEYS[3], now + ttl, name)
+            redis.call('HSET', KEYS[4], name, ARGV[2])
+          end
+          redis.call('INCRBY', KEYS[2], ARGV[2])
+          return 1`,
+          4,
+          key(`media:${name}`),
+          key('media:bytes'),
+          key('media:pending'),
+          key('media:pending-size'),
+          encoded,
+          encoded.length,
+          limit,
+          mediaTtl(ttl),
+          Date.now(),
+          name,
+        ),
+      )
+      if (result < 0) throw mediaFull()
+      return result === 1
+    },
+    async promoteMedia(name) {
       const result = await command(
         'EVAL',
         `
-        if redis.call('EXISTS', KEYS[1]) == 1 then return 1 end
-        local used = tonumber(redis.call('GET', KEYS[2]) or '0')
-        if used + tonumber(ARGV[2]) > tonumber(ARGV[3]) then return 0 end
-        redis.call('SET', KEYS[1], ARGV[1])
-        redis.call('INCRBY', KEYS[2], ARGV[2])
-        return 1`,
-        2,
+        local pending = redis.call('ZSCORE', KEYS[3], ARGV[1])
+        local exists = redis.call('EXISTS', KEYS[1]) == 1
+        if pending then
+          if exists then redis.call('PERSIST', KEYS[1]) else
+            redis.call('DECRBY', KEYS[2], tonumber(redis.call('HGET', KEYS[4], ARGV[1]) or '0'))
+          end
+          redis.call('ZREM', KEYS[3], ARGV[1])
+          redis.call('HDEL', KEYS[4], ARGV[1])
+          return exists and 1 or 0
+        end
+        if exists and redis.call('PTTL', KEYS[1]) == -1 then return 1 end
+        return 0`,
+        4,
         key(`media:${name}`),
         key('media:bytes'),
-        JSON.stringify(bytes.toString('base64')),
-        bytes.length,
-        limit,
+        key('media:pending'),
+        key('media:pending-size'),
+        name,
       )
-      if (!result)
-        throw Object.assign(Error('Media storage is full. Contact the operator.'), { status: 507 })
+      return Number(result) === 1
     },
     async getMedia(name) {
       const value = await command('GET', key(`media:${name}`))
@@ -104,27 +198,187 @@ export function createRedisStore({ url, token, prefix = storageNamespace, reques
   }
 }
 
+// Windows refuses to replace, rename or open a file while another handle is using it (EPERM,
+// EACCES or EBUSY). Within one process the file store orders reads and writes per key so this does
+// not happen; for other processes sharing the directory, retry briefly before giving up (~1.3 s).
+const BUSY = new Set(['EPERM', 'EACCES', 'EBUSY'])
+export async function retryBusy(operation, { delays = [10, 20, 40, 80, 160, 320, 640] } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await operation()
+    } catch (e) {
+      if (!BUSY.has(e?.code) || attempt >= delays.length) throw e
+      await new Promise((done) => setTimeout(done, delays[attempt]))
+    }
+  }
+}
+
 export function createFileStore(dir) {
   const kv = resolve(dir, 'kv'),
     mediaDir = resolve(dir, 'media')
   const file = (name) => resolve(kv, createHash('sha256').update(name).digest('hex') + '.json')
   const counters = new Map()
-  let mediaBytes = null
-  async function read(name) {
+  const pendingDir = resolve(mediaDir, 'pending')
+  const MEDIA = Symbol('media') // queue for all media writes (quota bookkeeping is shared)
+  const SWEEP_MS = 60_000
+  let mediaBytes = null,
+    lastSweep = 0
+  // Operations on one key run one at a time in this process, so read-then-write sequences (NX sets,
+  // increments, owner-checked releases) cannot interleave, and no read holds the file open while a
+  // write replaces it (which fails on Windows).
+  const queues = new Map()
+  function serialized(name, task) {
+    const run = (queues.get(name) || Promise.resolve()).then(task)
+    const tail = run.catch(() => {})
+    queues.set(name, tail)
+    tail.then(() => queues.get(name) === tail && queues.delete(name))
+    return run
+  }
+  const live = (entry) => !!entry && !(entry.expires && entry.expires < Date.now())
+  async function readText(name) {
     try {
-      const entry = JSON.parse(await readFile(file(name), 'utf8'))
-      if (entry.expires && entry.expires < Date.now()) return null
-      return entry.value
+      return await retryBusy(() => readFile(file(name), 'utf8'))
     } catch (e) {
       if (e.code === 'ENOENT') return null
       throw e
     }
+  }
+  // The raw entry, expired or not. Only for use inside serialized tasks.
+  async function readEntry(name) {
+    const text = await readText(name)
+    return text === null ? null : JSON.parse(text)
+  }
+  async function read(name) {
+    const entry = await readEntry(name)
+    return live(entry) ? entry.value : null
+  }
+  // Public reads queue behind writes to the same key. Concurrent reads of a key share one file
+  // read; each caller parses its own copy, so callers can still modify what they get.
+  const pendingReads = new Map()
+  function get(name) {
+    let text = pendingReads.get(name)
+    if (!text) {
+      text = serialized(name, () => readText(name))
+      pendingReads.set(name, text)
+      const clear = () => pendingReads.get(name) === text && pendingReads.delete(name)
+      text.then(clear, clear)
+    }
+    return text.then((t) => {
+      const entry = t === null ? null : JSON.parse(t)
+      return live(entry) ? entry.value : null
+    })
   }
   async function write(name, value, ttl) {
     await mkdir(kv, { recursive: true })
     const temporary = `${file(name)}.${randomBytes(8).toString('hex')}.tmp`
     await writeFile(temporary, JSON.stringify({ value, expires: ttl ? Date.now() + ttl : 0 }))
     return temporary
+  }
+  const discard = (path) => retryBusy(() => unlink(path)).catch(() => {})
+  async function replace(name, value, ttl) {
+    const temporary = await write(name, value, ttl)
+    try {
+      await retryBusy(() => rename(temporary, file(name)))
+    } catch (e) {
+      await discard(temporary)
+      throw e
+    }
+  }
+  // Deletes the key only if the entry actually removed satisfies `matches`. The file is first moved
+  // aside atomically; if another process replaced it meanwhile, that newer entry is put back.
+  async function removeIf(name, matches) {
+    const target = file(name),
+      aside = `${target}.${randomBytes(8).toString('hex')}.old`
+    try {
+      await retryBusy(() => rename(target, aside))
+    } catch (e) {
+      if (e.code === 'ENOENT') return false
+      throw e
+    }
+    let entry = null
+    try {
+      entry = JSON.parse(await readFile(aside, 'utf8'))
+    } catch {}
+    try {
+      if (matches(entry)) return true
+      await retryBusy(() => link(aside, target)).catch((e) => {
+        if (e.code !== 'EEXIST') throw e
+      })
+      return false
+    } finally {
+      await discard(aside)
+    }
+  }
+  // Exclusive create: link() fails with EEXIST instead of replacing. An expired entry is removed
+  // only through removeIf, never by an unconditional unlink that could hit a fresh lease.
+  async function setNx(name, value, ttl) {
+    const temporary = await write(name, value, ttl)
+    try {
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          await link(temporary, file(name))
+          return true
+        } catch (e) {
+          if (e.code !== 'EEXIST') throw e
+        }
+        if (live(await readEntry(name))) return false
+        await removeIf(name, (entry) => !live(entry))
+      }
+      return false
+    } finally {
+      await discard(temporary)
+    }
+  }
+  // Media helpers; callers run them inside the MEDIA queue.
+  async function statOrNull(path) {
+    try {
+      return await retryBusy(() => stat(path))
+    } catch (e) {
+      if (e.code === 'ENOENT') return null
+      throw e
+    }
+  }
+  async function files(dir) {
+    try {
+      return (await readdir(dir, { withFileTypes: true })).filter((entry) => entry.isFile())
+    } catch (e) {
+      if (e.code === 'ENOENT') return []
+      throw e
+    }
+  }
+  // The stat of a live pending upload, or null. An expired one is deleted and its bytes are given
+  // back to the quota.
+  async function liveOrDrop(held) {
+    const info = await statOrNull(held)
+    if (!info || info.mtimeMs > Date.now()) return info
+    try {
+      await retryBusy(() => unlink(held))
+      if (mediaBytes !== null) mediaBytes -= info.size
+    } catch (e) {
+      if (e.code !== 'ENOENT') throw e
+    }
+    return null
+  }
+  // Deletes expired pending uploads and returns the bytes still pending.
+  async function sweepPending() {
+    let live = 0
+    for (const entry of await files(pendingDir))
+      live += (await liveOrDrop(resolve(pendingDir, entry.name)))?.size || 0
+    lastSweep = Date.now()
+    return live
+  }
+  async function mediaUsage() {
+    if (mediaBytes === null) {
+      let permanent = 0
+      for (const entry of await files(mediaDir))
+        permanent += (await stat(resolve(mediaDir, entry.name))).size
+      mediaBytes = permanent + (await sweepPending())
+    }
+    return mediaBytes
+  }
+  async function promote(held, target) {
+    await mkdir(mediaDir, { recursive: true })
+    await retryBusy(() => rename(held, target))
   }
   return {
     mode: 'filesystem',
@@ -136,72 +390,102 @@ export function createFileStore(dir) {
       counters.set(name, entry)
       return entry.count
     },
-    async increment(name, amount = 1) {
-      const next = Number((await read(name)) || 0) + amount
-      await rename(await write(name, next), file(name))
-      return next
+    increment(name, amount = 1) {
+      return serialized(name, async () => {
+        const next = Number((await read(name)) || 0) + amount
+        await replace(name, next)
+        return next
+      })
     },
-    get: read,
-    async set(name, value, { nx = false, ttl = 0 } = {}) {
-      const temporary = await write(name, value, ttl)
-      if (!nx) {
-        await rename(temporary, file(name))
+    get,
+    set(name, value, { nx = false, ttl = 0 } = {}) {
+      return serialized(name, async () => {
+        if (nx) return setNx(name, value, ttl)
+        await replace(name, value, ttl)
         return true
-      }
-      try {
-        if ((await read(name)) !== null) return false
-        try {
-          await unlink(file(name))
-        } catch {}
-        await link(temporary, file(name))
-        return true
-      } catch (e) {
-        if (e.code === 'EEXIST') return false
-        throw e
-      } finally {
-        try {
-          await unlink(temporary)
-        } catch {}
-      }
+      })
     },
-    async delete(name) {
+    delete(name) {
+      return serialized(name, async () => {
+        try {
+          await retryBusy(() => unlink(file(name)))
+        } catch (e) {
+          if (e.code !== 'ENOENT') throw e
+        }
+      })
+    },
+    // Releases a lease held by `owner`, also after it has expired (expired lease files would
+    // otherwise stay behind), but never a lease someone else has taken since.
+    release(name, owner) {
+      const owned = (entry) => !!entry && JSON.stringify(entry.value) === JSON.stringify(owner)
+      return serialized(name, async () => {
+        if (owned(await readEntry(name))) await removeIf(name, owned)
+      })
+    },
+    // Pending uploads live in media/pending until promoted (renamed into media/). A pending
+    // file's modification time is its expiry; expired ones are swept when the quota needs room,
+    // and at most once a minute otherwise.
+    putMedia(name, bytes, limit, { ttl = 0 } = {}) {
+      const lifetime = mediaTtl(ttl)
+      return serialized(MEDIA, async () => {
+        const target = resolve(mediaDir, name),
+          held = resolve(pendingDir, name)
+        await mediaUsage()
+        if (await statOrNull(target)) return false
+        const pending = await liveOrDrop(held)
+        if (pending) {
+          if (lifetime) {
+            const expires = Math.max(pending.mtimeMs, Date.now() + lifetime)
+            await retryBusy(() => utimes(held, new Date(), new Date(expires)))
+          } else await promote(held, target)
+          return false
+        }
+        if (mediaBytes + bytes.length > limit || Date.now() - lastSweep > SWEEP_MS)
+          await sweepPending()
+        if (mediaBytes + bytes.length > limit) throw mediaFull()
+        const path = lifetime ? held : target
+        await mkdir(lifetime ? pendingDir : mediaDir, { recursive: true })
+        try {
+          await writeFile(path, bytes, { flag: 'wx' })
+          if (lifetime) await utimes(path, new Date(), new Date(Date.now() + lifetime))
+        } catch (e) {
+          if (e.code === 'EEXIST') return false
+          await discard(path)
+          throw e
+        }
+        mediaBytes += bytes.length
+        return true
+      })
+    },
+    promoteMedia(name) {
+      return serialized(MEDIA, async () => {
+        const target = resolve(mediaDir, name)
+        if (await liveOrDrop(resolve(pendingDir, name))) {
+          await promote(resolve(pendingDir, name), target)
+          return true
+        }
+        return !!(await statOrNull(target))
+      })
+    },
+    async getMedia(name) {
+      const target = resolve(mediaDir, name),
+        held = resolve(pendingDir, name)
       try {
-        await unlink(file(name))
+        return await retryBusy(() => readFile(target))
       } catch (e) {
         if (e.code !== 'ENOENT') throw e
       }
-    },
-    async release(name, owner) {
-      if (JSON.stringify(await read(name)) === JSON.stringify(owner)) await this.delete(name)
-    },
-    async putMedia(name, bytes, limit) {
-      const target = resolve(mediaDir, name)
-      try {
-        await stat(target)
-        return
-      } catch (e) {
-        if (e.code !== 'ENOENT') throw e
-      }
-      if (mediaBytes === null) {
-        mediaBytes = 0
+      const pending = await statOrNull(held)
+      if (pending && pending.mtimeMs > Date.now()) {
         try {
-          for (const n of await readdir(mediaDir))
-            mediaBytes += (await stat(resolve(mediaDir, n))).size
+          return await retryBusy(() => readFile(held))
         } catch (e) {
           if (e.code !== 'ENOENT') throw e
         }
       }
-      if (mediaBytes + bytes.length > limit)
-        throw Object.assign(Error('Media storage is full. Contact the operator.'), { status: 507 })
-      await mkdir(mediaDir, { recursive: true })
-      try {
-        await writeFile(target, bytes, { flag: 'wx' })
-        mediaBytes += bytes.length
-      } catch (e) {
-        if (e.code !== 'EEXIST') throw e
-      }
+      // Promoted between the two reads, or missing (ENOENT).
+      return retryBusy(() => readFile(target))
     },
-    getMedia: (name) => readFile(resolve(mediaDir, name)),
   }
 }
 

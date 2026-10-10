@@ -3,9 +3,12 @@
 #   scripts/anchor-docker.sh build        release build + IDL (-> shared/idl/quantum_hooks.json)
 #   scripts/anchor-docker.sh build-test   test build with the `short-expiry` feature (target/deploy-test)
 #   scripts/anchor-docker.sh unit         Rust unit tests
-#   scripts/anchor-docker.sh keys         print the program id (creates/syncs the keypair)
+#   scripts/anchor-docker.sh keys         check the program keypair and print the program id
 #   scripts/anchor-docker.sh validator <program id> <authority pubkey>   test validator on :8899
 #   scripts/anchor-docker.sh shell | <any command>
+# `build` and `keys` need the backed-up target/deploy/quantum_hooks-keypair.json matching
+# declare_id!; they stop instead of generating one. QUANTPAD_NEW_PROGRAM_ID=1 (passed through)
+# opts in to generating a new program id.
 # Cargo's target dir, registry and git cache live in named volumes (fast, survive retries);
 # target/deploy, target/deploy-test, target/idl and target/types are bind-mounted back to the host.
 set -euo pipefail
@@ -29,6 +32,7 @@ T=/work/programs/quantum-hooks/target
 export MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL='*'
 exec docker run --rm "${tty[@]}" "${ports[@]}" \
   -e CARGO_NET_RETRY=10 -e CARGO_HTTP_TIMEOUT=120 -e CARGO_TERM_COLOR=always \
+  -e QUANTPAD_NEW_PROGRAM_ID \
   --mount "type=bind,source=$(host_path "$REPO"),target=/work" \
   --mount "type=volume,source=quantum-hooks-target,target=$T" \
   --mount "type=bind,source=$(host_path "$WS/target/deploy"),target=$T/deploy" \

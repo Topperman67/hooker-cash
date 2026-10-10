@@ -14,6 +14,10 @@ import App from './App.jsx'
 import { PlatformProvider } from './context/PlatformContext.jsx'
 import { WalletProvider } from './context/WalletContext.jsx'
 import { ToastProvider } from './components/Toasts.jsx'
+import { installChunkReload } from './components/recovery.js'
+
+// A tab left open across a redeploy asks for chunks that no longer exist: reload once.
+installChunkReload()
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>

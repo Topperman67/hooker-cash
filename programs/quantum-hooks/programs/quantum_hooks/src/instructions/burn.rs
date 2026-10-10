@@ -3,7 +3,6 @@
 use anchor_lang::prelude::*;
 use anchor_spl::associated_token::AssociatedToken;
 use anchor_spl::token::Token;
-use anchor_spl::token_2022;
 use anchor_spl::token_interface::{self, Burn, Mint, TokenAccount, TokenInterface};
 
 use crate::constants::*;
@@ -45,7 +44,8 @@ pub struct QuantumBurn<'info> {
     /// CHECK: the WSOL mint.
     #[account(address = NATIVE_MINT)]
     pub wsol_mint: Option<UncheckedAccount<'info>>,
-    #[account(address = token_2022::ID)]
+    /// The coin mint's owner: Token-2022 for `create_v2` coins, SPL Token for coins made with
+    /// pump.fun's legacy `create` (bound by the `mint::token_program` constraint).
     pub token_program: Interface<'info, TokenInterface>,
     pub quote_token_program: Option<Program<'info, Token>>,
     pub associated_token_program: Program<'info, AssociatedToken>,

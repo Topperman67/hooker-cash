@@ -48,7 +48,8 @@ pub struct Released {
 #[event]
 pub struct Pulsed {
     pub mint: Pubkey,
-    /// Lamports unwrapped from the well's WSOL account before allocation.
+    /// WSOL (creator fees) unwrapped from the well's WSOL account before allocation, without the
+    /// account's rent (see `rent_refunded`).
     pub unwrapped: u64,
     /// Unallocated lamports this pulse distributed (`available`).
     pub collected: u64,
@@ -61,6 +62,8 @@ pub struct Pulsed {
     /// Payments skipped because the recipient could not hold them (would stay below its rent
     /// minimum, or is executable). They stay in the well and are re-pulsed later.
     pub deferred: u64,
+    /// Rent of the closed WSOL account, returned to the pulse's `rent_payer` (not fees).
+    pub rent_refunded: u64,
 }
 
 #[event]

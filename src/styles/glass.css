@@ -3,10 +3,12 @@
    at the bottom-right rim, with a soft specular bloom. The studio layer behind supplies colour for
    the glass to bend. Hosts managed by QuickLiquid (.lg) must not get isolation/filter/opacity/mask. */
 
+/* Fill strengths are set for reading: with the studio pools at their peak behind a panel, muted
+   text still keeps 4.5:1 (see the note on --steel in base.css). */
 :root {
   --glass-fill:
-    radial-gradient(120% 70% at 0% 0%, rgba(255, 255, 255, 0.55), transparent 52%),
-    linear-gradient(140deg, rgba(255, 255, 255, 0.46) 0%, rgba(255, 255, 255, 0.16) 100%);
+    radial-gradient(120% 70% at 0% 0%, rgba(255, 255, 255, 0.62), transparent 52%),
+    linear-gradient(140deg, rgba(255, 255, 255, 0.62) 0%, rgba(255, 255, 255, 0.42) 100%);
   --glass-rim: rgba(255, 255, 255, 0.78);
   --glass-shadow:
     inset 1px 1px 0 rgba(255, 255, 255, 0.95), inset -1px -1px 0 rgba(21, 24, 29, 0.07),
@@ -14,8 +16,8 @@
     0 18px 44px rgba(21, 24, 29, 0.1);
   --glass-blur: blur(24px) saturate(1.9);
   --smoke-fill:
-    radial-gradient(120% 70% at 0% 0%, rgba(255, 255, 255, 0.1), transparent 50%),
-    linear-gradient(160deg, rgba(46, 52, 63, 0.84) 0%, rgba(21, 24, 29, 0.9) 100%);
+    radial-gradient(120% 70% at 0% 0%, rgba(255, 255, 255, 0.05), transparent 50%),
+    linear-gradient(160deg, rgba(40, 46, 56, 0.93) 0%, rgba(21, 24, 29, 0.95) 100%);
   --smoke-shadow:
     inset 1px 1px 0 rgba(255, 255, 255, 0.16), inset -1px -1px 0 rgba(0, 0, 0, 0.45),
     0 22px 48px rgba(21, 24, 29, 0.3);
@@ -43,7 +45,8 @@ body {
   height: 42vmax;
   border-radius: 50%;
   filter: blur(48px);
-  opacity: 0.9;
+  /* bright enough to colour the glass, soft enough for page copy that sits straight on it */
+  opacity: 0.55;
   animation: drift 38s ease-in-out infinite alternate;
 }
 .studio-blue {
@@ -190,13 +193,14 @@ body {
   border-color: #fff;
 }
 .btn-primary {
+  /* a soft highlight only: white labels keep 4.5:1 across the whole button */
   background:
-    radial-gradient(120% 90% at 30% 0%, rgba(255, 255, 255, 0.45), transparent 55%),
+    radial-gradient(120% 90% at 30% 0%, rgba(255, 255, 255, 0.2), transparent 55%),
     linear-gradient(
       180deg,
-      rgba(104, 128, 255, 0.95) 0%,
-      rgba(46, 75, 255, 0.94) 52%,
-      rgba(27, 51, 224, 0.97) 100%
+      rgba(70, 98, 255, 0.97) 0%,
+      rgba(46, 75, 255, 0.96) 52%,
+      rgba(27, 51, 224, 0.98) 100%
     );
   border-color: rgba(160, 178, 255, 0.9);
   color: #fff;
@@ -254,8 +258,15 @@ body {
     inset 1px 1px 0 #fff,
     0 2px 6px rgba(21, 24, 29, 0.06);
 }
+/* the Quantum chip stays smoked glass with white lettering (the pearl chip above would hide it) */
+.chip.chip-quantum {
+  background: linear-gradient(180deg, #3a414d, #1d2128);
+  border-color: rgba(0, 0, 0, 0.6);
+  color: #fff;
+  box-shadow: inset 1px 1px 0 rgba(255, 255, 255, 0.18);
+}
 .segmented {
-  background: rgba(255, 255, 255, 0.32);
+  background: rgba(255, 255, 255, 0.55);
   -webkit-backdrop-filter: blur(14px) saturate(1.5);
   backdrop-filter: blur(14px) saturate(1.5);
   border-color: rgba(255, 255, 255, 0.75);

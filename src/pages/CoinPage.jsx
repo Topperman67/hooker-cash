@@ -7,29 +7,69 @@ import TradesTable from '../components/TradesTable.jsx'
 import QuantumPanel from '../components/QuantumPanel.jsx'
 import HoloCard from '../components/HoloCard.jsx'
 import { Address, CurveProgress, Empty, Spinner, Stat } from '../components/UI.jsx'
+import { lowerBound, PARTIAL_NOTE } from '../components/figures.js'
 import { api, useResource } from '../lib/api.js'
+import { loadJob, registerOnce } from '../lib/launchPlan.js'
 import { usePlatform } from '../context/PlatformContext.jsx'
 import { ago, pct, price, safeLink, sol, usd } from '../lib/format.js'
 import { explorer, isAddress, pumpFunUrl } from '../../shared/network.mjs'
+
+const storage = () => {
+  try {
+    return localStorage
+  } catch {
+    return null
+  }
+}
+
+// A launch from this browser whose create landed but whose registration has not finished.
+function unregisteredLaunch(mint) {
+  const job = loadJob(storage(), mint)
+  return job && !job.registered && job.done?.launch ? job : null
+}
 
 export default function CoinPage() {
   const { mint } = useParams()
   const { solUsd } = usePlatform()
   const coin = useResource(isAddress(mint) ? `/api/coins/${mint}` : null, 10000)
-  const [tracking, setTracking] = useState('')
+  // Tracking state belongs to one mint: the page instance is reused when the route's mint changes.
+  const [trackingState, setTrackingState] = useState({ mint: null, status: '' })
+  const tracking = trackingState.mint === mint ? trackingState.status : ''
   const [hooks, setHooks] = useState(null)
+  const refresh = coin.refresh
+  const external = !!coin.data?.coin?.external
 
-  // Any pump.fun coin can be opened; untracked mints are added on first visit.
+  // Any pump.fun coin can be opened; untracked mints are added on first visit. A launch made from
+  // this browser is registered as a Quant Pad coin instead (with retries), never tracked as an
+  // external coin unless the server says it is not one.
   useEffect(() => {
     if (coin.code !== 'NOT_TRACKED' || tracking) return
-    setTracking('pending')
-    api('/api/coins/track', { mint })
+    const update = (status) => setTrackingState((t) => (t.mint === mint ? { mint, status } : t))
+    setTrackingState({ mint, status: 'pending' })
+    const job = unregisteredLaunch(mint)
+    const run = job
+      ? registerOnce(job, { post: api, storage: storage() }).then((result) => {
+          if (result.status === 'failed')
+            throw Error('Quant Pad has not indexed this launch yet. Reload the page in a minute.')
+        })
+      : api('/api/coins/track', { mint })
+    run
       .then(() => {
-        setTracking('done')
-        coin.refresh()
+        update('done')
+        refresh()
       })
-      .catch((e) => setTracking(e.message))
-  }, [coin.code, mint, tracking, coin])
+      .catch((e) => update(e.message))
+  }, [coin.code, mint, tracking, refresh])
+
+  // Our own launch that the server only knows as an external coin: register it to upgrade it.
+  useEffect(() => {
+    if (!external) return
+    const job = unregisteredLaunch(mint)
+    if (!job) return
+    registerOnce(job, { post: api, storage: storage() })
+      .then((result) => result.status === 'registered' && refresh())
+      .catch(() => {})
+  }, [external, mint, refresh])
 
   if (!isAddress(mint)) return <Empty title="That is not a Solana mint address" />
   const c = coin.data?.coin
@@ -120,7 +160,10 @@ export default function CoinPage() {
               </span>
             </Stat>
             <Stat label="24h volume">
-              <span className="num">{sol(c.volume24h, { digits: 2 })}</span>
+              {/* While the last 24 hours are still being indexed this is a lower bound. */}
+              <span className="num" title={c.statsPartial ? PARTIAL_NOTE : undefined}>
+                {lowerBound(c.volume24h, sol(c.volume24h, { digits: 2 }), c.statsPartial)}
+              </span>
             </Stat>
             <Stat label="Age">
               <span className="num">{ago(c.createdAt)}</span>
@@ -131,7 +174,7 @@ export default function CoinPage() {
 
       <div className="coin-grid-layout">
         <div className="coin-main">
-          <MarketChart mint={c.mint} symbol={c.symbol} />
+          <MarketChart mint={c.mint} symbol={c.symbol} supply={c.supply} mayhem={c.mayhem} />
           <TradesTable mint={c.mint} symbol={c.symbol} launcher={c.launcher} />
         </div>
         <aside className="coin-side">

@@ -63,6 +63,10 @@
   gap: 10px;
   color: var(--steel);
 }
+.gate-note {
+  color: var(--steel-2);
+  font-size: var(--t-sm);
+}
 
 /* ---------- home: the Refractor ---------- */
 .hero {
@@ -575,6 +579,9 @@
 .coin-main,
 .coin-side {
   display: grid;
+  /* an explicit shrinkable track: the implicit auto track grew to the trades table's nowrap
+     width on phones and pushed every panel off-screen */
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
   min-width: 0;
 }
@@ -727,7 +734,7 @@
   gap: 10px;
 }
 .activity li a {
-  color: var(--blue);
+  color: var(--blue-deep);
 }
 .claim-row {
   display: flex;
@@ -755,6 +762,7 @@
 }
 .launch-form {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
 }
 .launch-section {
@@ -900,6 +908,7 @@
   position: sticky;
   top: 120px;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 16px;
 }
 .launch-summary {
@@ -949,8 +958,14 @@
   display: grid;
   gap: 8px;
 }
-.prose a:not(.btn) {
-  color: var(--blue);
+/* Links in copy that sits on the studio light: blue lettering would sit on the blue pool, so
+   they are ink with a cobalt underline. */
+.prose a:not(.btn),
+.gate-note a {
+  color: var(--ink);
+  text-decoration-color: var(--blue);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
 }
 .flow {
   display: flex;
@@ -1105,8 +1120,30 @@
     overflow-x: auto;
     gap: 16px;
   }
+  .docs-nav a {
+    white-space: nowrap;
+  }
   .hook-grid {
     grid-template-columns: 1fr 1fr;
+  }
+  /* the fee flow stacks once it no longer fits on one row, so each arrow points at its next step */
+  .flow {
+    flex-direction: column;
+  }
+  .flow-node {
+    flex: none;
+  }
+  .flow-arrow {
+    width: 2px;
+    height: 18px;
+  }
+  .flow-arrow::after {
+    right: auto;
+    left: -4px;
+    top: auto;
+    bottom: -4px;
+    border-left-color: transparent;
+    border-top-color: var(--steel);
   }
   .steps {
     grid-template-columns: 1fr;

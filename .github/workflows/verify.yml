@@ -25,6 +25,19 @@ jobs:
       - run: npm run test:unit
       - run: npm run format:check
       - run: npm run build
+      # Vercel bundles only the files @vercel/nft traces from the function entry; a dependency it
+      # cannot see is missing in production and every /api request fails.
+      - name: Check the Vercel function bundle includes its dependencies
+        run: |
+          npm install --no-save --no-package-lock --ignore-scripts --no-audit --no-fund @vercel/nft@1.10.0
+          node --input-type=module -e "
+            import { nodeFileTrace } from '@vercel/nft'
+            const { fileList } = await nodeFileTrace(['api/[[...path]].js'], { base: process.cwd(), mixedModules: true })
+            const files = [...fileList]
+            for (const dep of ['@pump-fun/pump-sdk', '@pump-fun/pump-swap-sdk', '@noble/hashes', '@solana/web3.js'])
+              if (!files.some((f) => f.startsWith('node_modules/' + dep + '/'))) throw new Error(dep + ' is missing from the traced function bundle')
+            console.log(files.length + ' files traced')
+          "
       - run: npx playwright install --with-deps chromium
       - run: npx playwright test
       - name: Save browser diagnostics on failure

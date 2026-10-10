@@ -1,7 +1,11 @@
-# Solidity metadata hashes the exact input bytes. Preserve the source used for
-# the existing immutable deployments, including historical line endings.
-# Normalize these only as part of a separately versioned contract build.
-contracts/protocol/contracts/*.sol -text whitespace=cr-at-eol
+# Text files use LF in every checkout, including Windows clones where Git for Windows ships
+# core.autocrlf=true. Prettier's endOfLine is "lf", so `npm run format:check` then matches CI.
+# Binary files are detected automatically and left untouched.
+* text=auto eol=lf
 
 # Shell scripts run inside Linux containers (scripts/anchor-docker.sh, programs/quantum-hooks/scripts).
 *.sh text eol=lf
+
+# Windows command scripts need CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf

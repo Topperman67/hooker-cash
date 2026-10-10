@@ -21,12 +21,16 @@ The browser never talks to an RPC provider directly. It uses `/api/rpc`, a metho
 
 ## Development
 
+Requires Node 24 (with its bundled npm 11; see `.nvmrc`). Older npm versions reject the lockfile.
+
 ```bash
 npm ci
 npm run dev
 ```
 
-The app runs at http://localhost:5173 with the API mounted. Unit tests:
+The app runs at http://localhost:5173 with the API mounted. To check a production build locally, run
+`npm run build`, then `npm run preview` or `npm start` (see the self-hosting notes in
+`docs/DEPLOY.md`). Unit tests:
 
 ```bash
 npm run test:unit
@@ -45,9 +49,11 @@ Copy `.env.example` and see `docs/DEPLOY.md`. Production needs at least:
 - a provider RPC (`QUANTPAD_RPC_URL`)
 - Redis on serverless hosts
 - `QUANTPAD_PUBLIC_URL`
-- the lookup table (`QUANTPAD_LOOKUP_TABLE`)
+- the lookup table (`QUANTPAD_LOOKUP_TABLE`), without which launches cannot include a dev buy
 
-Quantum launches also need the program deployed and configured, plus a funded keeper.
+Quantum launches also need the program deployed and configured, plus a funded keeper. Per-visitor
+rate limits, the upload budget (`QUANTPAD_MEDIA_CLIENT_MB`) and indexer tuning are described in
+`docs/DEPLOY.md` (section 7).
 
 ## Trust and risk
 

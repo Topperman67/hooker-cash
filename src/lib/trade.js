@@ -14,8 +14,15 @@ import {
   getBuyV3TokenAmountFromQuoteAmount,
   getSellSolAmountFromTokenAmount,
 } from '#pump-sdk'
-import { OnlinePumpAmmSdk, PumpAmmSdk, buyQuoteInput, sellBaseInput } from '@pump-fun/pump-swap-sdk'
+import {
+  OnlinePumpAmmSdk,
+  PumpAmmSdk,
+  buyQuoteInput,
+  sellBaseInput,
+  supportsTradeV2,
+} from '@pump-fun/pump-swap-sdk'
 import { connection, platformFeeInstruction } from './solana.js'
+import { minimumOut, quoteForMaxSpend } from './amounts.js'
 
 const sdk = new OnlinePumpSdk(connection)
 const amm = new OnlinePumpAmmSdk(connection)
@@ -61,6 +68,41 @@ export async function marketState(mint, user) {
   return { venue: 'pool', mint: mintKey, user: owner, tokenProgram, poolKey, swap }
 }
 
+/**
+ * How a PumpSwap buy of `lamports` is built so that it never spends, or wraps into WSOL, more than
+ * `lamports`: `buy_exact_quote_in_v2` (spends `lamports`, at least `minTokens` out) when the pool
+ * takes v2 instructions; otherwise v1 `buy`, whose cost cap is quote × (1 + slippage), quoted for
+ * the largest amount whose cap still fits in `lamports`. `maxSpend` is what the swap may take.
+ */
+export function poolBuyPlan(swap, lamports, slippagePct) {
+  const v2 = supportsTradeV2(swap.pool)
+  const quote = v2 ? lamports : quoteForMaxSpend(lamports, slippagePct)
+  const result = buyQuoteInput({
+    quote: bn(quote),
+    slippage: slippagePct,
+    baseReserve: swap.poolBaseAmount,
+    quoteReserve: swap.poolQuoteAmount,
+    virtualQuoteReserves: swap.pool.virtualQuoteReserves,
+    globalConfig: swap.globalConfig,
+    baseMintAccount: swap.baseMintAccount,
+    baseMint: swap.baseMint,
+    coinCreator: swap.pool.coinCreator,
+    creator: swap.pool.creator,
+    feeConfig: swap.feeConfig,
+    quoteMint: swap.pool.quoteMint,
+    isMayhemMode: swap.pool.isMayhemMode,
+    creatorFeeBps: swap.pool.creatorFeeBps,
+  })
+  const tokens = big(result.base)
+  return {
+    v2,
+    quote,
+    tokens,
+    minTokens: minimumOut(tokens, slippagePct),
+    maxSpend: v2 ? lamports : big(result.maxQuote),
+  }
+}
+
 export function quoteBuy(state, lamports, slippagePct = 1) {
   if (lamports <= 0n) return { tokens: 0n }
   if (state.venue === 'curve') {
@@ -74,23 +116,7 @@ export function quoteBuy(state, lamports, slippagePct = 1) {
     })
     return { tokens: big(tokens) }
   }
-  const { swap } = state
-  const result = buyQuoteInput({
-    quote: bn(lamports),
-    slippage: slippagePct,
-    baseReserve: swap.poolBaseAmount,
-    quoteReserve: swap.poolQuoteAmount,
-    virtualQuoteReserves: swap.pool.virtualQuoteReserves,
-    globalConfig: swap.globalConfig,
-    baseMintAccount: swap.baseMintAccount,
-    baseMint: swap.baseMint,
-    coinCreator: swap.pool.coinCreator,
-    creator: swap.pool.creator,
-    feeConfig: swap.feeConfig,
-    quoteMint: swap.pool.quoteMint,
-    isMayhemMode: swap.pool.isMayhemMode,
-  })
-  return { tokens: big(result.base) }
+  return { tokens: poolBuyPlan(state.swap, lamports, slippagePct).tokens }
 }
 
 export function quoteSell(state, tokens, slippagePct = 1) {
@@ -124,10 +150,11 @@ export function quoteSell(state, tokens, slippagePct = 1) {
   return { lamports: big(result.uiQuote) }
 }
 
-// Buy with an exact SOL budget. The platform fee (if any) is a separate, visible transfer.
+// Buy with an exact SOL budget: `lamports` is the most the swap spends on either venue. The platform
+// fee (if any) is a separate, visible transfer.
 export async function buyInstructions({ mint, user, lamports, slippagePct, platform }) {
   const state = await marketState(mint, user)
-  const fee = platformFeeInstruction(user, platform, lamports)
+  const fee = await platformFeeInstruction(user, platform, lamports)
   if (state.venue === 'curve') {
     const { tokens } = quoteBuy(state, lamports)
     if (tokens <= 0n) throw Error('That amount is too small to buy any tokens.')
@@ -143,18 +170,18 @@ export async function buyInstructions({ mint, user, lamports, slippagePct, platf
     })
     return { instructions: fee ? [...ixs, fee] : ixs, venue: 'curve', expected: tokens }
   }
-  const ixs = await ammOffline.buyQuoteInput(state.swap, bn(lamports), slippagePct)
-  return {
-    instructions: fee ? [...ixs, fee] : ixs,
-    venue: 'pool',
-    expected: quoteBuy(state, lamports, slippagePct).tokens,
-  }
+  const plan = poolBuyPlan(state.swap, lamports, slippagePct)
+  if (plan.minTokens <= 0n) throw Error('That amount is too small to buy any tokens.')
+  const ixs = plan.v2
+    ? await ammOffline.buyExactQuoteInV2Instructions(state.swap, bn(lamports), bn(plan.minTokens))
+    : await ammOffline.buyQuoteInput(state.swap, bn(plan.quote), slippagePct)
+  return { instructions: fee ? [...ixs, fee] : ixs, venue: 'pool', expected: plan.tokens }
 }
 
 export async function sellInstructions({ mint, user, tokens, slippagePct, platform }) {
   const state = await marketState(mint, user)
   const { lamports } = quoteSell(state, tokens, slippagePct)
-  const fee = platformFeeInstruction(user, platform, lamports)
+  const fee = await platformFeeInstruction(user, platform, lamports)
   const ixs =
     state.venue === 'curve'
       ? await PUMP_SDK.sellV3Instructions({

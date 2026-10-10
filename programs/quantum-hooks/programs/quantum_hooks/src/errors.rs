@@ -8,7 +8,7 @@ pub enum QuantumError {
     TooManySplits,
     #[msg("Each split needs 1..=10000 bps and all splits together at most 10000")]
     InvalidSplitBps,
-    #[msg("Split wallets must not be the default key, the well or duplicates")]
+    #[msg("Split wallets must be distinct ordinary wallets: not the default key, the well, the Quantum account, a sysvar or a program")]
     InvalidSplitWallet,
     #[msg("Invalid lock terms: need 0 <= cliff <= duration and 0 < duration <= 4 years")]
     InvalidLockTerms,

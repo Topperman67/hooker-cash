@@ -10,7 +10,9 @@ const PRESETS = {
     blur: 16,
     refractionStrength: 14,
     bezelWidth: 16,
-    tintOpacity: 0.34,
+    // The sticky header also floats over the graphite chart and trades: enough frost that its
+    // links stay readable there.
+    tintOpacity: 0.62,
     quality: 'medium',
   },
   panel: {

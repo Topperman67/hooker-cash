@@ -53,6 +53,46 @@ pub const PUMP_AMM_BUY_DISCRIMINATORS: [[u8; 8]; 4] = [
 /// PumpSwap `deposit`.
 pub const PUMP_AMM_DEPOSIT_DISCRIMINATOR: [u8; 8] = [242, 35, 198, 137, 82, 225, 242, 182];
 
+/// Keys the runtime never lets a transaction write-lock: Agave's `ReservedAccountKeys` (builtin and
+/// loader programs and sysvars, including the ones reserved behind feature gates) plus secp256r1.
+/// A split wallet at one of these addresses could never be passed writable to `pulse`, so
+/// `register` rejects them (`shared/quantum.mjs` keeps the same list, checked by the unit tests).
+pub const RESERVED_ACCOUNT_KEYS: [Pubkey; 31] = [
+    // Builtin and loader programs.
+    anchor_lang::solana_program::pubkey!("11111111111111111111111111111111"),
+    anchor_lang::solana_program::pubkey!("AddressLookupTab1e1111111111111111111111111"),
+    anchor_lang::solana_program::pubkey!("BPFLoader1111111111111111111111111111111111"),
+    anchor_lang::solana_program::pubkey!("BPFLoader2111111111111111111111111111111111"),
+    anchor_lang::solana_program::pubkey!("BPFLoaderUpgradeab1e11111111111111111111111"),
+    anchor_lang::solana_program::pubkey!("ComputeBudget111111111111111111111111111111"),
+    anchor_lang::solana_program::pubkey!("Config1111111111111111111111111111111111111"),
+    anchor_lang::solana_program::pubkey!("Ed25519SigVerify111111111111111111111111111"),
+    anchor_lang::solana_program::pubkey!("Feature111111111111111111111111111111111111"),
+    anchor_lang::solana_program::pubkey!("KeccakSecp256k11111111111111111111111111111"),
+    anchor_lang::solana_program::pubkey!("LoaderV411111111111111111111111111111111111"),
+    anchor_lang::solana_program::pubkey!("NativeLoader1111111111111111111111111111111"),
+    anchor_lang::solana_program::pubkey!("Secp256r1SigVerify1111111111111111111111111"),
+    anchor_lang::solana_program::pubkey!("Stake11111111111111111111111111111111111111"),
+    anchor_lang::solana_program::pubkey!("StakeConfig11111111111111111111111111111111"),
+    anchor_lang::solana_program::pubkey!("Vote111111111111111111111111111111111111111"),
+    anchor_lang::solana_program::pubkey!("ZkE1Gama1Proof11111111111111111111111111111"),
+    anchor_lang::solana_program::pubkey!("ZkTokenProof1111111111111111111111111111111"),
+    // Sysvars and the sysvar owner.
+    anchor_lang::solana_program::pubkey!("Sysvar1111111111111111111111111111111111111"),
+    anchor_lang::solana_program::pubkey!("Sysvar1nstructions1111111111111111111111111"),
+    anchor_lang::solana_program::pubkey!("SysvarC1ock11111111111111111111111111111111"),
+    anchor_lang::solana_program::pubkey!("SysvarEpochRewards1111111111111111111111111"),
+    anchor_lang::solana_program::pubkey!("SysvarEpochSchedu1e111111111111111111111111"),
+    anchor_lang::solana_program::pubkey!("SysvarFees111111111111111111111111111111111"),
+    anchor_lang::solana_program::pubkey!("SysvarLastRestartS1ot1111111111111111111111"),
+    anchor_lang::solana_program::pubkey!("SysvarRecentB1ockHashes11111111111111111111"),
+    anchor_lang::solana_program::pubkey!("SysvarRent111111111111111111111111111111111"),
+    anchor_lang::solana_program::pubkey!("SysvarRewards111111111111111111111111111111"),
+    anchor_lang::solana_program::pubkey!("SysvarS1otHashes111111111111111111111111111"),
+    anchor_lang::solana_program::pubkey!("SysvarS1otHistory11111111111111111111111111"),
+    anchor_lang::solana_program::pubkey!("SysvarStakeHistory1111111111111111111111111"),
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -88,5 +128,34 @@ mod tests {
             assert!(!PUMP_BUY_DISCRIMINATORS.contains(&disc(sell)));
             assert!(!PUMP_AMM_BUY_DISCRIMINATORS.contains(&disc(sell)));
         }
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn reserved_keys_cover_the_sdk_ids() {
+        use anchor_lang::solana_program as sp;
+        let known = [
+            sp::system_program::ID,
+            sp::address_lookup_table::program::ID,
+            sp::bpf_loader_deprecated::ID,
+            sp::bpf_loader::ID,
+            sp::bpf_loader_upgradeable::ID,
+            sp::config::program::ID,
+            sp::ed25519_program::ID,
+            sp::feature::ID,
+            sp::secp256k1_program::ID,
+            sp::loader_v4::ID,
+            sp::stake::program::ID,
+            sp::stake::config::ID,
+            sp::vote::program::ID,
+            sp::sysvar::ID,
+        ];
+        for key in known.iter().chain(sp::sysvar::ALL_IDS.iter()) {
+            assert!(RESERVED_ACCOUNT_KEYS.contains(key), "{key} missing");
+        }
+        for (i, key) in RESERVED_ACCOUNT_KEYS.iter().enumerate() {
+            assert!(!RESERVED_ACCOUNT_KEYS[..i].contains(key), "{key} listed twice");
+        }
+        assert!(!RESERVED_ACCOUNT_KEYS.contains(&PUMP_PROGRAM_ID));
     }
 }

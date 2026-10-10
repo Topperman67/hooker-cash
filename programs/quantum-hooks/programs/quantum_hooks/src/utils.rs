@@ -58,6 +58,30 @@ pub fn can_receive(account: &AccountInfo, amount: u64, rent: &Rent) -> bool {
         && account.lamports().saturating_add(amount) >= rent.minimum_balance(account.data_len())
 }
 
+/// A key the runtime always demotes to read-only (see `RESERVED_ACCOUNT_KEYS`).
+pub fn is_reserved_account_key(key: &Pubkey) -> bool {
+    RESERVED_ACCOUNT_KEYS.contains(key)
+}
+
+/// `pulse` takes the stored Superposition wallets in order, writable. A wallet the runtime always
+/// demotes to read-only (a reserved sysvar/builtin key, or an executable program the transaction
+/// may invoke) is accepted read-only: it can never be paid, so its share is deferred instead of
+/// blocking every pulse. An ordinary wallet passed read-only is rejected, so a permissionless
+/// caller cannot push a real split's share into deferral.
+pub fn split_account_ok(key: &Pubkey, wallet: &Pubkey, is_writable: bool, executable: bool) -> bool {
+    key == wallet && (is_writable || executable || is_reserved_account_key(key))
+}
+
+/// Size of an SPL Token account (the well's WSOL ATA).
+pub const TOKEN_ACCOUNT_LEN: usize = token::TokenAccount::LEN;
+
+/// Splits the lamports of a closed WSOL ATA into (rent refund, fees). The rent goes back to whoever
+/// paid to create the ATA; only the wrapped SOL above it is creator fees.
+pub fn split_closed_ata(closed: u64, ata_rent: u64) -> (u64, u64) {
+    let refund = closed.min(ata_rent);
+    (refund, closed - refund)
+}
+
 /// System transfer out of the well (a system-owned PDA with no data).
 pub fn pay_from_well<'info>(
     well: &AccountInfo<'info>,
@@ -233,5 +257,36 @@ mod tests {
         assert_eq!(bps_of(9_999, 1).unwrap(), 0);
         assert!(sub(1, 2).is_err());
         assert!(add(u64::MAX, 1).is_err());
+    }
+
+    #[test]
+    fn closed_wsol_ata_refunds_rent_and_counts_only_wsol_as_fees() {
+        let rent = Rent::default().minimum_balance(TOKEN_ACCOUNT_LEN);
+        assert_eq!(TOKEN_ACCOUNT_LEN, 165);
+        assert_eq!(rent, 2_039_280);
+        // Measured on a local validator before the fix: 93 874 lamports of fees were pulsed as
+        // 2 133 154 because the ATA rent was counted too.
+        assert_eq!(split_closed_ata(2_133_154, rent), (rent, 93_874));
+        assert_eq!(split_closed_ata(rent, rent), (rent, 0));
+        assert_eq!(split_closed_ata(1_000, rent), (1_000, 0));
+        assert_eq!(split_closed_ata(0, rent), (0, 0));
+    }
+
+    #[test]
+    fn split_accounts_must_be_writable_unless_the_runtime_forbids_it() {
+        let wallet = Pubkey::new_unique();
+        assert!(split_account_ok(&wallet, &wallet, true, false));
+        // A real wallet passed read-only would let a pulse caller defer its share.
+        assert!(!split_account_ok(&wallet, &wallet, false, false));
+        assert!(!split_account_ok(&Pubkey::new_unique(), &wallet, true, false));
+        // Reserved keys are always demoted by the runtime; executable accounts can never be paid.
+        let rent_sysvar = anchor_lang::solana_program::sysvar::rent::ID;
+        assert!(split_account_ok(&rent_sysvar, &rent_sysvar, false, false));
+        let vote = anchor_lang::solana_program::vote::program::ID;
+        assert!(split_account_ok(&vote, &vote, false, true));
+        assert!(split_account_ok(&PUMP_PROGRAM_ID, &PUMP_PROGRAM_ID, false, true));
+        assert!(!split_account_ok(&rent_sysvar, &wallet, false, false));
+        assert!(is_reserved_account_key(&rent_sysvar));
+        assert!(!is_reserved_account_key(&wallet));
     }
 }

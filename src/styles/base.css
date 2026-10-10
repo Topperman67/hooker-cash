@@ -10,8 +10,11 @@
   --white: #ffffff;
   --mercury: #bcc3cd;
   --mercury-2: #d5dae1;
-  --steel: #5f6876;
-  --steel-2: #7d8693;
+  /* Text sits on translucent glass over coloured studio light, so muted text is measured against
+     the darkest light that can drift behind it (the blue pool under glass, or straight behind
+     page copy) and keeps WCAG AA 4.5:1 there. tests/unit/frontendUi-fixes.test.mjs checks it. */
+  --steel: #3a414c;
+  --steel-2: #505866;
   --ink: #15181d;
   --ink-2: #2b3038;
 
@@ -21,7 +24,7 @@
   --graphite-3: #323844;
   --graphite-line: #3a414d;
   --on-graphite: #e9ecf0;
-  --on-graphite-2: #a3abb8;
+  --on-graphite-2: #c4cad4;
 
   /* the four light lines */
   --blue: #2e4bff;
@@ -41,10 +44,10 @@
   --hook-dilation: var(--yellow-tint);
 
   /* trade direction: deeper shades on pearl, full brightness on graphite */
-  --buy: #0a8f50;
-  --sell: #d81f78;
+  --buy: #05602f;
+  --sell: #a01050;
   --buy-bright: #18d47a;
-  --sell-bright: #ff4fae;
+  --sell-bright: #ff92ce;
   --focus: #2e4bff;
 
   /* materials */
@@ -79,7 +82,8 @@
     #c8cfd9 62%,
     #f4f6fa 100%
   );
-  --cobalt-anodised: linear-gradient(180deg, #7b90ff 0%, #2e4bff 48%, #1b33e0 100%);
+  /* the top stop stays dark enough for white 14px numerals (step index) */
+  --cobalt-anodised: linear-gradient(180deg, #4a66ff 0%, #2e4bff 48%, #1b33e0 100%);
   --plate-edge:
     inset 0 1px 0 rgba(255, 255, 255, 0.9), 0 1px 2px rgba(21, 24, 29, 0.06),
     0 10px 30px rgba(21, 24, 29, 0.07);

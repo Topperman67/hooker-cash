@@ -8,6 +8,8 @@ import {
 } from 'lightweight-charts'
 import { useResource } from '../lib/api.js'
 import { Segmented } from './UI.jsx'
+import { crosshairLabel, tickMarkLabel } from './chartTime.js'
+import { capTokens, chartPoints } from './chartScale.js'
 
 const INTERVALS = [
   [15, '15s'],
@@ -18,7 +20,9 @@ const INTERVALS = [
   [86400, '1d'],
 ]
 
-export default function MarketChart({ mint, symbol }) {
+// `supply` is the coin record's raw mint supply (2B for mayhem coins, lower after burns) and
+// `mayhem` its coin type, so market-cap mode matches the server's market cap.
+export default function MarketChart({ mint, symbol, supply, mayhem }) {
   const [interval, setInterval] = useState(60)
   const [mode, setMode] = useState('candles')
   const [unit, setUnit] = useState('price')
@@ -36,10 +40,12 @@ export default function MarketChart({ mint, symbol }) {
       autoSize: true,
       layout: {
         background: { type: ColorType.Solid, color: 'transparent' },
-        textColor: '#a3abb8',
+        textColor: '#c4cad4', // --on-graphite-2
         fontFamily: 'Martian Mono Variable, monospace',
         attributionLogo: true,
       },
+      // Candle times are UTC; label them in the viewer's time zone.
+      localization: { timeFormatter: (time) => crosshairLabel(time, { seconds: interval < 60 }) },
       grid: {
         vertLines: { color: 'rgba(255,255,255,0.04)' },
         horzLines: { color: 'rgba(255,255,255,0.06)' },
@@ -50,6 +56,7 @@ export default function MarketChart({ mint, symbol }) {
         secondsVisible: interval < 60,
         borderColor: '#3a414d',
         maxBarSpacing: 22,
+        tickMarkFormatter: tickMarkLabel,
       },
       crosshair: { vertLine: { color: '#8fa4ff88' }, horzLine: { color: '#8fa4ff88' } },
     })
@@ -83,21 +90,11 @@ export default function MarketChart({ mint, symbol }) {
     }
   }, [mint, interval, mode, unit])
 
+  const k = unit === 'mcap' ? capTokens({ supply, mayhem }) : 1
   useEffect(() => {
     if (!series.current || !resource.data) return
-    const k = unit === 'mcap' ? 1e9 : 1
     const items = resource.data.items
-    series.current.setData(
-      mode === 'candles'
-        ? items.map(({ time, open, high, low, close }) => ({
-            time,
-            open: open * k,
-            high: high * k,
-            low: low * k,
-            close: close * k,
-          }))
-        : items.map(({ time, close }) => ({ time, value: close * k })),
-    )
+    series.current.setData(chartPoints(items, { mode, k }))
     volume.current.setData(
       items.map((c) => ({
         time: c.time,
@@ -109,7 +106,7 @@ export default function MarketChart({ mint, symbol }) {
       chart.current.timeScale().fitContent()
       fitted.current = true
     }
-  }, [resource.data, mode, unit])
+  }, [resource.data, mode, unit, k])
 
   const empty = !resource.data?.items?.length
   return (

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { Menu, Search, Wallet, X } from 'lucide-react'
 import Logo from './Logo.jsx'
@@ -76,10 +76,23 @@ export default function Shell({ children }) {
   const location = useLocation()
   const { solUsd } = usePlatform()
   const { dialogOpen } = useWallet()
+  const toggle = useRef(null)
   useEffect(() => {
     setMenu(false)
     window.scrollTo(0, 0)
   }, [location.pathname])
+  // Escape closes the open menu and puts focus back on its toggle. An open dialog handles Escape
+  // first (it marks the event as handled).
+  useEffect(() => {
+    if (!menu) return
+    const onKey = (e) => {
+      if (e.key !== 'Escape' || e.defaultPrevented) return
+      setMenu(false)
+      toggle.current?.focus()
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [menu])
   return (
     <div className="app">
       <StudioLights />
@@ -101,6 +114,7 @@ export default function Shell({ children }) {
               <div className="topbar-actions">
                 <WalletButton />
                 <button
+                  ref={toggle}
                   className="btn btn-ghost icon-btn menu-toggle"
                   aria-label={menu ? 'Close menu' : 'Open menu'}
                   aria-expanded={menu}

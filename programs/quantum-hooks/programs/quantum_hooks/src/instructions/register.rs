@@ -5,6 +5,7 @@ use crate::constants::*;
 use crate::errors::QuantumError;
 use crate::events::Registered;
 use crate::state::{Config, Quantum, Split};
+use crate::utils::is_reserved_account_key;
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug)]
 pub struct LockTerms {
@@ -57,6 +58,19 @@ pub fn validate_lock_terms(cliff_secs: i64, duration_secs: i64) -> Result<()> {
     Ok(())
 }
 
+/// A Superposition wallet must be able to receive lamports in `pulse`, which needs it writable. The
+/// runtime always demotes reserved keys (sysvars, builtin and loader programs) to read-only, and
+/// programs (this one, pump.fun, PumpSwap) are executable and can never be paid.
+pub fn valid_split_wallet(wallet: &Pubkey, well: &Pubkey, quantum: &Pubkey) -> bool {
+    *wallet != Pubkey::default()
+        && wallet != well
+        && wallet != quantum
+        && *wallet != crate::ID
+        && *wallet != PUMP_PROGRAM_ID
+        && *wallet != PUMP_AMM_PROGRAM_ID
+        && !is_reserved_account_key(wallet)
+}
+
 pub(crate) fn register(ctx: Context<Register>, params: RegisterParams) -> Result<()> {
     require!(!ctx.accounts.config.paused, QuantumError::Paused);
 
@@ -68,6 +82,7 @@ pub(crate) fn register(ctx: Context<Register>, params: RegisterParams) -> Result
 
     require!(params.splits.len() <= MAX_SPLITS, QuantumError::TooManySplits);
     let well_key = ctx.accounts.well.key();
+    let quantum_key = ctx.accounts.quantum.key();
     let mut split_sum: u32 = 0;
     let mut splits = [Split::default(); MAX_SPLITS];
     for (i, split) in params.splits.iter().enumerate() {
@@ -76,9 +91,7 @@ pub(crate) fn register(ctx: Context<Register>, params: RegisterParams) -> Result
             QuantumError::InvalidSplitBps
         );
         require!(
-            split.wallet != Pubkey::default()
-                && split.wallet != well_key
-                && split.wallet != ctx.accounts.quantum.key(),
+            valid_split_wallet(&split.wallet, &well_key, &quantum_key),
             QuantumError::InvalidSplitWallet
         );
         require!(
@@ -147,4 +160,34 @@ pub(crate) fn register(ctx: Context<Register>, params: RegisterParams) -> Result
         well_funded,
     });
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use anchor_lang::solana_program as sp;
+
+    #[test]
+    fn split_wallets_reject_keys_that_could_never_be_paid() {
+        let (well, quantum) = (Pubkey::new_unique(), Pubkey::new_unique());
+        assert!(valid_split_wallet(&Pubkey::new_unique(), &well, &quantum));
+        for bad in [
+            Pubkey::default(),
+            well,
+            quantum,
+            crate::ID,
+            PUMP_PROGRAM_ID,
+            PUMP_AMM_PROGRAM_ID,
+            sp::sysvar::rent::ID,
+            sp::sysvar::clock::ID,
+            sp::vote::program::ID,
+            sp::stake::program::ID,
+            sp::bpf_loader_upgradeable::ID,
+            sp::pubkey!("ComputeBudget111111111111111111111111111111"),
+            sp::pubkey!("AddressLookupTab1e1111111111111111111111111"),
+            sp::pubkey!("NativeLoader1111111111111111111111111111111"),
+        ] {
+            assert!(!valid_split_wallet(&bad, &well, &quantum), "{bad} accepted");
+        }
+    }
 }

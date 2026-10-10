@@ -67,7 +67,9 @@ test('never relays non-JSON upstream bodies that could echo the provider URL', a
     request: async () =>
       new Response('<html>bad gateway https://rpc.invalid/?api-key=hidden</html>', { status: 502 }),
   })
-  const error = await proxy(req(), call('getSlot')).catch((e) => e)
-  assert.equal(error.status, 502)
-  assert.doesNotMatch(error.message, /hidden/)
+  // Upstream failures are answered (not thrown) so the route keeps the 502 status.
+  const result = await proxy(req(), call('getSlot'))
+  assert.equal(result.status, 502)
+  assert.doesNotMatch(result.text, /hidden/)
+  assert.doesNotMatch(JSON.stringify(result.body), /hidden/)
 })

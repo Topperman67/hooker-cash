@@ -1,7 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { Check, Copy, X } from 'lucide-react'
 import { short } from '../lib/format.js'
 import { MODULES } from '../lib/hooks.js'
+import { focusables, trapTarget } from './focus.js'
 
 export function Spinner({ block, label }) {
   if (!block) return <span className="spinner" role="status" aria-label={label || 'Loading'} />
@@ -146,23 +148,62 @@ export function AllocationBar({ hooks, legend = true }) {
   )
 }
 
+// A modal dialog rendered over the whole app: the page behind is inert, Tab and Shift+Tab cycle
+// inside the dialog, Escape closes it, and focus returns to the opener afterwards.
 export function Modal({ title, onClose, children, labelledBy = 'modal-title' }) {
   const ref = useRef(null)
+  // Callers may pass a new onClose on every render (the wallet context does). Read the latest one
+  // at event time so those renders never re-run the setup below and move focus back to Close.
+  const close = useRef(onClose)
+  useLayoutEffect(() => {
+    close.current = onClose
+  })
   useEffect(() => {
+    const dialog = ref.current
     const previous = document.activeElement
-    ref.current?.querySelector('button, [href], input, select, textarea')?.focus()
-    const onKey = (e) => e.key === 'Escape' && onClose()
-    document.addEventListener('keydown', onKey)
+    const root = document.getElementById('root')
+    const wasInert = root?.inert ?? false
+    if (root) root.inert = true
+    ;(focusables(dialog)[0] || dialog).focus()
+    const onKey = (e) => {
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        close.current()
+      } else if (e.key === 'Tab') {
+        const target = trapTarget(focusables(dialog), document.activeElement, e.shiftKey, dialog)
+        if (target) {
+          e.preventDefault()
+          target.focus()
+        }
+      }
+    }
+    // Capture phase, so the dialog handles Escape before page-level shortcuts such as the menu.
+    document.addEventListener('keydown', onKey, true)
+    const overflow = document.body.style.overflow
     document.body.style.overflow = 'hidden'
     return () => {
-      document.removeEventListener('keydown', onKey)
-      document.body.style.overflow = ''
+      document.removeEventListener('keydown', onKey, true)
+      document.body.style.overflow = overflow
+      if (root) root.inert = wasInert
       previous?.focus?.()
     }
-  }, [onClose])
-  return (
+  }, [])
+  // If the focused control disappears (a wallet option after connecting), keep focus in the dialog
+  // without jumping to a particular button.
+  useEffect(() => {
+    const dialog = ref.current
+    if (dialog && !dialog.contains(document.activeElement)) dialog.focus()
+  })
+  return createPortal(
     <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal" role="dialog" aria-modal="true" aria-labelledby={labelledBy} ref={ref}>
+      <div
+        className="modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={labelledBy}
+        tabIndex={-1}
+        ref={ref}
+      >
         <div className="modal-head">
           <h3 id={labelledBy}>{title}</h3>
           <button
@@ -176,7 +217,8 @@ export function Modal({ title, onClose, children, labelledBy = 'modal-title' }) 
         </div>
         {children}
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 

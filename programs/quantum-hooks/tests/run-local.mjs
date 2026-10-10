@@ -7,7 +7,7 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { Connection, Keypair } from '@solana/web3.js'
+import { Connection, Keypair, PublicKey } from '@solana/web3.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const workspace = resolve(here, '..')
@@ -51,10 +51,11 @@ if (
 }
 const testSo = join(workspace, 'target', 'deploy-test', 'quantum_hooks.so')
 if (flags.has('--build') || !existsSync(testSo)) run(wrapper[0], [...wrapper[1], 'build-test'])
-const programKeypair = join(workspace, 'target', 'deploy', 'quantum_hooks-keypair.json')
-const programId = Keypair.fromSecretKey(
-  Uint8Array.from(JSON.parse(readFileSync(programKeypair, 'utf8'))),
-).publicKey
+// The program id the client uses (shared/idl/quantum_hooks.json). The validator loads the test
+// build at that address, so no program keypair is needed (it stays out of git; see README).
+const programId = new PublicKey(
+  JSON.parse(readFileSync(join(repo, 'shared', 'idl', 'quantum_hooks.json'), 'utf8')).address,
+)
 
 // 2. Test-only upgrade authority (initialize_config must be signed by it).
 const keysDir = join(fixtures, '.keys')

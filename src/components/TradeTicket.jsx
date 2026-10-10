@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useWallet } from '../context/WalletContext.jsx'
 import { usePlatform } from '../context/PlatformContext.jsx'
 import { useToast } from './Toasts.jsx'
@@ -6,11 +6,12 @@ import { Segmented, Spinner } from './UI.jsx'
 import { api } from '../lib/api.js'
 import { formatUnits, parseUnits, sol, toSol, bps } from '../lib/format.js'
 import { packTransactions, friendlyWalletError } from '../lib/solana.js'
+import { buyExceedsBalance, maxBuy, platformFee } from '../lib/amounts.js'
+import { explorer } from '../../shared/network.mjs'
 
 const SOL_PRESETS = ['0.1', '0.5', '1', '2']
 const SELL_PRESETS = [25, 50, 75, 100]
-// Leave room for fees and token-account rent when buying with "max".
-const RESERVE = 10_000_000n
+const SIDES = ['buy', 'sell']
 
 export default function TradeTicket({ coin, onTraded }) {
   const { connected, address, balance, openDialog, sendTransactions } = useWallet()
@@ -23,24 +24,42 @@ export default function TradeTicket({ coin, onTraded }) {
   const [market, setMarket] = useState(null)
   const [held, setHeld] = useState(0n)
   const [busy, setBusy] = useState('')
+  // `error` is the last trade's outcome; `marketError` only the latest market refresh's.
   const [error, setError] = useState('')
+  const [errorSignature, setErrorSignature] = useState(null)
+  const [marketError, setMarketError] = useState('')
+  const tabs = useRef({})
 
   useEffect(() => {
     import('../lib/trade.js').then(setTrade)
   }, [])
 
+  // Results are applied only if they are for the coin and wallet shown now.
+  const current = useRef('')
+  const key = `${coin.mint}|${address || ''}`
+  useEffect(() => {
+    current.current = key
+    setMarket(null)
+    setHeld(0n)
+    setMarketError('')
+  }, [key])
+
   const refresh = useCallback(async () => {
     if (!trade) return
+    const requested = `${coin.mint}|${address || ''}`
     try {
       const [state, tokens] = await Promise.all([
         trade.marketState(coin.mint, address),
         address ? trade.tokenBalance(coin.mint, address) : Promise.resolve(0n),
       ])
+      if (current.current !== requested) return
       setMarket(state)
       setHeld(tokens)
+      setMarketError('')
     } catch (e) {
+      if (current.current !== requested) return
       setMarket(null)
-      setError(
+      setMarketError(
         /does not exist/.test(e.message)
           ? e.message
           : 'Could not read this coin’s market from Solana. Retrying shortly.',
@@ -67,14 +86,48 @@ export default function TradeTicket({ coin, onTraded }) {
     }
   }, [trade, market, raw, side, slippage])
 
+  const venue = market?.venue === 'pool' ? 'pool' : 'curve'
   const fee =
     platform.treasury && platform.feeBps && raw
-      ? ((side === 'buy' ? raw : quote?.lamports || 0n) * BigInt(platform.feeBps)) / 10_000n
+      ? platformFee(side === 'buy' ? raw : quote?.lamports || 0n, platform.feeBps)
       : 0n
+  // The amount entered is the most a buy spends on either venue; the check adds the fee, network
+  // fees and the token (and, for a pool, temporary WSOL) account rent.
   const insufficient =
     connected &&
     raw &&
-    (side === 'buy' ? balance != null && raw + fee + 5_000_000n > balance : raw > held)
+    (side === 'buy'
+      ? buyExceedsBalance(raw, balance, { feeBps: platform.feeBps, venue })
+      : raw > held)
+  const maxLamports = balance != null ? maxBuy(balance, { feeBps: platform.feeBps, venue }) : 0n
+
+  function chooseSide(next, { focus = false } = {}) {
+    if (focus) tabs.current[next]?.focus()
+    // re-selecting the current side keeps what the user typed
+    if (next === side) return
+    setSide(next)
+    setAmount('')
+    setError('')
+    setErrorSignature(null)
+  }
+
+  // Tabs pattern: arrow keys, Home and End move between Buy and Sell.
+  function onTabKey(e) {
+    const index = SIDES.indexOf(side)
+    const next =
+      e.key === 'ArrowRight' || e.key === 'ArrowDown'
+        ? SIDES[(index + 1) % SIDES.length]
+        : e.key === 'ArrowLeft' || e.key === 'ArrowUp'
+          ? SIDES[(index + SIDES.length - 1) % SIDES.length]
+          : e.key === 'Home'
+            ? SIDES[0]
+            : e.key === 'End'
+              ? SIDES[SIDES.length - 1]
+              : null
+    if (!next) return
+    e.preventDefault()
+    chooseSide(next, { focus: true })
+  }
 
   async function submit(e) {
     e.preventDefault()
@@ -84,6 +137,7 @@ export default function TradeTicket({ coin, onTraded }) {
         side === 'buy' ? 'Enter how much SOL to spend.' : 'Enter how many tokens to sell.',
       )
     setError('')
+    setErrorSignature(null)
     setBusy('Preparing')
     try {
       const build = side === 'buy' ? trade.buyInstructions : trade.sellInstructions
@@ -120,162 +174,176 @@ export default function TradeTicket({ coin, onTraded }) {
       onTraded?.()
     } catch (err) {
       setError(friendlyWalletError(err))
+      // Sent but not confirmed yet: point at the transaction instead of inviting a second trade.
+      setErrorSignature(err?.unknown ? err.failedSignature || err.signature || null : null)
     } finally {
       setBusy('')
     }
   }
 
-  const venue = market?.venue === 'pool' ? 'PumpSwap pool' : 'pump.fun bonding curve'
+  const venueLabel = market?.venue === 'pool' ? 'PumpSwap pool' : 'pump.fun bonding curve'
+  const tabId = (s) => `ticket-tab-${s}`
   return (
     <form className="instrument ticket" onSubmit={submit} aria-label={`Trade ${coin.symbol}`}>
       <div className="ticket-tabs" role="tablist" aria-label="Trade side">
-        {['buy', 'sell'].map((s) => (
+        {SIDES.map((s) => (
           <button
             key={s}
+            ref={(node) => (tabs.current[s] = node)}
+            id={tabId(s)}
             type="button"
             role="tab"
             aria-selected={side === s}
+            aria-controls="ticket-panel"
+            tabIndex={side === s ? 0 : -1}
             className={`ticket-tab ticket-tab-${s}`}
-            onClick={() => {
-              setSide(s)
-              setAmount('')
-              setError('')
-            }}
+            onClick={() => chooseSide(s)}
+            onKeyDown={onTabKey}
           >
             {s === 'buy' ? 'Buy' : 'Sell'}
           </button>
         ))}
       </div>
 
-      <div className="field">
-        <label htmlFor="ticket-amount">{side === 'buy' ? 'You pay' : 'You sell'}</label>
-        <div className="input-affix">
-          <input
-            id="ticket-amount"
-            className="input num"
-            inputMode="decimal"
-            autoComplete="off"
-            placeholder="0.0"
-            value={amount}
-            aria-invalid={!!insufficient}
-            onChange={(e) => setAmount(e.target.value.replace(',', '.'))}
-          />
-          <span className="affix">{side === 'buy' ? 'SOL' : coin.symbol}</span>
-        </div>
-        <div className="ticket-presets">
-          {side === 'buy'
-            ? SOL_PRESETS.map((p) => (
-                <button key={p} type="button" className="btn btn-sm" onClick={() => setAmount(p)}>
-                  {p} SOL
-                </button>
-              ))
-            : SELL_PRESETS.map((p) => (
-                <button
-                  key={p}
-                  type="button"
-                  className="btn btn-sm"
-                  disabled={!held}
-                  onClick={() =>
-                    setAmount(formatUnits((held * BigInt(p)) / 100n, 6).replace(/,/g, ''))
-                  }
-                >
-                  {p === 100 ? 'Max' : `${p}%`}
-                </button>
-              ))}
-          {side === 'buy' && balance != null && balance > RESERVE && (
-            <button
-              type="button"
-              className="btn btn-sm btn-ghost"
-              onClick={() =>
-                setAmount(
-                  formatUnits(
-                    balance - RESERVE - (balance * BigInt(platform.feeBps || 0)) / 10_000n,
-                    9,
-                    4,
-                  ).replace(/,/g, ''),
-                )
-              }
-            >
-              Max
-            </button>
-          )}
-        </div>
-      </div>
-
-      <dl className="kv ticket-quote">
-        <dt>{side === 'buy' ? 'You receive about' : 'You receive about'}</dt>
-        <dd className="num">
-          {!market ? (
-            <Spinner />
-          ) : quote ? (
-            side === 'buy' ? (
-              `${formatUnits(quote.tokens, 6, 2)} ${coin.symbol}`
-            ) : (
-              sol(toSol(quote.lamports))
-            )
-          ) : (
-            '—'
-          )}
-        </dd>
-        <dt>Slippage limit</dt>
-        <dd>
-          <Segmented
-            label="Slippage"
-            value={slippage}
-            onChange={setSlippage}
-            options={[
-              [1, '1%'],
-              [2, '2%'],
-              [5, '5%'],
-              [15, '15%'],
-            ]}
-          />
-        </dd>
-        {platform.feeBps > 0 && (
-          <>
-            <dt>Quant Pad fee ({bps(platform.feeBps)})</dt>
-            <dd className="num">{sol(toSol(fee))}</dd>
-          </>
-        )}
-        <dt>Route</dt>
-        <dd>{market ? venue : '—'}</dd>
-        {connected && (
-          <>
-            <dt>{side === 'buy' ? 'SOL balance' : `${coin.symbol} balance`}</dt>
-            <dd className="num">
-              {side === 'buy' ? sol(toSol(balance)) : formatUnits(held, 6, 2)}
-            </dd>
-          </>
-        )}
-      </dl>
-
-      {insufficient && (
-        <p className="error-text">
-          Not enough {side === 'buy' ? 'SOL' : coin.symbol} for this amount.
-        </p>
-      )}
-      {error && (
-        <p className="error-text" role="alert">
-          {error}
-        </p>
-      )}
-      <button
-        type="submit"
-        className={`btn btn-lg btn-block ${side === 'buy' ? 'btn-buy' : 'btn-sell'}`}
-        disabled={!!busy || (connected && (!raw || insufficient || !market))}
+      <div
+        id="ticket-panel"
+        role="tabpanel"
+        aria-labelledby={tabId(side)}
+        style={{ display: 'grid', gap: 16, minWidth: 0 }}
       >
-        {busy ? (
-          <>
-            <Spinner /> {busy}
-          </>
-        ) : !connected ? (
-          'Connect wallet to trade'
-        ) : side === 'buy' ? (
-          `Buy ${coin.symbol}`
-        ) : (
-          `Sell ${coin.symbol}`
+        <div className="field">
+          <label htmlFor="ticket-amount">{side === 'buy' ? 'You pay at most' : 'You sell'}</label>
+          <div className="input-affix">
+            <input
+              id="ticket-amount"
+              className="input num"
+              inputMode="decimal"
+              autoComplete="off"
+              placeholder="0.0"
+              value={amount}
+              aria-invalid={!!insufficient}
+              aria-describedby={insufficient ? 'ticket-insufficient' : undefined}
+              onChange={(e) => setAmount(e.target.value.replace(',', '.'))}
+            />
+            <span className="affix">{side === 'buy' ? 'SOL' : coin.symbol}</span>
+          </div>
+          <div className="ticket-presets">
+            {side === 'buy'
+              ? SOL_PRESETS.map((p) => (
+                  <button key={p} type="button" className="btn btn-sm" onClick={() => setAmount(p)}>
+                    {p} SOL
+                  </button>
+                ))
+              : SELL_PRESETS.map((p) => (
+                  <button
+                    key={p}
+                    type="button"
+                    className="btn btn-sm"
+                    disabled={!held}
+                    onClick={() =>
+                      setAmount(formatUnits((held * BigInt(p)) / 100n, 6).replace(/,/g, ''))
+                    }
+                  >
+                    {p === 100 ? 'Max' : `${p}%`}
+                  </button>
+                ))}
+            {side === 'buy' && maxLamports > 0n && (
+              <button
+                type="button"
+                className="btn btn-sm btn-ghost"
+                onClick={() => setAmount(formatUnits(maxLamports, 9, 4).replace(/,/g, ''))}
+              >
+                Max
+              </button>
+            )}
+          </div>
+        </div>
+
+        <dl className="kv ticket-quote">
+          <dt>You receive about</dt>
+          <dd className="num">
+            {!market ? (
+              <Spinner />
+            ) : quote ? (
+              side === 'buy' ? (
+                `${formatUnits(quote.tokens, 6, 2)} ${coin.symbol}`
+              ) : (
+                sol(toSol(quote.lamports))
+              )
+            ) : (
+              '—'
+            )}
+          </dd>
+          <dt>Slippage limit</dt>
+          <dd>
+            <Segmented
+              label="Slippage"
+              value={slippage}
+              onChange={setSlippage}
+              options={[
+                [1, '1%'],
+                [2, '2%'],
+                [5, '5%'],
+                [15, '15%'],
+              ]}
+            />
+          </dd>
+          {platform.feeBps > 0 && (
+            <>
+              <dt>Quant Pad fee ({bps(platform.feeBps)})</dt>
+              <dd className="num">{sol(toSol(fee))}</dd>
+            </>
+          )}
+          <dt>Route</dt>
+          <dd>{market ? venueLabel : '—'}</dd>
+          {connected && (
+            <>
+              <dt>{side === 'buy' ? 'SOL balance' : `${coin.symbol} balance`}</dt>
+              <dd className="num">
+                {side === 'buy' ? sol(toSol(balance)) : formatUnits(held, 6, 2)}
+              </dd>
+            </>
+          )}
+        </dl>
+
+        {insufficient && (
+          <p className="error-text" id="ticket-insufficient">
+            Not enough {side === 'buy' ? 'SOL' : coin.symbol} for this amount
+            {side === 'buy' ? ', its fees and account rent' : ''}.
+          </p>
         )}
-      </button>
+        {marketError && !error && <p className="error-text">{marketError}</p>}
+        {error && (
+          <p className="error-text" role="alert">
+            {error}
+            {errorSignature && (
+              <>
+                {' '}
+                <a href={explorer.tx(errorSignature)} target="_blank" rel="noreferrer">
+                  Check it on Solscan
+                </a>
+              </>
+            )}
+          </p>
+        )}
+        <button
+          type="submit"
+          className={`btn btn-lg btn-block ${side === 'buy' ? 'btn-buy' : 'btn-sell'}`}
+          disabled={!!busy || (connected && (!raw || insufficient || !market))}
+        >
+          {busy ? (
+            <>
+              <Spinner /> {busy}
+            </>
+          ) : !connected ? (
+            'Connect wallet to trade'
+          ) : side === 'buy' ? (
+            `Buy ${coin.symbol}`
+          ) : (
+            `Sell ${coin.symbol}`
+          )}
+        </button>
+      </div>
     </form>
   )
 }

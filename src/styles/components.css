@@ -222,6 +222,7 @@
   gap: 2px;
 }
 .segmented button {
+  flex: none;
   border: 0;
   background: transparent;
   color: var(--steel);
@@ -231,6 +232,8 @@
   border-radius: var(--r-pill);
   cursor: pointer;
   white-space: nowrap;
+  /* inside .kv dd (overflow-wrap: anywhere) labels must still never break per character */
+  overflow-wrap: normal;
 }
 .segmented button[aria-pressed='true'] {
   background: linear-gradient(180deg, #fff, #f1f3f6);
@@ -387,8 +390,18 @@
   border: 1px solid var(--steel-2);
   cursor: pointer;
 }
+/* The track has no outline, so keyboard focus rings the thumb, in solid --focus like every other
+   control (a translucent ring falls under 3:1 on the light track). One rule per engine: a selector
+   list mixing -webkit- and -moz- pseudo-elements is dropped whole by both. */
 .range:focus-visible::-webkit-slider-thumb {
-  box-shadow: 0 0 0 3px rgba(46, 75, 255, 0.4);
+  box-shadow:
+    0 0 0 2px #fff,
+    0 0 0 4px var(--focus);
+}
+.range:focus-visible::-moz-range-thumb {
+  box-shadow:
+    0 0 0 2px #fff,
+    0 0 0 4px var(--focus);
 }
 
 /* ---------- Coin avatar ---------- */
@@ -571,6 +584,10 @@
     0 30px 80px rgba(21, 24, 29, 0.3);
   padding: 24px;
 }
+/* the dialog itself takes focus only as a fallback (no ring around the whole card) */
+.modal:focus {
+  outline: none;
+}
 .modal-head {
   display: flex;
   align-items: center;
@@ -617,6 +634,12 @@
 }
 .empty p {
   max-width: 46ch;
+}
+.empty-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
 }
 .spinner {
   width: 18px;
@@ -681,7 +704,7 @@
   color: var(--on-graphite-2);
 }
 .toast a {
-  color: var(--blue-tint);
+  color: #a9b9ff;
 }
 
 /* ---------- Small pieces ---------- */

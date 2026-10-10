@@ -2,9 +2,12 @@
 #   scripts\anchor-docker.ps1 build        release build + IDL (-> shared\idl\quantum_hooks.json)
 #   scripts\anchor-docker.ps1 build-test   test build with the `short-expiry` feature (target\deploy-test)
 #   scripts\anchor-docker.ps1 unit         Rust unit tests
-#   scripts\anchor-docker.ps1 keys         print the program id (creates/syncs the keypair)
+#   scripts\anchor-docker.ps1 keys         check the program keypair and print the program id
 #   scripts\anchor-docker.ps1 validator <program id> <authority pubkey>   test validator on :8899
 #   scripts\anchor-docker.ps1 shell | <any command>
+# `build` and `keys` need the backed-up target\deploy\quantum_hooks-keypair.json matching
+# declare_id!; they stop instead of generating one. $env:QUANTPAD_NEW_PROGRAM_ID = '1' (passed
+# through) opts in to generating a new program id.
 # Cargo's target dir, registry and git cache live in named volumes (fast on Windows, survive
 # retries); target\deploy, target\deploy-test, target\idl and target\types are bind-mounted back.
 $ErrorActionPreference = 'Stop'
@@ -22,7 +25,7 @@ $DockerArgs = @('run', '--rm')
 if ($Cmd -eq 'shell' -and [Environment]::UserInteractive) { $DockerArgs += '-it' }
 if ($Cmd -eq 'validator') { $DockerArgs += @('-p', '127.0.0.1:8899:8899', '-p', '127.0.0.1:8900:8900') }
 $DockerArgs += @(
-  '-e', 'CARGO_NET_RETRY=10', '-e', 'CARGO_HTTP_TIMEOUT=120',
+  '-e', 'CARGO_NET_RETRY=10', '-e', 'CARGO_HTTP_TIMEOUT=120', '-e', 'QUANTPAD_NEW_PROGRAM_ID',
   '--mount', "type=bind,source=$Repo,target=/work",
   '--mount', "type=volume,source=quantum-hooks-target,target=$T",
   '--mount', "type=bind,source=$(Join-Path $Ws 'target\deploy'),target=$T/deploy",
