@@ -1,0 +1,9 @@
+# Deploy the application and generated artifacts; retain research/test tooling locally.
+.env*
+contracts/
+tests/
+docs/evidence/
+artifacts/
+test-results/
+playwright-report/
+.hookbrew-data/

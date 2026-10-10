@@ -1,10 +1,10 @@
 import { formatUnits } from 'viem'
-export function priceFromSqrt(sqrtPriceX96, token, quote, decimals = 18) {
+export function priceFromSqrt(sqrtPriceX96, token, quote, decimals = 18, quoteDecimals = 18) {
   const ratio = Number(sqrtPriceX96) ** 2 / 2 ** 192
   const price =
     token.toLowerCase() < quote.toLowerCase()
-      ? ratio * 10 ** (decimals - 6)
-      : 10 ** (decimals - 6) / ratio
+      ? ratio * 10 ** (decimals - quoteDecimals)
+      : 10 ** (decimals - quoteDecimals) / ratio
   return Number.isFinite(price) && price > 0 ? price : null
 }
 export function candlesFor(trades, interval = 60) {
@@ -47,7 +47,7 @@ export function decodeTrade(log, token, quote, timestamp, trader) {
     timestamp,
     side: tokenDelta > 0n ? 'buy' : 'sell',
     tokenAmount: formatUnits(tokenDelta < 0n ? -tokenDelta : tokenDelta, 18),
-    quoteAmount: formatUnits(quoteDelta < 0n ? -quoteDelta : quoteDelta, 6),
+    quoteAmount: formatUnits(quoteDelta < 0n ? -quoteDelta : quoteDelta, 18),
     price: priceFromSqrt(a.sqrtPriceX96, token.address, quote),
     trader: trader || null,
     sender: a.sender,

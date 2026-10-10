@@ -89,7 +89,7 @@ export function createIndexer({ client, config, abi, dataDir, store }) {
           try {
             event = decodeEventLog({
               abi:
-                config.abiVersion === 'hookbrew-modular-v1'
+                config.abiVersion === 'hookbrew-modular-v2'
                   ? abi.HookbrewModularFactory
                   : abi.HookbrewFactory,
               ...log,
@@ -134,14 +134,14 @@ export function createIndexer({ client, config, abi, dataDir, store }) {
             launchBlock: Number(log.blockNumber),
             launchTx: log.transactionHash,
             metadataURI: a.metadataURI,
-            initialBuy: formatUnits(a.initialBuy, 6),
+            initialBuy: formatUnits(a.initialBuy, config.quoteDecimals),
             founderTokens: formatUnits(a.tokensBought, 18),
             initialPrice: priceFromSqrt(a.sqrtPriceX96, a.token, config.quote),
             chainId: config.chainId,
           }
         }
         const tokens = Object.values(batchState.tokens)
-        if (config.abiVersion === 'hookbrew-modular-v1') {
+        if (config.abiVersion === 'hookbrew-modular-v2') {
           for (const token of tokens.filter((t) => supplyChanged.has(t.address.toLowerCase())))
             batchState.tokens[token.address.toLowerCase()] = {
               ...token,

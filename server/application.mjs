@@ -10,12 +10,13 @@ import {
   getCreate2Address,
   keccak256,
 } from 'viem'
-import { treasury as configuredTreasury, arcInfrastructure } from './settings.mjs'
+import { treasury as configuredTreasury, robinhoodInfrastructure } from './settings.mjs'
 import { createIndexer } from './indexer.mjs'
 import { createHookRegistry } from './hooks.mjs'
 import { candlesFor } from './market-math.mjs'
 import { configuredStore } from './storage.mjs'
 import { createWriteGuard } from './request-limits.mjs'
+import { storageDirectory, hasNativeConfiguration } from '../shared/network.mjs'
 import abi from '../src/generated/protocol.json' with { type: 'json' }
 
 const json = (res, status, data) => {
@@ -31,7 +32,10 @@ const projectRoot = fileURLToPath(new URL('../', import.meta.url))
 export async function createApplication(options = {}) {
   const treasury = options.treasury || configuredTreasury
   let activating = false
-  const dataDir = resolve(options.dataDir || process.env.HOOKBREW_DATA_DIR || '.hookbrew-data')
+  const dataDir = resolve(
+    options.dataDir || process.env.HOOKBREW_DATA_DIR || '.hookbrew-data',
+    storageDirectory,
+  )
   const deploymentFile = resolve(dataDir, 'deployment.json')
   const store = options.store || configuredStore()
   const serverless = options.serverless === true
@@ -58,7 +62,7 @@ export async function createApplication(options = {}) {
   let config = null,
     indexer = null,
     timer = null
-  const infrastructure = { ...arcInfrastructure, ...options.infrastructure }
+  const infrastructure = { ...robinhoodInfrastructure, ...options.infrastructure }
   const client =
     options.client ||
     createPublicClient({
@@ -134,7 +138,12 @@ export async function createApplication(options = {}) {
         )
       return
     }
-    if (saved.chainId !== infrastructure.chainId || !same(saved.treasury, treasury))
+    if (
+      saved.chainId !== infrastructure.chainId ||
+      saved.abiVersion !== 'hookbrew-v2' ||
+      !hasNativeConfiguration(saved, infrastructure) ||
+      !same(saved.treasury, treasury)
+    )
       throw Error('Stored deployment differs from configured chain/treasury')
     if (JSON.stringify(saved) !== JSON.stringify(config)) await activateLocal(saved)
   }
@@ -528,11 +537,12 @@ export async function createApplication(options = {}) {
               infrastructure.poolManager,
               infrastructure.quote,
               getAddress(treasury),
-              10n ** 18n,
+              BigInt(infrastructure.launchFee),
             ],
           })
           if (
             fr.status !== 'success' ||
+            ft.value !== 0n ||
             !same(ft.to, infrastructure.create2) ||
             ft.input.slice(66) !== data.slice(2)
           )
@@ -552,6 +562,7 @@ export async function createApplication(options = {}) {
           })
           if (
             rr.status !== 'success' ||
+            rt.value !== 0n ||
             rt.to !== null ||
             rt.input !== routerData ||
             !rr.contractAddress
@@ -560,6 +571,14 @@ export async function createApplication(options = {}) {
           const head = await client.getBlockNumber()
           if (head < fr.blockNumber + 1n || head < rr.blockNumber + 1n)
             throw Error('Wait for two deployment confirmations.')
+          const [factoryBlock, routerBlock] = await Promise.all([
+            client.getBlock({ blockNumber: fr.blockNumber }),
+            client.getBlock({ blockNumber: rr.blockNumber }),
+          ])
+          if (factoryBlock.hash !== fr.blockHash || routerBlock.hash !== rr.blockHash)
+            throw Error('Deployment receipts are no longer canonical.')
+          if ((BigInt(factory) & 0x3fffn) !== 0x2080n)
+            throw Error('Invalid factory hook permissions.')
           const vesting = await client.readContract({
             address: factory,
             abi: abi.HookbrewFactory,
@@ -572,7 +591,7 @@ export async function createApplication(options = {}) {
           if (!fc || !rc) throw Error('Deployment code unavailable.')
           const nextConfig = {
             ...infrastructure,
-            abiVersion: 'hookbrew-v1',
+            abiVersion: 'hookbrew-v2',
             factory,
             router: rr.contractAddress,
             vesting,
@@ -582,7 +601,12 @@ export async function createApplication(options = {}) {
             startBlock: Number(fr.blockNumber),
             factoryTx: b.factoryTx,
             routerTx: b.routerTx,
-            sourceReference: 'contracts/protocol @ Hookbrew v1',
+            factorySalt: salt,
+            factoryBuildHash: keccak256(data),
+            routerBuildHash: keccak256(routerData),
+            compiler: factoryArtifact.compiler,
+            compilerSettings: factoryArtifact.compilerSettings,
+            sourceReference: 'contracts/protocol @ Hookbrew v2',
             activatedAt: new Date().toISOString(),
           }
           const saved = await saveDeployment(nextConfig)

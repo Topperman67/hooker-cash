@@ -1,5 +1,6 @@
 // Shared state for serverless deployments. Never expose the REST token to the browser.
-export function createRedisStore({ url, token, prefix = 'hookbrew:v1', request = fetch }) {
+import { storageNamespace } from '../shared/network.mjs'
+export function createRedisStore({ url, token, prefix = storageNamespace, request = fetch }) {
   if (!url?.startsWith('https://') || !token) throw Error('Configure both Redis REST credentials.')
   const key = (name) => `${prefix}:${name}`
   let syncToken
@@ -110,5 +111,10 @@ export function configuredStore(env = process.env) {
   const url = env.UPSTASH_REDIS_REST_URL || env.KV_REST_API_URL
   const token = env.UPSTASH_REDIS_REST_TOKEN || env.KV_REST_API_TOKEN
   if (!url && !token) return null
-  return createRedisStore({ url, token, prefix: env.HOOKBREW_STORAGE_PREFIX || 'hookbrew:v1' })
+  return createRedisStore({
+    url,
+    token,
+    prefix:
+      (env.HOOKBREW_STORAGE_PREFIX ? env.HOOKBREW_STORAGE_PREFIX + ':' : '') + storageNamespace,
+  })
 }

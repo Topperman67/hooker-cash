@@ -5,7 +5,7 @@
   "framework": null,
   "functions": {
     "api/[[...path]].js": {
-      "includeFiles": "{server/**,src/generated/**,src/lib/hookRecipe.js,public/protocol/**}",
+      "includeFiles": "{shared/**,server/**,src/generated/**,src/lib/hookRecipe.js,public/protocol/**}",
       "memory": 1024,
       "maxDuration": 60
     }
@@ -30,7 +30,7 @@
       "headers": [
         {
           "key": "Content-Security-Policy",
-          "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self' https://rpc.mainnet.arc.io https://rpc.drpc.mainnet.arc.io; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+          "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self' https://rpc.mainnet.chain.robinhood.com; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
         },
         {
           "key": "X-Frame-Options",

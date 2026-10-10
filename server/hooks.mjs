@@ -3,6 +3,7 @@ import { resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { getAddress, keccak256 } from 'viem'
+import { hasNativeConfiguration } from '../shared/network.mjs'
 import { normalizeRecipe, recipeHash, hookBuildData, hookAddresses } from '../src/lib/hookRecipe.js'
 
 const root = fileURLToPath(new URL('../', import.meta.url))
@@ -11,13 +12,26 @@ const proxyCode =
   '0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffe03601600081602082378035828234f58015156039578182fd5b8082525050506014600cf3'
 export function createHookRegistry({ client, infrastructure, treasury, store, dataDir, abi }) {
   const directory = resolve(dataDir, 'hooks')
+  function checked(records) {
+    for (const record of records)
+      if (
+        record.chainId !== infrastructure.chainId ||
+        record.abiVersion !== 'hookbrew-modular-v2' ||
+        !hasNativeConfiguration(record, infrastructure) ||
+        !same(record.treasury, treasury)
+      )
+        throw Error('Stored hook belongs to a different chain, version, currency or treasury.')
+    return records
+  }
   async function list() {
-    if (store) return Object.values((await store.get('hooks')) || {})
+    if (store) return checked(Object.values((await store.get('hooks')) || {}))
     try {
-      return await Promise.all(
-        (await readdir(directory))
-          .filter((n) => /^0x[0-9a-f]{64}\.json$/.test(n))
-          .map(async (n) => JSON.parse(await readFile(resolve(directory, n), 'utf8'))),
+      return checked(
+        await Promise.all(
+          (await readdir(directory))
+            .filter((n) => /^0x[0-9a-f]{64}\.json$/.test(n))
+            .map(async (n) => JSON.parse(await readFile(resolve(directory, n), 'utf8'))),
+        ),
       )
     } catch (e) {
       if (e.code === 'ENOENT') return []
@@ -104,7 +118,7 @@ export function createHookRegistry({ client, infrastructure, treasury, store, da
     if (!rc || rc === '0x') throw Error('Hook router is unavailable.')
     return save({
       ...infrastructure,
-      abiVersion: 'hookbrew-modular-v1',
+      abiVersion: 'hookbrew-modular-v2',
       factory,
       router,
       vesting,
@@ -118,6 +132,11 @@ export function createHookRegistry({ client, infrastructure, treasury, store, da
       factoryTx: transactionHash,
       routerTx: transactionHash,
       builtBy: tx.from,
+      packageSalt: tx.input.slice(0, 66),
+      packageBuildHash: build.buildHash,
+      factoryBuildHash: build.factoryCodeHash,
+      compiler: factoryArtifact.compiler,
+      compilerSettings: factoryArtifact.compilerSettings,
       activatedAt: new Date().toISOString(),
     })
   }
