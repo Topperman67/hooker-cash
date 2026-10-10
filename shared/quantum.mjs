@@ -33,7 +33,7 @@ import {
   coinCreatorVaultAuthorityPda,
   lpMintPda,
   userVolumeAccumulatorPda as ammUserVolumeAccumulatorPda,
-} from '@pump-fun/pump-swap-sdk'
+} from '#pump-swap-sdk'
 import idl from './idl/quantum_hooks.json' with { type: 'json' }
 
 export const QUANTUM_IDL = idl

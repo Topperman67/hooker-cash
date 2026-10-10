@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { Connection, PublicKey } from '@solana/web3.js'
 import bs58 from 'bs58'
 import { PUMP_SDK, bondingCurvePda, canonicalPumpPoolPda } from '#pump-sdk'
-import { PUMP_AMM_SDK } from '@pump-fun/pump-swap-sdk'
+import { PUMP_AMM_SDK } from '#pump-swap-sdk'
 import {
   ExtensionType,
   getExtensionData,
