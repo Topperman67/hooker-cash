@@ -945,7 +945,10 @@ test('the index pass and the keeper share the serverless time budget', async () 
     await app.sync({ startedAt: Date.now() })
     assert.deepEqual(calls[0], ['sync', { budget: 3, timeMs: 15_000 }])
     const keeperLimit = calls[1]?.[1]?.timeLimitMs
-    assert.ok(keeperLimit > 32_000 && keeperLimit <= 33_000, `keeper gets the rest (${keeperLimit})`)
+    assert.ok(
+      keeperLimit > 32_000 && keeperLimit <= 33_000,
+      `keeper gets the rest (${keeperLimit})`,
+    )
   } finally {
     Date.now = realNow
     delete process.env.CRON_SECRET

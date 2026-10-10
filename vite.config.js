@@ -42,7 +42,22 @@ export default defineConfig({
   },
   server: {
     port: 5173,
-    host: true,
+    // The dev server serves files from the repository root, which holds the program's deploy keypair
+    // and local data: keep it on this machine. Use `--host` explicitly to test from a phone on the LAN.
+    host: '127.0.0.1',
+    fs: {
+      deny: [
+        '.env',
+        '.env.*',
+        '*.{crt,pem,key}',
+        '**/.git/**',
+        '**/target/**',
+        '**/*keypair*.json',
+        '**/.quantpad-data/**',
+        '**/programs/**',
+        '**/scripts/**',
+      ],
+    },
     // Windows can miss atomic file replacements and keep stale transformed components.
     watch: {
       usePolling: process.platform === 'win32',
