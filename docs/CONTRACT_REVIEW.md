@@ -1,3 +1,5 @@
+> Historical Arc-era evidence. Current deployment and operation: [Robinhood v2](ROBINHOOD_MIGRATION.md). Values, addresses, and test counts below describe the earlier implementation.
+
 # Hookbrew integration and contract review
 
 Checked 2026-09-17 UTC. **The full launch project is incomplete. This is an integration review and test record, not a security audit or approval to deploy.**

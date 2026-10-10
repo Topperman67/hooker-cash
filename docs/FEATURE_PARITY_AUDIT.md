@@ -1,3 +1,5 @@
+> Historical Arc-era evidence. Current deployment and operation: [Robinhood v2](ROBINHOOD_MIGRATION.md). Values, addresses, and test counts below describe the earlier implementation.
+
 # Hookbrew: reference-site feature audit
 
 Audit date: 17 September 2026. Reference: the public Hooker site, primarily its Arc configuration. Comparison: the current working tree, including uncommitted changes, based on commit `bfbab6a92d9755182cb9d92c772fb8ed06bac521`.

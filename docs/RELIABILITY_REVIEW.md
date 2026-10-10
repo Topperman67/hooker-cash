@@ -1,3 +1,5 @@
+> Historical Arc-era evidence. Current deployment and operation: [Robinhood v2](ROBINHOOD_MIGRATION.md). Values, addresses, and test counts below describe the earlier implementation.
+
 # Hookbrew reliability review — 2026-09-17
 
 Status: **local review complete**. This is an engineering review and regression campaign, not an independent contract audit or a guarantee of economic safety.

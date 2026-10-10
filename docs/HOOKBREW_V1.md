@@ -1,3 +1,5 @@
+> Historical Arc-era evidence. Current deployment and operation: [Robinhood v2](ROBINHOOD_MIGRATION.md). Values, addresses, and test counts below describe the earlier implementation.
+
 # Hookbrew v1 implementation
 
 This build replaces the default two-field launch placeholder with a five-stage studio and adds an independent contract venue, a persistent event API, and a chart/trading terminal. It implements the core launch → market → buy/sell flow requested after the reference-site audit. The older audit documents are a point-in-time baseline; their missing-backend/source observations no longer describe this build.

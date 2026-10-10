@@ -1,3 +1,5 @@
+> Historical Arc-era evidence. Current deployment and operation: [Robinhood v2](ROBINHOOD_MIGRATION.md). Values, addresses, and test counts below describe the earlier implementation.
+
 # Hookbrew feature-parity backlog
 
 Derived from the [reference-site audit](FEATURE_PARITY_AUDIT.md), 17 September 2026. This is a requirements backlog, not a list of changes implemented during the audit. IDs are stable work items; each row may need multiple implementation tasks.

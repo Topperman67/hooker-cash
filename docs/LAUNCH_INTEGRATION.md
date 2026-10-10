@@ -1,3 +1,5 @@
+> Historical Arc-era evidence. Current deployment and operation: [Robinhood v2](ROBINHOOD_MIGRATION.md). Values, addresses, and test counts below describe the earlier implementation.
+
 # Launch transaction integration
 
 The application now contains a real Arc V10 launch transaction builder, wallet-send path, and receipt verifier. **The production deployment is still unset and launching remains disabled.** Current factory/module implementation sources and the user's deployment/treasury decision are outstanding.
