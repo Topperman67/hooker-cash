@@ -1,9 +1,9 @@
-# Deploy the application and generated artifacts; retain research/test tooling locally.
+# Deploy the web app and API only; the on-chain program and test tooling stay local.
 .env*
-contracts/
+programs/
 tests/
-docs/evidence/
 artifacts/
 test-results/
 playwright-report/
+.quantpad-data/
 .hookbrew-data/

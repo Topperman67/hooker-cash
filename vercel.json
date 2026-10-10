@@ -3,10 +3,14 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "framework": null,
+  "git": {
+    "deploymentEnabled": {
+      "main": false
+    }
+  },
   "functions": {
     "api/[[...path]].js": {
-      "includeFiles": "{shared/**,server/**,src/generated/**,src/lib/hookRecipe.js,public/protocol/**}",
-      "memory": 1024,
+      "includeFiles": "{shared/**,server/**}",
       "maxDuration": 60
     }
   },
@@ -20,7 +24,11 @@
       "destination": "/api/[[...path]]"
     },
     {
-      "source": "/((?!api/|media/).*)",
+      "source": "/m/:path*",
+      "destination": "/api/[[...path]]"
+    },
+    {
+      "source": "/((?!api/|media/|m/).*)",
       "destination": "/index.html"
     }
   ],
@@ -30,7 +38,7 @@
       "headers": [
         {
           "key": "Content-Security-Policy",
-          "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self' https://rpc.mainnet.chain.robinhood.com; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+          "value": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; connect-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
         },
         {
           "key": "X-Frame-Options",

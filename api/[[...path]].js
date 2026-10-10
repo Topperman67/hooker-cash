@@ -6,7 +6,7 @@ let appPromise
 async function getApp() {
   if (!appPromise) {
     appPromise = createApplication({
-      dataDir: process.env.HOOKBREW_DATA_DIR || '/tmp/hookbrew-data',
+      dataDir: process.env.QUANTPAD_DATA_DIR || '/tmp/quantpad-data',
       serverless: true,
     }).catch((error) => {
       appPromise = null
@@ -52,7 +52,9 @@ export default async function handler(req, res) {
     // Serverless instances can stop as soon as the response ends. Register the
     // bounded index pass with the platform instead of relying on setInterval.
     waitUntil(
-      Promise.resolve(app.sync()).catch((error) => console.error('Hookbrew index:', error.message)),
+      Promise.resolve(app.sync()).catch((error) =>
+        console.error('Quant Pad background:', error.message),
+      ),
     )
   } catch (e) {
     if (!res.headersSent) {

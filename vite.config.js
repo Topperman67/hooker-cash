@@ -6,7 +6,7 @@ export default defineConfig({
   plugins: [
     react(),
     {
-      name: 'hookbrew-api',
+      name: 'quantpad-api',
       async configureServer(server) {
         const app = await createApplication()
         server.middlewares.use(app.middleware)
@@ -14,6 +14,20 @@ export default defineConfig({
       },
     },
   ],
+  // Solana libraries expect Node's `global`; Buffer is installed in src/polyfills.js.
+  define: { global: 'globalThis' },
+  build: {
+    chunkSizeWarningLimit: 1200,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          solana: ['@solana/web3.js', '@solana/spl-token', 'bn.js', 'buffer'],
+          pump: ['@pump-fun/pump-sdk', '@pump-fun/pump-swap-sdk', '@coral-xyz/anchor'],
+          charts: ['lightweight-charts'],
+        },
+      },
+    },
+  },
   server: {
     port: 5173,
     host: true,
@@ -21,7 +35,7 @@ export default defineConfig({
     watch: {
       usePolling: process.platform === 'win32',
       interval: 500,
-      ignored: ['**/.hookbrew-data/**', '**/artifacts/**'],
+      ignored: ['**/.quantpad-data/**', '**/artifacts/**', '**/programs/**'],
     },
   },
 })

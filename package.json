@@ -1,33 +1,40 @@
 {
-  "name": "hookbrew",
+  "name": "quantpad",
   "private": true,
-  "version": "1.0.0",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
     "start": "node server/start.mjs",
-    "contracts:build": "npm run compile --prefix contracts/protocol && node scripts/export-protocol.mjs && node scripts/prepare-robinhood.mjs",
-    "contracts:test": "npm run contracts:build && npm test --prefix contracts/protocol",
     "test:e2e": "npm run build && playwright test",
     "test:unit": "node --test tests/unit/*.test.mjs",
-    "format": "prettier --write src server shared tests scripts/export-protocol.mjs scripts/prepare-robinhood.mjs scripts/test-robinhood-fork.mjs scripts/verify-robinhood.mjs contracts/protocol/hardhat.config.cjs contracts/protocol/scripts contracts/protocol/test/native.cjs contracts/protocol/test/robinhood-fork.cjs vite.config.js playwright.config.js index.html package.json README.md DESIGN.md \"docs/*.md\" vercel.json .github/workflows/verify.yml",
-    "format:check": "prettier --check src server shared tests scripts/export-protocol.mjs scripts/prepare-robinhood.mjs scripts/test-robinhood-fork.mjs scripts/verify-robinhood.mjs contracts/protocol/hardhat.config.cjs contracts/protocol/scripts contracts/protocol/test/native.cjs contracts/protocol/test/robinhood-fork.cjs vite.config.js playwright.config.js index.html package.json README.md DESIGN.md \"docs/*.md\" vercel.json .github/workflows/verify.yml",
-    "contracts:test:fork": "node scripts/test-robinhood-fork.mjs",
-    "contracts:verify": "node scripts/verify-robinhood.mjs"
+    "format": "prettier --write src server shared tests api vite.config.js playwright.config.js index.html README.md DESIGN.md \"docs/*.md\"",
+    "format:check": "prettier --check src server shared tests api vite.config.js playwright.config.js index.html README.md DESIGN.md \"docs/*.md\"",
+    "program:build": "bash scripts/anchor-docker.sh build",
+    "program:test": "node programs/quantum-hooks/tests/run-local.mjs",
+    "program:unit": "bash scripts/anchor-docker.sh unit"
   },
   "dependencies": {
-    "@fontsource-variable/dm-sans": "^5.3.0",
-    "@fontsource-variable/outfit": "^5.3.0",
+    "@coral-xyz/anchor": "^0.31.1",
+    "@fontsource-variable/manrope": "^5.3.0",
+    "@fontsource-variable/unbounded": "^5.3.0",
+    "@pump-fun/pump-sdk": "^4.0.0",
+    "@pump-fun/pump-swap-sdk": "^2.1.0",
+    "@solana/spl-token": "^0.4.15",
+    "@solana/wallet-standard-features": "^1.5.0",
+    "@solana/web3.js": "^1.99.0",
     "@vercel/functions": "^3.9.8",
+    "@wallet-standard/app": "^1.1.1",
+    "bn.js": "^5.2.5",
+    "bs58": "^6.0.0",
+    "buffer": "^6.0.3",
     "lightweight-charts": "^5.2.0",
     "lucide-react": "^1.46.0",
-    "quick-liquid": "^0.1.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "react-router-dom": "^7.1.1",
-    "viem": "^2.56.6"
+    "react-router-dom": "^7.1.1"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",
@@ -37,5 +44,11 @@
   },
   "allowScripts": {
     "esbuild@0.25.12": true
+  },
+  "imports": {
+    "#pump-sdk": {
+      "node": "./shared/vendor/pump-sdk.node.mjs",
+      "default": "@pump-fun/pump-sdk"
+    }
   }
 }

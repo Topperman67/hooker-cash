@@ -9,5 +9,10 @@ dist
 test-results
 playwright-report
 artifacts
+.quantpad-data
 .hookbrew-data
-contracts/protocol/cache
+programs/quantum-hooks/target
+programs/quantum-hooks/node_modules
+programs/quantum-hooks/.anchor
+programs/quantum-hooks/test-ledger
+programs/quantum-hooks/tests/fixtures/*.so

@@ -13,6 +13,9 @@ const types = {
   '.svg': 'image/svg+xml',
   '.json': 'application/json',
   '.woff2': 'font/woff2',
+  '.webp': 'image/webp',
+  '.ico': 'image/x-icon',
+  '.webmanifest': 'application/manifest+json',
 }
 const server = createServer((req, res) => {
   for (const [name, value] of Object.entries(securityHeaders)) res.setHeader(name, value)
@@ -48,7 +51,7 @@ const server = createServer((req, res) => {
   })
 })
 server.listen(Number(process.env.PORT || 5173), process.env.HOST || '127.0.0.1', () =>
-  console.log(`Hookbrew server listening on ${process.env.PORT || 5173}`),
+  console.log(`Quant Pad server listening on ${process.env.PORT || 5173}`),
 )
 process.on('SIGTERM', () => {
   app.close()

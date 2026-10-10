@@ -1,5 +1,10 @@
-// Shared state for serverless deployments. Never expose the REST token to the browser.
+// Persistent key/value storage. Redis (Upstash REST) for serverless, the filesystem for a single
+// long-running server. Both expose the same interface so application code has one path.
+import { readFile, writeFile, mkdir, link, unlink, rename, stat, readdir } from 'node:fs/promises'
+import { resolve } from 'node:path'
+import { createHash, randomBytes } from 'node:crypto'
 import { storageNamespace } from '../shared/network.mjs'
+
 export function createRedisStore({ url, token, prefix = storageNamespace, request = fetch }) {
   if (!url?.startsWith('https://') || !token) throw Error('Configure both Redis REST credentials.')
   const key = (name) => `${prefix}:${name}`
@@ -29,6 +34,7 @@ export function createRedisStore({ url, token, prefix = storageNamespace, reques
     }
   }
   return {
+    mode: 'redis',
     async incrementExpiring(name, ttl) {
       return Number(
         await command(
@@ -70,18 +76,6 @@ export function createRedisStore({ url, token, prefix = storageNamespace, reques
         JSON.stringify(owner),
       )
     },
-    async saveIndex(name, value, owner) {
-      const saved = await command(
-        'EVAL',
-        "if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end redis.call('SET', KEYS[2], ARGV[2]) return 1",
-        2,
-        key(`${name}:lock`),
-        key(name),
-        JSON.stringify(owner),
-        JSON.stringify(value),
-      )
-      if (!saved) throw Error('Index lease expired; the next request will resume indexing.')
-    },
     async putMedia(name, bytes, limit) {
       const result = await command(
         'EVAL',
@@ -100,10 +94,114 @@ export function createRedisStore({ url, token, prefix = storageNamespace, reques
         limit,
       )
       if (!result)
-        throw Object.assign(Error('Media storage is full. Contact the venue operator.'), {
-          status: 507,
-        })
+        throw Object.assign(Error('Media storage is full. Contact the operator.'), { status: 507 })
     },
+    async getMedia(name) {
+      const value = await command('GET', key(`media:${name}`))
+      if (value === null) throw Object.assign(Error('Not found'), { code: 'ENOENT' })
+      return Buffer.from(JSON.parse(value), 'base64')
+    },
+  }
+}
+
+export function createFileStore(dir) {
+  const kv = resolve(dir, 'kv'),
+    mediaDir = resolve(dir, 'media')
+  const file = (name) => resolve(kv, createHash('sha256').update(name).digest('hex') + '.json')
+  const counters = new Map()
+  let mediaBytes = null
+  async function read(name) {
+    try {
+      const entry = JSON.parse(await readFile(file(name), 'utf8'))
+      if (entry.expires && entry.expires < Date.now()) return null
+      return entry.value
+    } catch (e) {
+      if (e.code === 'ENOENT') return null
+      throw e
+    }
+  }
+  async function write(name, value, ttl) {
+    await mkdir(kv, { recursive: true })
+    const temporary = `${file(name)}.${randomBytes(8).toString('hex')}.tmp`
+    await writeFile(temporary, JSON.stringify({ value, expires: ttl ? Date.now() + ttl : 0 }))
+    return temporary
+  }
+  return {
+    mode: 'filesystem',
+    async incrementExpiring(name, ttl) {
+      const now = Date.now()
+      for (const [k, v] of counters) if (v.expires < now) counters.delete(k)
+      const entry = counters.get(name) || { count: 0, expires: now + ttl }
+      entry.count++
+      counters.set(name, entry)
+      return entry.count
+    },
+    async increment(name, amount = 1) {
+      const next = Number((await read(name)) || 0) + amount
+      await rename(await write(name, next), file(name))
+      return next
+    },
+    get: read,
+    async set(name, value, { nx = false, ttl = 0 } = {}) {
+      const temporary = await write(name, value, ttl)
+      if (!nx) {
+        await rename(temporary, file(name))
+        return true
+      }
+      try {
+        if ((await read(name)) !== null) return false
+        try {
+          await unlink(file(name))
+        } catch {}
+        await link(temporary, file(name))
+        return true
+      } catch (e) {
+        if (e.code === 'EEXIST') return false
+        throw e
+      } finally {
+        try {
+          await unlink(temporary)
+        } catch {}
+      }
+    },
+    async delete(name) {
+      try {
+        await unlink(file(name))
+      } catch (e) {
+        if (e.code !== 'ENOENT') throw e
+      }
+    },
+    async release(name, owner) {
+      if (JSON.stringify(await read(name)) === JSON.stringify(owner)) await this.delete(name)
+    },
+    async putMedia(name, bytes, limit) {
+      const target = resolve(mediaDir, name)
+      try {
+        await stat(target)
+        return
+      } catch (e) {
+        if (e.code !== 'ENOENT') throw e
+      }
+      if (mediaBytes === null) {
+        mediaBytes = 0
+        try {
+          for (const n of await readdir(mediaDir))
+            mediaBytes += (await stat(resolve(mediaDir, n))).size
+        } catch (e) {
+          if (e.code !== 'ENOENT') throw e
+        }
+      }
+      if (mediaBytes + bytes.length > limit)
+        throw Object.assign(Error('Media storage is full. Contact the operator.'), { status: 507 })
+      await mkdir(mediaDir, { recursive: true })
+      try {
+        await writeFile(target, bytes, { flag: 'wx' })
+        mediaBytes += bytes.length
+      } catch (e) {
+        if (e.code !== 'EEXIST') throw e
+      }
+    },
+    getMedia: (name) => readFile(resolve(mediaDir, name)),
   }
 }
 
@@ -115,6 +213,6 @@ export function configuredStore(env = process.env) {
     url,
     token,
     prefix:
-      (env.HOOKBREW_STORAGE_PREFIX ? env.HOOKBREW_STORAGE_PREFIX + ':' : '') + storageNamespace,
+      (env.QUANTPAD_STORAGE_PREFIX ? env.QUANTPAD_STORAGE_PREFIX + ':' : '') + storageNamespace,
   })
 }
