@@ -1,110 +1,157 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createApplication } from '../../server/application.mjs'
-import { createIndexer } from '../../server/indexer.mjs'
-import { sharedStore } from '../fixtures/shared-store.mjs'
-import { robinhoodInfrastructure, treasury } from '../../server/settings.mjs'
-import abi from '../../src/generated/protocol.json' with { type: 'json' }
+import { mkdtempSync, readFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { createIndexer, stats, summarize } from '../../server/indexer.mjs'
+import { createFileStore } from '../../server/storage.mjs'
+import { candlesFor } from '../../server/market-math.mjs'
 
-const hash = (n) => `0x${BigInt(n).toString(16).padStart(64, '0')}`
-const config = {
-  ...robinhoodInfrastructure,
-  treasury,
-  factory: `0x${'11'.repeat(20)}`,
-  startBlock: 1,
-}
-function clientFixture() {
-  return {
-    getChainId: async () => robinhoodInfrastructure.chainId,
-    getBlockNumber: async () => 5n,
-    getBlock: async ({ blockNumber }) => ({
-      hash: hash(blockNumber),
-      timestamp: 100n + blockNumber,
-    }),
-    getLogs: async () => [],
-  }
-}
+const now = 1_800_000_000
+const trade = (i, price, sol, timestamp, side = 'buy') => ({
+  id: `sig${i}:0`,
+  slot: i,
+  timestamp,
+  side,
+  price,
+  solAmount: String(sol * 1e9),
+  tokenAmount: '1000000',
+})
 
-test('custom indexing rotates across cold instances and reaches every registered recipe', async () => {
-  const store = sharedStore(),
-    visited = new Set(),
-    client = clientFixture()
-  client.getLogs = async ({ address }) => {
-    visited.add(address)
-    return []
-  }
-  const hooks = Object.fromEntries(
-    Array.from({ length: 8 }, (_, i) => [
-      hash(i + 1),
-      {
-        ...config,
-        abiVersion: 'hookbrew-modular-v2',
-        factory: `0x${(i + 100).toString(16).padStart(40, '0')}`,
-        recipeHash: hash(i + 1),
-      },
-    ]),
+test('24h stats use only the window and compare against the last pre-window price', () => {
+  const trades = [
+    trade(4, 0.0003, 2, now - 60),
+    trade(3, 0.0002, 1, now - 3600, 'sell'),
+    trade(2, 0.0001, 5, now - 90000),
+    trade(1, 0.00005, 9, now - 100000),
+  ]
+  const s = stats(trades, now)
+  assert.equal(s.volume24h, 3)
+  assert.equal(s.trades24h, 2)
+  assert.equal(s.buys24h, 1)
+  assert.equal(s.sells24h, 1)
+  assert.ok(Math.abs(s.change24h - 200) < 1e-9)
+  assert.ok(Math.abs(s.marketCap - 300000) < 1e-6)
+})
+
+test('candles bucket by interval with OHLC and SOL volume', () => {
+  const candles = candlesFor(
+    [trade(1, 1, 1, 120), trade(2, 3, 2, 130), trade(3, 2, 1, 179), trade(4, 5, 1, 181)],
+    60,
   )
-  await store.set('hooks', hooks)
-  for (let i = 0; i < 3; i++) {
-    const app = await createApplication({ store, client, serverless: true })
-    try {
-      await app.sync()
-    } finally {
-      app.close()
-    }
+  assert.deepEqual(candles, [
+    { time: 120, open: 1, high: 3, low: 1, close: 2, volume: 4 },
+    { time: 180, open: 5, high: 5, low: 5, close: 5, volume: 1 },
+  ])
+})
+
+test('market filters, searches, hides and sorts the stored list', async () => {
+  const store = createFileStore(mkdtempSync(join(tmpdir(), 'qp-index-')))
+  const coin = (mint, extra) =>
+    summarize({ mint, name: mint, symbol: mint.slice(0, 3), createdAt: 1, ...extra })
+  await store.set('coins:list', [
+    coin('AAAquantum1111111111111111111111111', {
+      quantum: true,
+      volume24h: 5,
+      createdAt: 3,
+      launcher: 'L1',
+    }),
+    coin('BBBgraduated11111111111111111111111', { complete: true, volume24h: 9, createdAt: 2 }),
+    coin('CCCexternal111111111111111111111111', { external: true, volume24h: 99 }),
+  ])
+  const indexer = createIndexer({ connection: null, store })
+  assert.deepEqual(
+    (await indexer.market({ sort: 'volume' })).items.map((c) => c.symbol),
+    ['BBB', 'AAA'],
+  )
+  assert.deepEqual(
+    (await indexer.market({ filter: 'quantum' })).items.map((c) => c.symbol),
+    ['AAA'],
+  )
+  assert.deepEqual(
+    (await indexer.market({ filter: 'graduated' })).items.map((c) => c.symbol),
+    ['BBB'],
+  )
+  assert.deepEqual(
+    (await indexer.market({ filter: 'tracked' })).items.map((c) => c.symbol),
+    ['CCC'],
+  )
+  assert.deepEqual(
+    (await indexer.market({ q: 'bbbgrad' })).items.map((c) => c.symbol),
+    ['BBB'],
+  )
+  assert.deepEqual(
+    (await indexer.market({ launcher: 'L1' })).items.map((c) => c.symbol),
+    ['AAA'],
+  )
+  assert.deepEqual(
+    (await indexer.market({ hidden: new Set(['AAAquantum1111111111111111111111111']) })).items.map(
+      (c) => c.symbol,
+    ),
+    ['BBB'],
+  )
+})
+
+test('registerLaunch indexes a real create transaction and its dev buy', async () => {
+  const { signature, tx } = JSON.parse(
+    readFileSync(new URL('../fixtures/pump-create.json', import.meta.url), 'utf8'),
+  )
+  const store = createFileStore(mkdtempSync(join(tmpdir(), 'qp-launch-')))
+  // A fake connection: the create transaction is served by the raw JSON-RPC fetch, and
+  // signature listings return just that signature.
+  const rpcEndpoint = 'http://fixture.invalid'
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (url, init) => {
+    assert.equal(url, rpcEndpoint)
+    const calls = JSON.parse(init.body)
+    return new Response(
+      JSON.stringify(
+        calls.map((c) => ({
+          jsonrpc: '2.0',
+          id: c.id,
+          result: c.params[0] === signature ? tx : null,
+        })),
+      ),
+    )
   }
-  assert.equal(visited.size, 8)
-  for (const h of Object.values(hooks)) {
-    const saved = await store.get(`index:${config.chainId}:${h.factory}`)
-    assert.equal(saved.cursor, 3)
-    assert.equal(saved.error, null)
+  const connection = {
+    rpcEndpoint,
+    getSignaturesForAddress: async () => [{ signature, err: null }],
+  }
+  try {
+    const indexer = createIndexer({ connection, store, isQuantumCreator: async () => false })
+    const coin = await indexer.registerLaunch(signature)
+    assert.equal(coin.signature, signature)
+    assert.equal(coin.external, false)
+    const list = await indexer.list()
+    assert.equal(list.length, 1)
+    assert.equal(list[0].mint, coin.mint)
+    const trades = await indexer.trades(coin.mint)
+    assert.ok(trades.total >= 1, 'the dev buy in the create transaction is indexed')
+    assert.ok(list[0].price > 0)
+    // Registering twice is idempotent.
+    assert.equal((await indexer.registerLaunch(signature)).mint, coin.mint)
+    assert.equal((await indexer.list()).length, 1)
+  } finally {
+    globalThis.fetch = originalFetch
   }
 })
 
-test('a reorganization during a batch cannot commit mixed chain data', async () => {
-  const store = sharedStore(),
-    client = clientFixture()
-  let forked = false
-  client.getBlock = async ({ blockNumber }) => ({
-    hash: hash(blockNumber + (forked ? 100n : 0n)),
-    timestamp: 100n,
-  })
-  client.getLogs = async () => {
-    forked = true
-    return []
+test('registerLaunch rejects signatures that are not coin creations', async () => {
+  const { signature, tx } = JSON.parse(
+    readFileSync(new URL('../fixtures/pump-trade.json', import.meta.url), 'utf8'),
+  )
+  const store = createFileStore(mkdtempSync(join(tmpdir(), 'qp-launch-')))
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async (_, init) =>
+    new Response(
+      JSON.stringify(JSON.parse(init.body).map((c) => ({ jsonrpc: '2.0', id: c.id, result: tx }))),
+    )
+  try {
+    const indexer = createIndexer({ connection: { rpcEndpoint: 'http://x.invalid' }, store })
+    await assert.rejects(() => indexer.registerLaunch(signature), /did not create a pump\.fun coin/)
+    await assert.rejects(() => indexer.registerLaunch('not-a-signature'), /signature/)
+  } finally {
+    globalThis.fetch = originalFetch
   }
-  const first = createIndexer({ store, client, config, abi, dataDir: '.' })
-  await first.sync()
-  const failed = await store.get(`index:${config.chainId}:${config.factory}`)
-  assert.equal(failed.cursor, 0)
-  assert.equal(failed.blockHash, null)
-  assert.match(failed.error, /Chain changed/)
-  const next = createIndexer({ store, client, config, abi, dataDir: '.' })
-  await next.sync()
-  assert.equal(next.status().cursor, 3)
-  assert.equal(next.status().error, null)
-})
-
-test('failed index reloads cannot replace durable state with an empty checkpoint', async () => {
-  const store = sharedStore(),
-    key = `index:${config.chainId}:${config.factory}`
-  const checkpoint = {
-    factory: config.factory,
-    chainId: config.chainId,
-    cursor: 3,
-    blockHash: hash(3),
-    tokens: {},
-    trades: {},
-    error: null,
-  }
-  await store.set(key, checkpoint)
-  const get = store.get
-  store.get = async (name) => {
-    if (name === key) throw Error('private RPC credentials')
-    return get(name)
-  }
-  const indexer = createIndexer({ store, client: clientFixture(), config, abi, dataDir: '.' })
-  await indexer.sync()
-  assert.deepEqual(await get(key), checkpoint)
-  assert.doesNotMatch(indexer.status().error, /private|credentials/)
 })

@@ -1,31 +1,18 @@
-name: Verify Hookbrew
+name: Verify Quant Pad
 on:
   push:
-    branches: [main]
+    branches: [main, quantpad]
   pull_request:
   workflow_dispatch:
-    inputs:
-      robinhood_fork:
-        description: Rehearse against Robinhood mainnet infrastructure on a local fork
-        type: boolean
-        default: false
 permissions:
   contents: read
 concurrency:
   group: verify-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  verify:
+  web:
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    services:
-      redis:
-        image: redis:7-alpine
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -34,29 +21,18 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            contracts/protocol/package-lock.json
       - run: npm ci
-      - run: npm ci --ignore-scripts --prefix contracts/protocol
-      - run: npm audit --audit-level=moderate
-      - run: npm audit --audit-level=moderate --prefix contracts/protocol
-      - run: npm run contracts:test
-      - name: Rehearse Robinhood infrastructure without broadcasting transactions
-        if: github.event_name == 'workflow_dispatch' && inputs.robinhood_fork
-        run: npm run contracts:test:fork
-      - name: Verify committed contract artifacts match the pinned compiler
-        run: git diff --exit-code -- public/protocol src/generated/protocol.json
       - run: npm run test:unit
-        env:
-          HOOKBREW_REDIS_TEST_CONTAINER: ${{ job.services.redis.id }}
       - run: npm run format:check
+      - run: npm run build
       - run: npx playwright install --with-deps chromium
-      - run: npm run test:e2e
+      - run: npx playwright test
       - name: Save browser diagnostics on failure
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: browser-diagnostics
-          path: test-results/
+          path: |
+            test-results
+            playwright-report
           retention-days: 7
