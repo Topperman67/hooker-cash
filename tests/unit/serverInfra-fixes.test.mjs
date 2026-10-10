@@ -722,9 +722,10 @@ test('.gitattributes checks text out with LF on every platform', () => {
   assert.doesNotMatch(attributes, /contracts\/protocol/)
 })
 
-test('vercel.json keeps main deploys paused and caches hashed assets', () => {
+test('vercel.json deploys main and caches hashed assets', () => {
   const vercel = JSON.parse(readFileSync(join(root, 'vercel.json'), 'utf8'))
-  assert.deepEqual(vercel.git.deploymentEnabled, { main: false })
+  // production follows main (the pause used while it was being configured is lifted)
+  assert.notEqual(vercel.git?.deploymentEnabled?.main, false)
   const assets = vercel.headers.find((h) => h.source === '/assets/(.*)')
   assert.equal(
     assets.headers.find((h) => h.key === 'Cache-Control').value,

@@ -3,11 +3,6 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "framework": null,
-  "git": {
-    "deploymentEnabled": {
-      "main": false
-    }
-  },
   "functions": {
     "api/[[...path]].js": {
       "includeFiles": "{shared/**,server/**}",

@@ -11,7 +11,7 @@ This runbook takes Quant Pad from an empty Vercel project to live Quantum launch
 4. Set `QUANTPAD_RPC_URL` to a provider endpoint. The free public endpoint throttles `getTransaction` hard enough that indexing falls behind.
 5. Deploy, then open `/api/status`. Expect `storage.ready: true`, a SOL price, and `quantum.available: false` until step 3.
 
-**Git deployments of `main` are paused.** `vercel.json` sets `git.deploymentEnabled` to `{ "main": false }`, so pushes to `main` do not create Vercel deployments until production is configured. Until then, deploy by hand: run `vercel deploy --prod` from a checkout, or use **Redeploy** in the Vercel dashboard. Every "redeploy" in this runbook means one of those. Once production is configured and verified, re-enable automatic deploys by removing the `git` block from `vercel.json` (or setting `"main": true`) and pushing that change; if that push does not deploy, redeploy it once by hand. Until then, pump.fun SDK updates merged to `main` do not reach production on their own.
+**Pushes to `main` deploy to production.** Vercel builds every push to `main` from GitHub. To hold deploys while production is being reconfigured, add `"git": { "deploymentEnabled": { "main": false } }` to `vercel.json` and push that change; deploy by hand meanwhile with `vercel deploy --prod` from a clean checkout, or **Redeploy** in the Vercel dashboard. Every "redeploy" in this runbook means one of those.
 
 ## 2. Lookup table (**wallet**, about 0.01 SOL)
 
