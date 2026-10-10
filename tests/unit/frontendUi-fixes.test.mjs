@@ -417,16 +417,18 @@ const saturate = ([r, g, b], s) =>
     [0.213 - 0.213 * s, 0.715 - 0.715 * s, 0.072 + 0.928 * s],
   ].map(([x, y, z]) => Math.min(255, Math.max(0, x * r + y * g + z * b)))
 
-// Darkest pixel of the bare studio (no content) with the light pools at opacity 0.55, found by
-// rendering /market at 360-1920px wide across the pools' whole drift cycle: the blue pool.
-const STUDIO_DARKEST = [159, 171, 245]
+// Darkest pixel of the bare studio (no content) with the light pools at opacity 0.75 and the blue
+// pool at 0.5, found by rendering /market at 360-1920px wide across the pools' whole drift cycle:
+// pink over blue.
+const STUDIO_DARKEST = [176, 138, 225]
 const WHITE = [255, 255, 255]
 const token = (name) => hex(decl(base, ':root', name))
 const ratio = (name, bg) => contrast(token(name), bg).toFixed(2)
 
 test('muted text keeps WCAG AA 4.5:1 over the worst studio light, on glass and off it', () => {
   // The measured backdrop above is only valid while the pools are no brighter than this.
-  assert.ok(Number(decl(glass, '.studio-pool', 'opacity')) <= 0.55)
+  assert.ok(Number(decl(glass, '.studio-pool', 'opacity')) <= 0.75)
+  assert.ok(Number(decl(glass, '.studio-blue', 'opacity')) <= 0.5)
 
   // Text straight on the page (page heads, prose, docs nav, header links).
   for (const name of ['--steel', '--ink-2', '--ink'])

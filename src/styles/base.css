@@ -13,8 +13,8 @@
   /* Text sits on translucent glass over coloured studio light, so muted text is measured against
      the darkest light that can drift behind it (the blue pool under glass, or straight behind
      page copy) and keeps WCAG AA 4.5:1 there. tests/unit/frontendUi-fixes.test.mjs checks it. */
-  --steel: #3a414c;
-  --steel-2: #505866;
+  --steel: #2d333c;
+  --steel-2: #424854;
   --ink: #15181d;
   --ink-2: #2b3038;
 
@@ -28,7 +28,7 @@
 
   /* the four light lines */
   --blue: #2e4bff;
-  --blue-deep: #1b33e0;
+  --blue-deep: #1529c4;
   --blue-tint: #8fa4ff;
   --pink: #ff3ea5;
   --green: #12c26e;
@@ -44,8 +44,8 @@
   --hook-dilation: var(--yellow-tint);
 
   /* trade direction: deeper shades on pearl, full brightness on graphite */
-  --buy: #05602f;
-  --sell: #a01050;
+  --buy: #045229;
+  --sell: #8f0c47;
   --buy-bright: #18d47a;
   --sell-bright: #ff92ce;
   --focus: #2e4bff;
