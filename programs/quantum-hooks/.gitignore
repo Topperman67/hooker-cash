@@ -1,0 +1,9 @@
+target/
+.anchor/
+.test-ledger/
+test-ledger/
+node_modules/
+# Mainnet dumps are fetched by tests/fixtures/fetch-fixtures.mjs
+tests/fixtures/programs/*.so
+tests/fixtures/accounts/
+tests/fixtures/.keys/

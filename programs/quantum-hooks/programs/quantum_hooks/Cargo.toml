@@ -1,0 +1,28 @@
+[package]
+name = "quantum_hooks"
+version = "0.1.0"
+description = "Quant Pad Quantum Hooks: creator-fee routing for pump.fun coins"
+edition = "2021"
+# Solana platform-tools v1.43 ships rustc/cargo 1.79: lock dependencies to versions that build with it
+# (`scripts/anchor-docker.* lock` resolves with CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback).
+rust-version = "1.79"
+license = "UNLICENSED"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "lib"]
+name = "quantum_hooks"
+
+[features]
+default = []
+cpi = ["no-entrypoint"]
+no-entrypoint = []
+no-idl = []
+no-log-ix-name = []
+idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
+# Test-only: Entanglement epochs expire after 20 s instead of 30 days. Never deploy with it.
+short-expiry = []
+
+[dependencies]
+anchor-lang = { version = "=0.31.1", features = ["init-if-needed"] }
+anchor-spl = { version = "=0.31.1", default-features = false, features = ["associated_token", "token", "token_2022", "mint"] }

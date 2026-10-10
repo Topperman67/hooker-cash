@@ -1,0 +1,29 @@
+name: Quantum Hooks program
+# Manual: the build needs the program keypair (not in git) to keep the committed program ID, and the
+# suite fetches pump.fun programs from mainnet. Add the keypair as a secret before automating this.
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Restore the program keypair
+        env:
+          PROGRAM_KEYPAIR: ${{ secrets.QUANTUM_HOOKS_PROGRAM_KEYPAIR }}
+        run: |
+          test -n "$PROGRAM_KEYPAIR" || { echo "Set the QUANTUM_HOOKS_PROGRAM_KEYPAIR secret"; exit 1; }
+          mkdir -p programs/quantum-hooks/target/deploy
+          printf '%s' "$PROGRAM_KEYPAIR" > programs/quantum-hooks/target/deploy/quantum_hooks-keypair.json
+      - run: bash scripts/anchor-docker.sh unit
+      - run: node programs/quantum-hooks/tests/run-local.mjs

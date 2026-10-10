@@ -1,0 +1,15 @@
+{
+  "name": "quantum-hooks-tests",
+  "private": true,
+  "type": "module",
+  "description": "End-to-end tests for the quantum_hooks Anchor program. Uses the repo root node_modules (no install needed).",
+  "scripts": {
+    "fixtures": "node tests/fixtures/fetch-fixtures.mjs",
+    "test:unit": "node --test tests/merkle.test.ts tests/client.test.ts",
+    "test:e2e": "node tests/run-local.mjs",
+    "test": "node tests/run-local.mjs"
+  },
+  "engines": {
+    "node": ">=23.6"
+  }
+}

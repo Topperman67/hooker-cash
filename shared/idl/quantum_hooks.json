@@ -1,0 +1,2619 @@
+{
+  "address": "FgAfzGavpUSkhRo1Z1CWuGRrcz1AgZVFrkPeji8DuvWK",
+  "metadata": {
+    "name": "quantum_hooks",
+    "version": "0.1.0",
+    "spec": "0.1.0",
+    "description": "Quant Pad Quantum Hooks: creator-fee routing for pump.fun coins"
+  },
+  "instructions": [
+    {
+      "name": "claim_entanglement",
+      "discriminator": [
+        51,
+        78,
+        239,
+        131,
+        225,
+        71,
+        80,
+        36
+      ],
+      "accounts": [
+        {
+          "name": "claimant",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "quantum",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  113,
+                  117,
+                  97,
+                  110,
+                  116,
+                  117,
+                  109
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "quantum.mint",
+                "account": "Quantum"
+              }
+            ]
+          }
+        },
+        {
+          "name": "well",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  119,
+                  101,
+                  108,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "quantum.mint",
+                "account": "Quantum"
+              }
+            ]
+          }
+        },
+        {
+          "name": "epoch",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  112,
+                  111,
+                  99,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "quantum.mint",
+                "account": "Quantum"
+              },
+              {
+                "kind": "arg",
+                "path": "index"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "index",
+          "type": "u32"
+        },
+        {
+          "name": "leaf_index",
+          "type": "u32"
+        },
+        {
+          "name": "amount",
+          "type": "u64"
+        },
+        {
+          "name": "proof",
+          "type": {
+            "vec": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "close_epoch",
+      "discriminator": [
+        13,
+        87,
+        7,
+        133,
+        109,
+        14,
+        83,
+        25
+      ],
+      "accounts": [
+        {
+          "name": "quantum",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  113,
+                  117,
+                  97,
+                  110,
+                  116,
+                  117,
+                  109
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "quantum.mint",
+                "account": "Quantum"
+              }
+            ]
+          }
+        },
+        {
+          "name": "epoch",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  112,
+                  111,
+                  99,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "quantum.mint",
+                "account": "Quantum"
+              },
+              {
+                "kind": "arg",
+                "path": "index"
+              }
+            ]
+          }
+        },
+        {
+          "name": "payer",
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "index",
+          "type": "u32"
+        }
+      ]
+    },
+    {
+      "name": "fusion",
+      "discriminator": [
+        206,
+        106,
+        177,
+        144,
+        1,
+        151,
+        67,
+        100
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  113,
+                  112,
+                  45,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "quantum",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  113,
+                  117,
+                  97,
+                  110,
+                  116,
+                  117,
+                  109
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "well",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  119,
+                  101,
+                  108,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint",
+          "writable": true,
+          "relations": [
+            "quantum"
+          ]
+        },
+        {
+          "name": "well_token_ata",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "well"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "well_wsol_ata",
+          "writable": true
+        },
+        {
+          "name": "wsol_mint",
+          "address": "So11111111111111111111111111111111111111112"
+        },
+        {
+          "name": "pool"
+        },
+        {
+          "name": "lp_mint"
+        },
+        {
+          "name": "well_lp_ata",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "well"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "lp_mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "token_program",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "quote_token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "target_program",
+          "address": "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA"
+        }
+      ],
+      "args": [
+        {
+          "name": "spend",
+          "type": "u64"
+        },
+        {
+          "name": "buy_data",
+          "type": "bytes"
+        },
+        {
+          "name": "buy_account_count",
+          "type": "u8"
+        },
+        {
+          "name": "deposit_data",
+          "type": "bytes"
+        }
+      ]
+    },
+    {
+      "name": "initialize_config",
+      "discriminator": [
+        208,
+        127,
+        21,
+        1,
+        194,
+        190,
+        196,
+        70
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  113,
+                  112,
+                  45,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "program",
+          "docs": [
+            "Only the upgrade authority may initialize, so nobody can front-run the deploy."
+          ],
+          "address": "FgAfzGavpUSkhRo1Z1CWuGRrcz1AgZVFrkPeji8DuvWK"
+        },
+        {
+          "name": "program_data"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "treasury",
+          "type": "pubkey"
+        },
+        {
+          "name": "keeper",
+          "type": "pubkey"
+        },
+        {
+          "name": "protocol_bps",
+          "type": "u16"
+        },
+        {
+          "name": "max_burn_lamports",
+          "type": "u64"
+        },
+        {
+          "name": "min_action_interval",
+          "type": "i64"
+        },
+        {
+          "name": "keeper_grace",
+          "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "lock",
+      "discriminator": [
+        21,
+        19,
+        208,
+        43,
+        237,
+        62,
+        255,
+        87
+      ],
+      "accounts": [
+        {
+          "name": "launcher",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "quantum"
+          ]
+        },
+        {
+          "name": "quantum",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  113,
+                  117,
+                  97,
+                  110,
+                  116,
+                  117,
+                  109
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint",
+          "relations": [
+            "quantum"
+          ]
+        },
+        {
+          "name": "launcher_token",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "launcher"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "lock_ata",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "quantum"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "amount",
+          "type": "u64"
+        },
+        {
+          "name": "cliff_secs",
+          "type": "i64"
+        },
+        {
+          "name": "duration_secs",
+          "type": "i64"
+        }
+      ]
+    },
+    {
+      "name": "post_entanglement",
+      "discriminator": [
+        101,
+        112,
+        13,
+        212,
+        145,
+        113,
+        183,
+        186
+      ],
+      "accounts": [
+        {
+          "name": "keeper",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  113,
+                  112,
+                  45,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "quantum",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  113,
+                  117,
+                  97,
+                  110,
+                  116,
+                  117,
+                  109
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "quantum.mint",
+                "account": "Quantum"
+              }
+            ]
+          }
+        },
+        {
+          "name": "epoch",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  112,
+                  111,
+                  99,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "quantum.mint",
+                "account": "Quantum"
+              },
+              {
+                "kind": "account",
+                "path": "quantum.epoch_count",
+                "account": "Quantum"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "root",
+          "type": {
+            "array": [
+              "u8",
+              32
+            ]
+          }
+        },
+        {
+          "name": "total",
+          "type": "u64"
+        },
+        {
+          "name": "leaf_count",
+          "type": "u32"
+        }
+      ]
+    },
+    {
+      "name": "pulse",
+      "discriminator": [
+        192,
+        224,
+        96,
+        191,
+        190,
+        177,
+        63,
+        34
+      ],
+      "accounts": [
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  113,
+                  112,
+                  45,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "quantum",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  113,
+                  117,
+                  97,
+                  110,
+                  116,
+                  117,
+                  109
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "quantum.mint",
+                "account": "Quantum"
+              }
+            ]
+          }
+        },
+        {
+          "name": "well",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  119,
+                  101,
+                  108,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "quantum.mint",
+                "account": "Quantum"
+              }
+            ]
+          }
+        },
+        {
+          "name": "treasury",
+          "writable": true
+        },
+        {
+          "name": "launcher",
+          "writable": true
+        },
+        {
+          "name": "well_wsol_ata",
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "token_program",
+          "optional": true,
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "quantum_burn",
+      "discriminator": [
+        11,
+        92,
+        28,
+        102,
+        175,
+        34,
+        1,
+        154
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  113,
+                  112,
+                  45,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "quantum",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  113,
+                  117,
+                  97,
+                  110,
+                  116,
+                  117,
+                  109
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "well",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  119,
+                  101,
+                  108,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint",
+          "writable": true,
+          "relations": [
+            "quantum"
+          ]
+        },
+        {
+          "name": "well_token_ata",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "well"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "well_wsol_ata",
+          "docs": [
+            "`spend` into it and closes it back into the well afterwards. The curve route omits it",
+            "(and `wsol_mint` / `quote_token_program`) to keep the transaction small."
+          ],
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "wsol_mint",
+          "optional": true,
+          "address": "So11111111111111111111111111111111111111112"
+        },
+        {
+          "name": "token_program",
+          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+        },
+        {
+          "name": "quote_token_program",
+          "optional": true,
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "target_program"
+        }
+      ],
+      "args": [
+        {
+          "name": "spend",
+          "type": "u64"
+        },
+        {
+          "name": "cpi_data",
+          "type": "bytes"
+        }
+      ]
+    },
+    {
+      "name": "register",
+      "discriminator": [
+        211,
+        124,
+        67,
+        15,
+        211,
+        194,
+        178,
+        240
+      ],
+      "accounts": [
+        {
+          "name": "launcher",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "mint",
+          "docs": [
+            "The fresh mint keypair pump.fun `create_v2` initialises right after this instruction.",
+            "Its signature binds the hooks to whoever creates the coin."
+          ],
+          "signer": true
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  113,
+                  112,
+                  45,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "quantum",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  113,
+                  117,
+                  97,
+                  110,
+                  116,
+                  117,
+                  109
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "well",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  119,
+                  101,
+                  108,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": [
+        {
+          "name": "params",
+          "type": {
+            "defined": {
+              "name": "RegisterParams"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "release",
+      "discriminator": [
+        253,
+        249,
+        15,
+        206,
+        28,
+        127,
+        193,
+        241
+      ],
+      "accounts": [
+        {
+          "name": "launcher",
+          "writable": true,
+          "signer": true,
+          "relations": [
+            "quantum"
+          ]
+        },
+        {
+          "name": "quantum",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  113,
+                  117,
+                  97,
+                  110,
+                  116,
+                  117,
+                  109
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint",
+          "relations": [
+            "quantum"
+          ]
+        },
+        {
+          "name": "launcher_token",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "launcher"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "lock_ata",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "account",
+                "path": "quantum"
+              },
+              {
+                "kind": "account",
+                "path": "token_program"
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ],
+            "program": {
+              "kind": "const",
+              "value": [
+                140,
+                151,
+                37,
+                143,
+                78,
+                36,
+                137,
+                241,
+                187,
+                61,
+                16,
+                41,
+                20,
+                142,
+                13,
+                131,
+                11,
+                90,
+                19,
+                153,
+                218,
+                255,
+                16,
+                132,
+                4,
+                142,
+                123,
+                216,
+                219,
+                233,
+                248,
+                89
+              ]
+            }
+          }
+        },
+        {
+          "name": "token_program"
+        },
+        {
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+        },
+        {
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        }
+      ],
+      "args": []
+    },
+    {
+      "name": "update_config",
+      "discriminator": [
+        29,
+        158,
+        252,
+        191,
+        10,
+        83,
+        219,
+        99
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  113,
+                  112,
+                  45,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "treasury",
+          "type": "pubkey"
+        },
+        {
+          "name": "keeper",
+          "type": "pubkey"
+        },
+        {
+          "name": "protocol_bps",
+          "type": "u16"
+        },
+        {
+          "name": "max_burn_lamports",
+          "type": "u64"
+        },
+        {
+          "name": "min_action_interval",
+          "type": "i64"
+        },
+        {
+          "name": "keeper_grace",
+          "type": "i64"
+        },
+        {
+          "name": "paused",
+          "type": "bool"
+        },
+        {
+          "name": "new_authority",
+          "type": "pubkey"
+        }
+      ]
+    }
+  ],
+  "accounts": [
+    {
+      "name": "Config",
+      "discriminator": [
+        155,
+        12,
+        170,
+        224,
+        30,
+        250,
+        204,
+        130
+      ]
+    },
+    {
+      "name": "Epoch",
+      "discriminator": [
+        93,
+        83,
+        120,
+        89,
+        151,
+        138,
+        152,
+        108
+      ]
+    },
+    {
+      "name": "Quantum",
+      "discriminator": [
+        231,
+        24,
+        112,
+        31,
+        90,
+        217,
+        2,
+        120
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "Burned",
+      "discriminator": [
+        207,
+        37,
+        251,
+        154,
+        239,
+        229,
+        14,
+        67
+      ]
+    },
+    {
+      "name": "Claimed",
+      "discriminator": [
+        217,
+        192,
+        123,
+        72,
+        108,
+        150,
+        248,
+        33
+      ]
+    },
+    {
+      "name": "ConfigUpdated",
+      "discriminator": [
+        40,
+        241,
+        230,
+        122,
+        11,
+        19,
+        198,
+        194
+      ]
+    },
+    {
+      "name": "EpochClosed",
+      "discriminator": [
+        21,
+        4,
+        48,
+        56,
+        29,
+        169,
+        77,
+        42
+      ]
+    },
+    {
+      "name": "EpochPosted",
+      "discriminator": [
+        209,
+        179,
+        100,
+        54,
+        239,
+        61,
+        41,
+        16
+      ]
+    },
+    {
+      "name": "Fused",
+      "discriminator": [
+        21,
+        204,
+        251,
+        12,
+        200,
+        182,
+        121,
+        202
+      ]
+    },
+    {
+      "name": "Locked",
+      "discriminator": [
+        188,
+        53,
+        118,
+        62,
+        64,
+        12,
+        198,
+        84
+      ]
+    },
+    {
+      "name": "Pulsed",
+      "discriminator": [
+        50,
+        157,
+        171,
+        237,
+        205,
+        247,
+        194,
+        232
+      ]
+    },
+    {
+      "name": "Registered",
+      "discriminator": [
+        11,
+        222,
+        10,
+        72,
+        160,
+        110,
+        165,
+        227
+      ]
+    },
+    {
+      "name": "Released",
+      "discriminator": [
+        232,
+        229,
+        255,
+        136,
+        101,
+        189,
+        15,
+        220
+      ]
+    }
+  ],
+  "errors": [
+    {
+      "code": 6000,
+      "name": "InvalidAllocation",
+      "msg": "Allocation bps (creator + burn + entangle + fusion) must sum to 10000"
+    },
+    {
+      "code": 6001,
+      "name": "TooManySplits",
+      "msg": "At most 4 Superposition splits are allowed"
+    },
+    {
+      "code": 6002,
+      "name": "InvalidSplitBps",
+      "msg": "Each split needs 1..=10000 bps and all splits together at most 10000"
+    },
+    {
+      "code": 6003,
+      "name": "InvalidSplitWallet",
+      "msg": "Split wallets must not be the default key, the well or duplicates"
+    },
+    {
+      "code": 6004,
+      "name": "InvalidLockTerms",
+      "msg": "Invalid lock terms: need 0 <= cliff <= duration and 0 < duration <= 4 years"
+    },
+    {
+      "code": 6005,
+      "name": "LockTermsMismatch",
+      "msg": "Lock terms differ from the ones registered for this coin"
+    },
+    {
+      "code": 6006,
+      "name": "MintNotFresh",
+      "msg": "The mint must be a fresh keypair account with no lamports and no data"
+    },
+    {
+      "code": 6007,
+      "name": "Paused",
+      "msg": "Quant Pad is paused"
+    },
+    {
+      "code": 6008,
+      "name": "ProtocolBpsTooHigh",
+      "msg": "protocol_bps exceeds the 1000 bps hard cap"
+    },
+    {
+      "code": 6009,
+      "name": "InvalidConfig",
+      "msg": "Invalid config value"
+    },
+    {
+      "code": 6010,
+      "name": "NotUpgradeAuthority",
+      "msg": "Only the program upgrade authority can initialize the config"
+    },
+    {
+      "code": 6011,
+      "name": "NotAuthority",
+      "msg": "Signer is not the config authority"
+    },
+    {
+      "code": 6012,
+      "name": "NotLauncher",
+      "msg": "Signer is not this coin's launcher"
+    },
+    {
+      "code": 6013,
+      "name": "AlreadyLocked",
+      "msg": "Dev tokens are already locked for this coin"
+    },
+    {
+      "code": 6014,
+      "name": "ZeroAmount",
+      "msg": "Amount must be greater than zero"
+    },
+    {
+      "code": 6015,
+      "name": "NothingToRelease",
+      "msg": "Nothing has vested beyond what was already released"
+    },
+    {
+      "code": 6016,
+      "name": "NothingToPulse",
+      "msg": "Less than 0.001 SOL is available to pulse"
+    },
+    {
+      "code": 6017,
+      "name": "SplitAccountsMismatch",
+      "msg": "Remaining accounts must be the stored Superposition wallets, writable, in order"
+    },
+    {
+      "code": 6018,
+      "name": "MissingTokenProgram",
+      "msg": "The SPL Token program is required to unwrap the well's WSOL account"
+    },
+    {
+      "code": 6019,
+      "name": "KeeperOnly",
+      "msg": "Only the keeper may act until the keeper grace period has passed"
+    },
+    {
+      "code": 6020,
+      "name": "TooSoon",
+      "msg": "The minimum interval between actions has not elapsed"
+    },
+    {
+      "code": 6021,
+      "name": "SpendTooHigh",
+      "msg": "Spend exceeds the module reserve or the per-action cap"
+    },
+    {
+      "code": 6022,
+      "name": "Overspent",
+      "msg": "The CPI spent more lamports than authorised"
+    },
+    {
+      "code": 6023,
+      "name": "InvalidTargetProgram",
+      "msg": "Target program must be pump.fun or PumpSwap"
+    },
+    {
+      "code": 6024,
+      "name": "DisallowedInstruction",
+      "msg": "CPI instruction is not on the discriminator allow-list"
+    },
+    {
+      "code": 6025,
+      "name": "MintNotInCpi",
+      "msg": "CPI accounts must include the coin's mint"
+    },
+    {
+      "code": 6026,
+      "name": "WellNotInCpi",
+      "msg": "CPI accounts must include the well"
+    },
+    {
+      "code": 6027,
+      "name": "NotCanonicalPool",
+      "msg": "PumpSwap CPIs must target the coin's canonical pool"
+    },
+    {
+      "code": 6028,
+      "name": "NothingBought",
+      "msg": "The buy delivered no tokens to the well"
+    },
+    {
+      "code": 6029,
+      "name": "NoLiquidityAdded",
+      "msg": "The deposit minted no LP tokens to the well"
+    },
+    {
+      "code": 6030,
+      "name": "InvalidBuyAccountCount",
+      "msg": "Invalid buy account count for fusion"
+    },
+    {
+      "code": 6031,
+      "name": "InvalidLeafCount",
+      "msg": "Entanglement leaf count must be 1..=16384"
+    },
+    {
+      "code": 6032,
+      "name": "InsufficientEntangleReserve",
+      "msg": "Epoch total exceeds the Entanglement reserve"
+    },
+    {
+      "code": 6033,
+      "name": "EpochExpired",
+      "msg": "This Entanglement epoch has expired"
+    },
+    {
+      "code": 6034,
+      "name": "EpochNotExpired",
+      "msg": "This Entanglement epoch has not expired yet"
+    },
+    {
+      "code": 6035,
+      "name": "LeafOutOfRange",
+      "msg": "Leaf index out of range"
+    },
+    {
+      "code": 6036,
+      "name": "AlreadyClaimed",
+      "msg": "This leaf was already claimed"
+    },
+    {
+      "code": 6037,
+      "name": "InvalidProof",
+      "msg": "Invalid merkle proof"
+    },
+    {
+      "code": 6038,
+      "name": "ProofTooLong",
+      "msg": "Merkle proof is too long"
+    },
+    {
+      "code": 6039,
+      "name": "ClaimExceedsTotal",
+      "msg": "Claim would exceed the epoch total"
+    },
+    {
+      "code": 6040,
+      "name": "MathOverflow",
+      "msg": "Arithmetic overflow"
+    },
+    {
+      "code": 6041,
+      "name": "WellInvariant",
+      "msg": "Well balance is below its rent minimum plus reserved ledgers"
+    }
+  ],
+  "types": [
+    {
+      "name": "Burned",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "caller",
+            "type": "pubkey"
+          },
+          {
+            "name": "venue",
+            "docs": [
+              "0 = bonding curve (pump.fun), 1 = PumpSwap pool."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "spent",
+            "type": "u64"
+          },
+          {
+            "name": "tokens_burned",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Claimed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "index",
+            "type": "u32"
+          },
+          {
+            "name": "leaf_index",
+            "type": "u32"
+          },
+          {
+            "name": "claimant",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Config",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "treasury",
+            "type": "pubkey"
+          },
+          {
+            "name": "keeper",
+            "type": "pubkey"
+          },
+          {
+            "name": "protocol_bps",
+            "type": "u16"
+          },
+          {
+            "name": "max_burn_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "min_action_interval",
+            "type": "i64"
+          },
+          {
+            "name": "keeper_grace",
+            "type": "i64"
+          },
+          {
+            "name": "paused",
+            "type": "bool"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "reserved",
+            "type": {
+              "array": [
+                "u8",
+                64
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "ConfigUpdated",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "authority",
+            "type": "pubkey"
+          },
+          {
+            "name": "treasury",
+            "type": "pubkey"
+          },
+          {
+            "name": "keeper",
+            "type": "pubkey"
+          },
+          {
+            "name": "protocol_bps",
+            "type": "u16"
+          },
+          {
+            "name": "max_burn_lamports",
+            "type": "u64"
+          },
+          {
+            "name": "min_action_interval",
+            "type": "i64"
+          },
+          {
+            "name": "keeper_grace",
+            "type": "i64"
+          },
+          {
+            "name": "paused",
+            "type": "bool"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Epoch",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "index",
+            "type": "u32"
+          },
+          {
+            "name": "root",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "total",
+            "type": "u64"
+          },
+          {
+            "name": "claimed",
+            "type": "u64"
+          },
+          {
+            "name": "leaf_count",
+            "type": "u32"
+          },
+          {
+            "name": "created_at",
+            "type": "i64"
+          },
+          {
+            "name": "expires_at",
+            "type": "i64"
+          },
+          {
+            "name": "payer",
+            "type": "pubkey"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "bitmap",
+            "docs": [
+              "One bit per leaf, `ceil(leaf_count / 8)` bytes."
+            ],
+            "type": "bytes"
+          }
+        ]
+      }
+    },
+    {
+      "name": "EpochClosed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "index",
+            "type": "u32"
+          },
+          {
+            "name": "unclaimed",
+            "type": "u64"
+          },
+          {
+            "name": "payer",
+            "type": "pubkey"
+          }
+        ]
+      }
+    },
+    {
+      "name": "EpochPosted",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "index",
+            "type": "u32"
+          },
+          {
+            "name": "root",
+            "type": {
+              "array": [
+                "u8",
+                32
+              ]
+            }
+          },
+          {
+            "name": "total",
+            "type": "u64"
+          },
+          {
+            "name": "leaf_count",
+            "type": "u32"
+          },
+          {
+            "name": "expires_at",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Fused",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "caller",
+            "type": "pubkey"
+          },
+          {
+            "name": "spent",
+            "type": "u64"
+          },
+          {
+            "name": "lp_received",
+            "type": "u64"
+          },
+          {
+            "name": "tokens_burned",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "LockTerms",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "cliff_secs",
+            "type": "i64"
+          },
+          {
+            "name": "duration_secs",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Locked",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "launcher",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "lock_start",
+            "type": "i64"
+          },
+          {
+            "name": "lock_cliff",
+            "type": "i64"
+          },
+          {
+            "name": "lock_end",
+            "type": "i64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Pulsed",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "unwrapped",
+            "docs": [
+              "Lamports unwrapped from the well's WSOL account before allocation."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "collected",
+            "docs": [
+              "Unallocated lamports this pulse distributed (`available`)."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "protocol",
+            "type": "u64"
+          },
+          {
+            "name": "launcher_paid",
+            "type": "u64"
+          },
+          {
+            "name": "splits_paid",
+            "type": "u64"
+          },
+          {
+            "name": "burn_added",
+            "type": "u64"
+          },
+          {
+            "name": "entangle_added",
+            "type": "u64"
+          },
+          {
+            "name": "fusion_added",
+            "type": "u64"
+          },
+          {
+            "name": "deferred",
+            "docs": [
+              "Payments skipped because the recipient could not hold them (would stay below its rent",
+              "minimum, or is executable). They stay in the well and are re-pulsed later."
+            ],
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Quantum",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "launcher",
+            "type": "pubkey"
+          },
+          {
+            "name": "bump",
+            "type": "u8"
+          },
+          {
+            "name": "well_bump",
+            "type": "u8"
+          },
+          {
+            "name": "created_at",
+            "type": "i64"
+          },
+          {
+            "name": "creator_bps",
+            "type": "u16"
+          },
+          {
+            "name": "burn_bps",
+            "type": "u16"
+          },
+          {
+            "name": "entangle_bps",
+            "type": "u16"
+          },
+          {
+            "name": "fusion_bps",
+            "type": "u16"
+          },
+          {
+            "name": "split_count",
+            "type": "u8"
+          },
+          {
+            "name": "splits",
+            "type": {
+              "array": [
+                {
+                  "defined": {
+                    "name": "Split"
+                  }
+                },
+                4
+              ]
+            }
+          },
+          {
+            "name": "burn_reserve",
+            "type": "u64"
+          },
+          {
+            "name": "entangle_reserve",
+            "type": "u64"
+          },
+          {
+            "name": "entangle_owed",
+            "type": "u64"
+          },
+          {
+            "name": "fusion_reserve",
+            "type": "u64"
+          },
+          {
+            "name": "total_collected",
+            "type": "u64"
+          },
+          {
+            "name": "total_protocol",
+            "type": "u64"
+          },
+          {
+            "name": "total_creator_paid",
+            "type": "u64"
+          },
+          {
+            "name": "total_burn_sol",
+            "type": "u64"
+          },
+          {
+            "name": "total_burned_tokens",
+            "type": "u64"
+          },
+          {
+            "name": "total_claimed",
+            "type": "u64"
+          },
+          {
+            "name": "total_fused_sol",
+            "type": "u64"
+          },
+          {
+            "name": "epoch_count",
+            "type": "u32"
+          },
+          {
+            "name": "locked_amount",
+            "type": "u64"
+          },
+          {
+            "name": "released_amount",
+            "type": "u64"
+          },
+          {
+            "name": "lock_start",
+            "type": "i64"
+          },
+          {
+            "name": "lock_cliff",
+            "type": "i64"
+          },
+          {
+            "name": "lock_end",
+            "type": "i64"
+          },
+          {
+            "name": "last_burn_at",
+            "type": "i64"
+          },
+          {
+            "name": "last_fusion_at",
+            "type": "i64"
+          },
+          {
+            "name": "planned_cliff_secs",
+            "docs": [
+              "Lock terms committed at registration (0/0 = none planned). `lock` must use them."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "planned_duration_secs",
+            "type": "i64"
+          },
+          {
+            "name": "reserved",
+            "type": {
+              "array": [
+                "u8",
+                48
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "RegisterParams",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "creator_bps",
+            "type": "u16"
+          },
+          {
+            "name": "burn_bps",
+            "type": "u16"
+          },
+          {
+            "name": "entangle_bps",
+            "type": "u16"
+          },
+          {
+            "name": "fusion_bps",
+            "type": "u16"
+          },
+          {
+            "name": "splits",
+            "type": {
+              "vec": {
+                "defined": {
+                  "name": "Split"
+                }
+              }
+            }
+          },
+          {
+            "name": "lock",
+            "docs": [
+              "Time Dilation terms the later `lock` must use; `None` when no lock is planned."
+            ],
+            "type": {
+              "option": {
+                "defined": {
+                  "name": "LockTerms"
+                }
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "name": "Registered",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "launcher",
+            "type": "pubkey"
+          },
+          {
+            "name": "well",
+            "type": "pubkey"
+          },
+          {
+            "name": "creator_bps",
+            "type": "u16"
+          },
+          {
+            "name": "burn_bps",
+            "type": "u16"
+          },
+          {
+            "name": "entangle_bps",
+            "type": "u16"
+          },
+          {
+            "name": "fusion_bps",
+            "type": "u16"
+          },
+          {
+            "name": "split_count",
+            "type": "u8"
+          },
+          {
+            "name": "lock_cliff_secs",
+            "type": "i64"
+          },
+          {
+            "name": "lock_duration_secs",
+            "type": "i64"
+          },
+          {
+            "name": "well_funded",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Released",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "launcher",
+            "type": "pubkey"
+          },
+          {
+            "name": "amount",
+            "type": "u64"
+          },
+          {
+            "name": "released_total",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Split",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "wallet",
+            "type": "pubkey"
+          },
+          {
+            "name": "bps",
+            "docs": [
+              "Share of the creator slice in bps."
+            ],
+            "type": "u16"
+          }
+        ]
+      }
+    }
+  ]
+}

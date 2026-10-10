@@ -2,3 +2,6 @@
 # the existing immutable deployments, including historical line endings.
 # Normalize these only as part of a separately versioned contract build.
 contracts/protocol/contracts/*.sol -text whitespace=cr-at-eol
+
+# Shell scripts run inside Linux containers (scripts/anchor-docker.sh, programs/quantum-hooks/scripts).
+*.sh text eol=lf
