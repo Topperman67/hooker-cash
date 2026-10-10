@@ -76,6 +76,7 @@
 }
 .hero-copy {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: 24px;
 }
 .hero-title {
@@ -503,6 +504,9 @@
   background-position: var(--gx, 30%) var(--gy, 30%);
   mix-blend-mode: screen;
   opacity: 0.7;
+  /* foil stays bright at the edges and fades over the centred text */
+  -webkit-mask-image: radial-gradient(62% 52% at 50% 62%, rgba(0, 0, 0, 0.12) 45%, #000 100%);
+  mask-image: radial-gradient(62% 52% at 50% 62%, rgba(0, 0, 0, 0.12) 45%, #000 100%);
 }
 .holo-compact .holo-inner {
   padding: 14px 16px 16px;
@@ -1084,7 +1088,7 @@
   .coin-grid-layout,
   .coin-top,
   .docs {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
   .coin-top .holo {
     max-width: 360px;

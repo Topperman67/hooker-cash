@@ -22,7 +22,7 @@
   display: flex;
   align-items: center;
   gap: 20px;
-  height: 68px;
+  height: 64px;
 }
 .brand {
   display: inline-flex;
@@ -233,7 +233,7 @@
   .mobile-nav {
     display: block;
     border-top: 1px solid var(--mercury-2);
-    padding: 12px var(--gutter) 16px;
+    padding: 12px 16px 16px;
   }
   .mobile-nav[hidden] {
     display: none;

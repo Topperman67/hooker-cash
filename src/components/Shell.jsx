@@ -3,6 +3,8 @@ import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom'
 import { Menu, Search, Wallet, X } from 'lucide-react'
 import Logo from './Logo.jsx'
 import Tape from './Tape.jsx'
+import Glass from './Glass.jsx'
+import StudioLights from './StudioLights.jsx'
 import WalletDialog from './WalletDialog.jsx'
 import { useWallet } from '../context/WalletContext.jsx'
 import { usePlatform } from '../context/PlatformContext.jsx'
@@ -80,40 +82,45 @@ export default function Shell({ children }) {
   }, [location.pathname])
   return (
     <div className="app">
+      <StudioLights />
       <header className="topbar">
-        <div className="wrap topbar-inner">
-          <Link to="/" className="brand" aria-label="Quant Pad home">
-            <Logo />
-          </Link>
-          <nav className="nav" aria-label="Main">
-            {LINKS.map(([to, label]) => (
-              <NavLink key={to} to={to}>
-                {label}
-              </NavLink>
-            ))}
-          </nav>
-          <SearchBox />
-          <div className="topbar-actions">
-            <WalletButton />
-            <button
-              className="btn btn-ghost icon-btn menu-toggle"
-              aria-label={menu ? 'Close menu' : 'Open menu'}
-              aria-expanded={menu}
-              aria-controls="mobile-nav"
-              onClick={() => setMenu((m) => !m)}
-            >
-              {menu ? <X size={20} /> : <Menu size={20} />}
-            </button>
-          </div>
+        <div className="wrap">
+          <Glass variant="bar" className="topbar-capsule">
+            <div className="topbar-inner">
+              <Link to="/" className="brand" aria-label="Quant Pad home">
+                <Logo />
+              </Link>
+              <nav className="nav" aria-label="Main">
+                {LINKS.map(([to, label]) => (
+                  <NavLink key={to} to={to}>
+                    {label}
+                  </NavLink>
+                ))}
+              </nav>
+              <SearchBox />
+              <div className="topbar-actions">
+                <WalletButton />
+                <button
+                  className="btn btn-ghost icon-btn menu-toggle"
+                  aria-label={menu ? 'Close menu' : 'Open menu'}
+                  aria-expanded={menu}
+                  aria-controls="mobile-nav"
+                  onClick={() => setMenu((m) => !m)}
+                >
+                  {menu ? <X size={20} /> : <Menu size={20} />}
+                </button>
+              </div>
+            </div>
+            <nav id="mobile-nav" className="mobile-nav" hidden={!menu} aria-label="Main">
+              <SearchBox onDone={() => setMenu(false)} />
+              {LINKS.map(([to, label]) => (
+                <NavLink key={to} to={to}>
+                  {label}
+                </NavLink>
+              ))}
+            </nav>
+          </Glass>
         </div>
-        <nav id="mobile-nav" className="mobile-nav" hidden={!menu} aria-label="Main">
-          <SearchBox onDone={() => setMenu(false)} />
-          {LINKS.map(([to, label]) => (
-            <NavLink key={to} to={to}>
-              {label}
-            </NavLink>
-          ))}
-        </nav>
       </header>
       <Tape />
       <main className="app-main">{children}</main>

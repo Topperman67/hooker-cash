@@ -1,0 +1,416 @@
+/* Liquid chrome: frosted glass over a lit studio.
+   Every surface is translucent, bright at the top-left rim where the studio key light hits, darker
+   at the bottom-right rim, with a soft specular bloom. The studio layer behind supplies colour for
+   the glass to bend. Hosts managed by QuickLiquid (.lg) must not get isolation/filter/opacity/mask. */
+
+:root {
+  --glass-fill:
+    radial-gradient(120% 70% at 0% 0%, rgba(255, 255, 255, 0.55), transparent 52%),
+    linear-gradient(140deg, rgba(255, 255, 255, 0.46) 0%, rgba(255, 255, 255, 0.16) 100%);
+  --glass-rim: rgba(255, 255, 255, 0.78);
+  --glass-shadow:
+    inset 1px 1px 0 rgba(255, 255, 255, 0.95), inset -1px -1px 0 rgba(21, 24, 29, 0.07),
+    inset 0 0 28px rgba(255, 255, 255, 0.32), 0 1px 2px rgba(21, 24, 29, 0.05),
+    0 18px 44px rgba(21, 24, 29, 0.1);
+  --glass-blur: blur(24px) saturate(1.9);
+  --smoke-fill:
+    radial-gradient(120% 70% at 0% 0%, rgba(255, 255, 255, 0.1), transparent 50%),
+    linear-gradient(160deg, rgba(46, 52, 63, 0.84) 0%, rgba(21, 24, 29, 0.9) 100%);
+  --smoke-shadow:
+    inset 1px 1px 0 rgba(255, 255, 255, 0.16), inset -1px -1px 0 rgba(0, 0, 0, 0.45),
+    0 22px 48px rgba(21, 24, 29, 0.3);
+}
+
+/* ---------- the studio behind the glass ---------- */
+/* body must stay transparent: an in-flow body background paints above the z-index:-1 studio */
+body {
+  background: transparent;
+}
+.studio {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+  background:
+    radial-gradient(1100px 620px at 88% -8%, rgba(255, 255, 255, 0.95), transparent 62%),
+    radial-gradient(900px 520px at -6% 108%, rgba(188, 195, 205, 0.55), transparent 60%),
+    var(--pearl);
+}
+.studio-pool {
+  position: absolute;
+  width: 42vmax;
+  height: 42vmax;
+  border-radius: 50%;
+  filter: blur(48px);
+  opacity: 0.9;
+  animation: drift 38s ease-in-out infinite alternate;
+}
+.studio-blue {
+  background: radial-gradient(circle, rgba(46, 75, 255, 0.85), transparent 66%);
+  left: -10vmax;
+  top: -4vmax;
+}
+.studio-pink {
+  background: radial-gradient(circle, rgba(255, 62, 165, 0.8), transparent 66%);
+  right: -10vmax;
+  top: 8vh;
+  animation-duration: 44s;
+  animation-delay: -12s;
+}
+.studio-green {
+  background: radial-gradient(circle, rgba(18, 194, 110, 0.7), transparent 66%);
+  left: 14vw;
+  bottom: -16vmax;
+  animation-duration: 52s;
+  animation-delay: -20s;
+}
+.studio-yellow {
+  background: radial-gradient(circle, rgba(255, 194, 26, 0.8), transparent 66%);
+  right: 12vw;
+  bottom: -14vmax;
+  animation-duration: 47s;
+  animation-delay: -6s;
+}
+/* the four light lines, architecture-sized, raking across the studio at 45° */
+.studio-lines {
+  position: absolute;
+  inset: -20%;
+  background: linear-gradient(
+    135deg,
+    transparent 0 47%,
+    rgba(255, 62, 165, 0.3) 47% 47.5%,
+    transparent 47.5% 48.1%,
+    rgba(255, 194, 26, 0.38) 48.1% 48.6%,
+    transparent 48.6% 49.2%,
+    rgba(18, 194, 110, 0.3) 49.2% 49.7%,
+    transparent 49.7% 50.3%,
+    rgba(46, 75, 255, 0.32) 50.3% 50.8%,
+    transparent 50.8% 100%
+  );
+  /* keep the lines out of the reading column: they rake through the right side only */
+  -webkit-mask-image: linear-gradient(90deg, transparent 42%, #000 74%);
+  mask-image: linear-gradient(90deg, transparent 42%, #000 74%);
+}
+@keyframes drift {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  50% {
+    transform: translate3d(6vw, 4vh, 0) scale(1.08);
+  }
+  100% {
+    transform: translate3d(-4vw, 8vh, 0) scale(0.96);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .studio-pool {
+    animation: none;
+  }
+}
+
+/* ---------- shared glass material ---------- */
+.panel,
+.coin-card,
+.steps li,
+.hook-tile,
+.hook-detail,
+.flow-node,
+.coin-stats,
+.gate-card,
+.modal,
+.notice,
+.quantum-reserves > div {
+  background: var(--glass-fill);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-rim);
+  box-shadow: var(--glass-shadow);
+}
+.quantum-reserves > div {
+  border-left: 4px solid var(--c);
+}
+.notice-warn {
+  background: linear-gradient(140deg, rgba(255, 246, 214, 0.78), rgba(255, 236, 170, 0.45));
+  border-color: rgba(255, 214, 102, 0.9);
+}
+.notice-error {
+  background: linear-gradient(140deg, rgba(255, 236, 246, 0.8), rgba(255, 205, 230, 0.45));
+  border-color: rgba(255, 140, 196, 0.9);
+}
+.coin-card:hover {
+  border-color: #fff;
+  box-shadow:
+    var(--glass-shadow),
+    0 0 0 1px rgba(46, 75, 255, 0.18);
+}
+.flow-node:first-child {
+  background: var(--smoke-fill);
+  border-color: rgba(255, 255, 255, 0.12);
+  box-shadow: var(--smoke-shadow);
+}
+
+/* smoked glass instruments */
+.instrument,
+.toast,
+.tape {
+  background: var(--smoke-fill);
+  -webkit-backdrop-filter: blur(24px) saturate(1.4);
+  backdrop-filter: blur(24px) saturate(1.4);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow: var(--smoke-shadow);
+}
+.tape {
+  border-width: 0 0 1px;
+  box-shadow: none;
+  border-radius: 0;
+}
+.footer {
+  background: var(--smoke-fill);
+  -webkit-backdrop-filter: blur(24px);
+  backdrop-filter: blur(24px);
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* ---------- glass controls ---------- */
+.btn {
+  background:
+    radial-gradient(120% 90% at 30% 0%, rgba(255, 255, 255, 0.9), transparent 60%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.72), rgba(255, 255, 255, 0.34));
+  -webkit-backdrop-filter: blur(14px) saturate(1.6);
+  backdrop-filter: blur(14px) saturate(1.6);
+  border: 1px solid rgba(255, 255, 255, 0.85);
+  box-shadow:
+    inset 1px 1px 0 #fff,
+    inset -1px -1px 0 rgba(21, 24, 29, 0.08),
+    0 2px 6px rgba(21, 24, 29, 0.08),
+    0 10px 22px rgba(21, 24, 29, 0.06);
+}
+.btn:hover:not(:disabled) {
+  border-color: #fff;
+}
+.btn-primary {
+  background:
+    radial-gradient(120% 90% at 30% 0%, rgba(255, 255, 255, 0.45), transparent 55%),
+    linear-gradient(
+      180deg,
+      rgba(104, 128, 255, 0.95) 0%,
+      rgba(46, 75, 255, 0.94) 52%,
+      rgba(27, 51, 224, 0.97) 100%
+    );
+  border-color: rgba(160, 178, 255, 0.9);
+  color: #fff;
+  box-shadow:
+    inset 1px 1px 0 rgba(255, 255, 255, 0.6),
+    inset -1px -1px 0 rgba(10, 20, 120, 0.35),
+    0 8px 22px rgba(46, 75, 255, 0.34);
+}
+.btn-buy {
+  background:
+    radial-gradient(120% 90% at 30% 0%, rgba(255, 255, 255, 0.45), transparent 55%),
+    linear-gradient(
+      180deg,
+      rgba(76, 230, 156, 0.96),
+      rgba(18, 194, 110, 0.95) 55%,
+      rgba(10, 154, 85, 0.97)
+    );
+  border-color: rgba(150, 245, 200, 0.9);
+}
+.btn-sell {
+  background:
+    radial-gradient(120% 90% at 30% 0%, rgba(255, 255, 255, 0.45), transparent 55%),
+    linear-gradient(
+      180deg,
+      rgba(255, 130, 196, 0.96),
+      rgba(255, 62, 165, 0.95) 55%,
+      rgba(216, 31, 120, 0.97)
+    );
+  border-color: rgba(255, 180, 220, 0.9);
+}
+.btn-ghost {
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  border-color: transparent;
+  box-shadow: none;
+}
+.btn-ghost:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.45);
+  border-color: rgba(255, 255, 255, 0.8);
+}
+.instrument .btn:not(.btn-buy):not(.btn-sell):not(.btn-primary) {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.04));
+  border-color: rgba(255, 255, 255, 0.14);
+  color: var(--on-graphite);
+  box-shadow: inset 1px 1px 0 rgba(255, 255, 255, 0.12);
+}
+
+.chip {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.78), rgba(255, 255, 255, 0.42));
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  border-color: rgba(255, 255, 255, 0.9);
+  box-shadow:
+    inset 1px 1px 0 #fff,
+    0 2px 6px rgba(21, 24, 29, 0.06);
+}
+.segmented {
+  background: rgba(255, 255, 255, 0.32);
+  -webkit-backdrop-filter: blur(14px) saturate(1.5);
+  backdrop-filter: blur(14px) saturate(1.5);
+  border-color: rgba(255, 255, 255, 0.75);
+  box-shadow:
+    inset 0 1px 3px rgba(21, 24, 29, 0.08),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.6);
+}
+.segmented button[aria-pressed='true'] {
+  background: radial-gradient(120% 90% at 30% 0%, #fff, transparent 70%), rgba(255, 255, 255, 0.82);
+  box-shadow:
+    inset 1px 1px 0 #fff,
+    0 2px 8px rgba(21, 24, 29, 0.14);
+}
+.instrument .segmented {
+  background: rgba(0, 0, 0, 0.25);
+  border-color: rgba(255, 255, 255, 0.1);
+}
+.instrument .segmented button[aria-pressed='true'] {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.24), rgba(255, 255, 255, 0.1));
+  box-shadow: inset 1px 1px 0 rgba(255, 255, 255, 0.2);
+}
+
+.input,
+.textarea,
+.select,
+.topbar-search input {
+  background: rgba(255, 255, 255, 0.62);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  border-color: rgba(21, 24, 29, 0.14);
+  box-shadow:
+    inset 0 1px 3px rgba(21, 24, 29, 0.1),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.7);
+}
+.instrument .input {
+  background: rgba(0, 0, 0, 0.28);
+  border-color: rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 1px 4px rgba(0, 0, 0, 0.45);
+}
+
+.modal-backdrop {
+  background: rgba(233, 236, 240, 0.35);
+  -webkit-backdrop-filter: blur(8px) saturate(1.3);
+  backdrop-filter: blur(8px) saturate(1.3);
+}
+.wallet-option {
+  background: rgba(255, 255, 255, 0.55);
+  border-color: rgba(255, 255, 255, 0.9);
+  box-shadow: inset 1px 1px 0 #fff;
+}
+
+/* ---------- floating glass header ---------- */
+.topbar {
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  border: 0;
+  box-shadow: none;
+  padding-top: 10px;
+}
+.topbar-capsule {
+  border-radius: 22px;
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  box-shadow:
+    inset 1px 1px 0 #fff,
+    inset -1px -1px 0 rgba(21, 24, 29, 0.06),
+    0 12px 32px rgba(21, 24, 29, 0.12);
+}
+.topbar-capsule .topbar-inner {
+  height: 60px;
+  padding: 0 10px 0 16px;
+}
+.topbar-capsule .mobile-nav {
+  border-top: 1px solid rgba(255, 255, 255, 0.7);
+}
+.tape {
+  margin-top: 10px;
+}
+
+/* ---------- hero glass ---------- */
+.refractor-chip,
+.hero-stats {
+  background: var(--glass-fill);
+  -webkit-backdrop-filter: blur(16px) saturate(1.6);
+  backdrop-filter: blur(16px) saturate(1.6);
+  border: 1px solid var(--glass-rim);
+  box-shadow: var(--glass-shadow);
+}
+.hero-stats {
+  width: max-content;
+  max-width: 100%;
+  padding: 14px 20px;
+  border-radius: 18px;
+}
+.refractor-source {
+  background: var(--smoke-fill);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+}
+/* QuickLiquid owns the refractive layers; React content stays above them. */
+.lg {
+  position: relative;
+  min-width: 0;
+  border: 1px solid rgba(255, 255, 255, 0.8);
+  overflow: hidden;
+}
+.lg > .ql-content {
+  position: relative;
+  z-index: 10;
+  min-width: 0;
+}
+.lg.panel,
+.lg.hero-stats-glass {
+  background: transparent;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  box-shadow:
+    inset 1px 1px 0 rgba(255, 255, 255, 0.95),
+    inset -1px -1px 0 rgba(21, 24, 29, 0.06),
+    0 18px 44px rgba(21, 24, 29, 0.12);
+}
+.hero-stats-glass {
+  width: max-content;
+  max-width: 100%;
+  border-radius: 20px;
+}
+.hero-stats-glass .hero-stats {
+  background: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  border: 0;
+  box-shadow: none;
+}
+.lg.launch-summary {
+  display: block;
+}
+.lg.launch-summary > .ql-content {
+  display: grid;
+  gap: 16px;
+}
+.lg-smoke {
+  border-color: rgba(255, 255, 255, 0.12);
+  color: var(--on-graphite);
+}
+
+/* never scroll sideways: decorative lens and light layers may extend past the edge */
+.app {
+  overflow-x: clip;
+}
+.topbar-capsule {
+  overflow: hidden;
+}
+@media (max-width: 560px) {
+  .hero-stats-glass {
+    width: 100%;
+  }
+}

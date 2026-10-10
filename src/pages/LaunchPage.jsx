@@ -19,6 +19,7 @@ import {
   MINT_SUFFIX,
 } from '../lib/launch.js'
 import { isAddress } from '../../shared/network.mjs'
+import Glass from '../components/Glass.jsx'
 
 const DRAFT_KEY = 'quantpad:launch-draft:v1'
 const EMPTY = {
@@ -620,7 +621,7 @@ export default function LaunchPage() {
             quantum={wantsQuantum}
             hooks={draft.hooks}
           />
-          <div className="panel launch-summary">
+          <Glass variant="panel" className="panel launch-summary">
             {wantsQuantum ? (
               <>
                 <h3 className="summary-label">Fee routing</h3>
@@ -692,7 +693,7 @@ export default function LaunchPage() {
               {quantumMode ? 'up to three transactions in one wallet prompt' : 'one transaction'}.
               Nothing is sent until you approve.
             </p>
-          </div>
+          </Glass>
         </aside>
       </div>
     </div>

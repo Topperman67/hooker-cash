@@ -5,6 +5,7 @@ import { Empty } from '../components/UI.jsx'
 import { useResource } from '../lib/api.js'
 import { usePlatform } from '../context/PlatformContext.jsx'
 import { EXTRAS, MODULES } from '../lib/hooks.js'
+import Glass from '../components/Glass.jsx'
 import { compact, sol, usd } from '../lib/format.js'
 
 export default function HomePage() {
@@ -40,26 +41,28 @@ export default function HomePage() {
               </Link>
             </div>
             {s && (
-              <dl className="hero-stats">
-                <div>
-                  <dt>Coins launched</dt>
-                  <dd className="num">{compact(s.coins)}</dd>
-                </div>
-                <div>
-                  <dt>With Quantum Hooks</dt>
-                  <dd className="num">{compact(s.quantum)}</dd>
-                </div>
-                <div>
-                  <dt>Traded in 24 h</dt>
-                  <dd className="num">
-                    {s.volume24h
-                      ? solUsd
-                        ? usd(s.volume24h * solUsd)
-                        : sol(s.volume24h)
-                      : '0 SOL'}
-                  </dd>
-                </div>
-              </dl>
+              <Glass variant="panel" className="hero-stats-glass" radius={20}>
+                <dl className="hero-stats">
+                  <div>
+                    <dt>Coins launched</dt>
+                    <dd className="num">{compact(s.coins)}</dd>
+                  </div>
+                  <div>
+                    <dt>With Quantum Hooks</dt>
+                    <dd className="num">{compact(s.quantum)}</dd>
+                  </div>
+                  <div>
+                    <dt>Traded in 24 h</dt>
+                    <dd className="num">
+                      {s.volume24h
+                        ? solUsd
+                          ? usd(s.volume24h * solUsd)
+                          : sol(s.volume24h)
+                        : '0 SOL'}
+                    </dd>
+                  </div>
+                </dl>
+              </Glass>
             )}
           </div>
           <Refractor symbol={newest?.symbol} />
