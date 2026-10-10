@@ -5,17 +5,28 @@ import { fileURLToPath } from 'node:url'
 
 const root = fileURLToPath(new URL('../..', import.meta.url))
 
-// Vercel's Node runtime does not guess a .js file's module format from its syntax, so a dependency
-// whose "ESM" build is a plain .js file without "type": "module" loads as CommonJS there and its
-// named exports disappear. Load the whole API that way, as the deployed function does.
-test('the API loads without module syntax detection, as on Vercel', () => {
+// Vercel's Node runtime is stricter than plain Node 24: it does not guess a .js file's module format
+// from its syntax, and its loader refuses require() of an ES module. Dependencies that rely on either
+// (an "ESM" build in a plain .js file, a CommonJS package requiring an ESM-only one) work locally and
+// crash every request there. Load the API, and the modules it imports lazily, the same way.
+test('the API and its lazily loaded modules load under Vercel-like module rules', () => {
+  const script = [
+    "await import('./api/[[...path]].js')",
+    "await import('./server/application.mjs')",
+    "const quantum = await import('./shared/quantum.mjs')",
+    "await import('./shared/merkle.mjs')",
+    "await import('./shared/lookup.mjs')",
+    "if (typeof quantum.buildPulseInstructions !== 'function') throw new Error('quantum client incomplete')",
+    "console.log('loaded')",
+  ].join('; ')
   const run = spawnSync(
     process.execPath,
     [
+      '--no-experimental-require-module',
       '--no-experimental-detect-module',
       '--input-type=module',
       '-e',
-      "await import('./api/[[...path]].js'); await import('./server/application.mjs'); console.log('loaded')",
+      script,
     ],
     { cwd: root, encoding: 'utf8', timeout: 60_000 },
   )

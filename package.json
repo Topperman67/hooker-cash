@@ -60,5 +60,10 @@
       "node": "./shared/vendor/pump-swap-sdk.node.mjs",
       "default": "@pump-fun/pump-swap-sdk"
     }
+  },
+  "overrides": {
+    "rpc-websockets": {
+      "uuid": "11.1.1"
+    }
   }
 }
