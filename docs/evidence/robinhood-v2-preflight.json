@@ -1,0 +1,27 @@
+{
+  "checkedAt": "2026-09-19T02:35:22.635Z",
+  "chainId": 4663,
+  "block": "66729485",
+  "infrastructure": {
+    "poolManager": {
+      "address": "0x8366a39CC670B4001A1121B8F6A443A643e40951",
+      "codeHash": "0xbd3881180b547f5fe817545743cfb4343e96b1bc6640dcd70c106b0066e95626"
+    },
+    "quoter": {
+      "address": "0x8Dc178eFB8111BB0973Dd9d722ebeFF267c98F94",
+      "codeHash": "0xd707b1da8cb165e5ea35a3b4450d971eb562ec171e23492aa117036b78a868f6"
+    },
+    "stateView": {
+      "address": "0xF3334192D15450CdD385c8B70e03f9A6bD9E673b",
+      "codeHash": "0x7d9c591e0956fd89d98feb4ffcfe8bf1f7a62bd485edd979fa21d104b49878a6"
+    },
+    "create2": {
+      "address": "0x4e59b44847b379578588920cA78FbF26c0B4956C",
+      "codeHash": "0x2fa86add0aed31f33a762c9d88e807c475bd51d0f52bd0955754b2608f7e4989"
+    }
+  },
+  "factoryCandidate": "0xC38438F9EB0ea104aeE74d4d09f89E0EC8b9a080",
+  "candidateAlreadyDeployed": false,
+  "treasury": "0x2e01dD8dF4A4fb06Ea62a944a658E9ae01DB2ac4",
+  "transactionsBroadcast": 0
+}

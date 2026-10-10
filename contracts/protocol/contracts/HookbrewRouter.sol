@@ -14,7 +14,7 @@ import {BalanceDelta} from "@uniswap/v4-core/src/types/BalanceDelta.sol";
 import {SwapParams} from "@uniswap/v4-core/src/types/PoolOperation.sol";
 interface IHookbrewVenue { function poolKey(address token) external view returns (PoolKey memory); function quote() external view returns (address); function poolManager() external view returns (IPoolManager); }
 
-/// @notice Exact-input ERC20 swaps confined to this Hookbrew venue. No arbitrary-call executor.
+/// @notice Exact-input native ETH/token swaps confined to this Hookbrew venue. No arbitrary-call executor.
 contract HookbrewRouter is IUnlockCallback, ReentrancyGuard {
     using SafeERC20 for IERC20;
     using StateLibrary for IPoolManager;
@@ -22,13 +22,16 @@ contract HookbrewRouter is IUnlockCallback, ReentrancyGuard {
     IPoolManager public immutable poolManager;
     event Trade(address indexed token, address indexed trader, bool buy, uint256 amountIn, uint256 amountOut, uint160 sqrtPriceX96);
     constructor(IHookbrewVenue factory_) { factory=factory_; poolManager=factory_.poolManager(); }
-    function swap(address token, bool buy, uint256 amountIn, uint256 minOut, uint256 deadline) external nonReentrant returns(uint256 out) {
+    function swap(address token, bool buy, uint256 amountIn, uint256 minOut, uint256 deadline) external payable nonReentrant returns(uint256 out) {
         require(block.timestamp <= deadline && amountIn > 0 && amountIn <= uint256(uint128(type(int128).max)), "invalid trade");
         PoolKey memory key=factory.poolKey(token);
         address input=buy?factory.quote():token;
-        uint256 beforeBalance=IERC20(input).balanceOf(address(this));
-        IERC20(input).safeTransferFrom(msg.sender,address(this),amountIn);
-        require(IERC20(input).balanceOf(address(this))-beforeBalance==amountIn,"transfer mismatch");
+        require(msg.value == (buy ? amountIn : 0), "incorrect ETH value");
+        if (!buy) {
+            uint256 beforeBalance=IERC20(input).balanceOf(address(this));
+            IERC20(input).safeTransferFrom(msg.sender,address(this),amountIn);
+            require(IERC20(input).balanceOf(address(this))-beforeBalance==amountIn,"transfer mismatch");
+        }
         out=abi.decode(poolManager.unlock(abi.encode(key,input,msg.sender,amountIn,minOut)),(uint256));
         (uint160 sqrtPrice,,,) = poolManager.getSlot0(key.toId());
         emit Trade(token,msg.sender,buy,amountIn,out,sqrtPrice);
@@ -40,7 +43,9 @@ contract HookbrewRouter is IUnlockCallback, ReentrancyGuard {
         BalanceDelta d=poolManager.swap(key,SwapParams(zeroForOne,-int256(amount),zeroForOne?TickMath.MIN_SQRT_PRICE+1:TickMath.MAX_SQRT_PRICE-1),"");
         int128 inDelta=zeroForOne?d.amount0():d.amount1(); int128 outDelta=zeroForOne?d.amount1():d.amount0();
         require(inDelta<0 && uint256(uint128(-inDelta))==amount && outDelta>0 && uint256(uint128(outDelta))>=minOut,"price moved beyond limit");
-        poolManager.sync(Currency.wrap(input)); IERC20(input).safeTransfer(address(poolManager),amount); poolManager.settle();
+        poolManager.sync(Currency.wrap(input));
+        if (input == address(0)) poolManager.settle{value: amount}();
+        else { IERC20(input).safeTransfer(address(poolManager),amount); poolManager.settle(); }
         poolManager.take(zeroForOne?key.currency1:key.currency0,recipient,uint128(outDelta));
         return abi.encode(uint256(uint128(outDelta)));
     }

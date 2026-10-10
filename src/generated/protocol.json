@@ -1703,6 +1703,10 @@
       ],
       "stateMutability": "view",
       "type": "function"
+    },
+    {
+      "stateMutability": "payable",
+      "type": "receive"
     }
   ],
   "HookbrewRouter": [
@@ -1838,7 +1842,7 @@
           "type": "uint256"
         }
       ],
-      "stateMutability": "nonpayable",
+      "stateMutability": "payable",
       "type": "function"
     },
     {
@@ -4525,6 +4529,10 @@
       ],
       "stateMutability": "view",
       "type": "function"
+    },
+    {
+      "stateMutability": "payable",
+      "type": "receive"
     }
   ],
   "HookbrewHookPackage": [
@@ -4815,17 +4823,6 @@
       "type": "error"
     },
     {
-      "inputs": [
-        {
-          "internalType": "address",
-          "name": "token",
-          "type": "address"
-        }
-      ],
-      "name": "SafeERC20FailedOperation",
-      "type": "error"
-    },
-    {
       "anonymous": false,
       "inputs": [
         {
@@ -5036,7 +5033,7 @@
       ],
       "name": "distribute",
       "outputs": [],
-      "stateMutability": "nonpayable",
+      "stateMutability": "payable",
       "type": "function"
     },
     {
@@ -5147,7 +5144,7 @@
       "name": "rewardAsset",
       "outputs": [
         {
-          "internalType": "contract IERC20",
+          "internalType": "address",
           "name": "",
           "type": "address"
         }

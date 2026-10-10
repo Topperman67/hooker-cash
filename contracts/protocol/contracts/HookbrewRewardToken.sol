@@ -11,7 +11,7 @@ contract HookbrewRewardToken is ERC20, ReentrancyGuard {
     uint256 private constant SCALE = 1e36;
     address public immutable creator;
     address public immutable factory;
-    IERC20 public immutable rewardAsset;
+    address public immutable rewardAsset;
     string public metadataURI;
     mapping(address => bool) public excluded;
     mapping(address => uint256) private paid;
@@ -22,7 +22,7 @@ contract HookbrewRewardToken is ERC20, ReentrancyGuard {
     event RewardsAdded(uint256 amount);
     event RewardsClaimed(address indexed holder, uint256 amount);
     constructor(string memory name_, string memory symbol_, address creator_, uint256 supply, string memory uri, address quote, address manager, address vesting, address factory_) ERC20(name_, symbol_) {
-        factory = factory_; creator = creator_; metadataURI = uri; rewardAsset = IERC20(quote);
+        factory = factory_; creator = creator_; metadataURI = uri; require(quote == address(0), "native rewards required"); rewardAsset = quote;
         excluded[address(0)] = true; excluded[factory_] = true; excluded[manager] = true; excluded[vesting] = true;
         _mint(factory_, supply);
     }
@@ -37,9 +37,9 @@ contract HookbrewRewardToken is ERC20, ReentrancyGuard {
         super._update(from, to, value);
     }
     function burn(uint256 amount) external { require(msg.sender == factory, "only hook"); _burn(msg.sender, amount); }
-    function distribute(uint256 amount) external nonReentrant {
+    function distribute(uint256 amount) external payable nonReentrant {
         require(msg.sender == factory, "only hook");
-        if (amount != 0) rewardAsset.safeTransferFrom(msg.sender, address(this), amount);
+        require(msg.value == amount, "incorrect ETH value");
         uint256 available = queuedRewards + amount;
         if (eligibleSupply == 0) queuedRewards = available;
         else { rewardPerToken += available * SCALE / eligibleSupply; queuedRewards = 0; }
@@ -50,7 +50,7 @@ contract HookbrewRewardToken is ERC20, ReentrancyGuard {
     }
     function claimRewards(address holder) external nonReentrant {
         _accrue(holder); uint256 due = credit[holder]; credit[holder] = 0;
-        if (due != 0) rewardAsset.safeTransfer(holder, due);
+        if (due != 0) { (bool sent,) = payable(holder).call{value: due}(""); require(sent, "ETH transfer failed"); }
         emit RewardsClaimed(holder, due);
     }
 }

@@ -38,8 +38,8 @@ contract HookbrewModularFactory is BaseHook, IUnlockCallback, ReentrancyGuard {
     uint256 public immutable launchFee;
     HookbrewVesting public immutable vesting;
     HookbrewTokenDeployer public immutable tokenDeployer;
-    uint256 public constant MIN_MCAP = 2_000e6;
-    uint256 public constant MAX_MCAP = 10_000e6;
+    uint256 public constant MIN_MCAP = 0.5 ether;
+    uint256 public constant MAX_MCAP = 5 ether;
     HookbrewRecipe.Config public recipe;
     bytes32 public immutable recipeHash;
     struct Observation { uint64 timestamp; int192 cumulative; }
@@ -65,12 +65,17 @@ contract HookbrewModularFactory is BaseHook, IUnlockCallback, ReentrancyGuard {
     event Harvested(address indexed token, uint256 tokenFees, uint256 quoteFees);
     event Claimed(address indexed token, address indexed recipient, uint256 tokenAmount, uint256 quoteAmount);
     constructor(IPoolManager manager, address quote_, address treasury_, uint256 launchFee_, HookbrewRecipe.Config memory recipe_) BaseHook(manager) {
-        require(quote_ != address(0) && treasury_ != address(0) && quote_.code.length > 0, "invalid configuration");
-        require(IERC20Metadata(quote_).decimals() == 6, "quote must use 6 decimals");
+        require(quote_ == address(0) && treasury_ != address(0) && address(manager).code.length > 0, "invalid configuration");
+        require(launchFee_ == 0.0001 ether, "invalid launch fee");
         quote = quote_; treasury = treasury_; launchFee = launchFee_;
         vesting = new HookbrewVesting(address(this));
         tokenDeployer = new HookbrewTokenDeployer(quote_, address(manager), address(vesting));
         HookbrewRecipe.validate(recipe_); recipe = recipe_; recipeHash = keccak256(abi.encode(recipe_));
+    }
+    receive() external payable { require(msg.sender == address(poolManager), "only pool manager"); }
+    function _payNative(address recipient, uint256 amount) private {
+        (bool paid,) = payable(recipient).call{value: amount}("");
+        require(paid, "ETH transfer failed");
     }
     function getHookPermissions() public pure override returns (Hooks.Permissions memory p) { p.beforeInitialize = true; p.beforeSwap = true; p.afterSwap = true; }
     function poolKey(address token) public view returns (PoolKey memory k) {
@@ -88,7 +93,7 @@ contract HookbrewModularFactory is BaseHook, IUnlockCallback, ReentrancyGuard {
         require(bytes(p.metadataURI).length <= 2048, "metadata too long");
         require(p.fee >= 10000 && p.fee <= 50000 && p.fee % 10000 == 0, "invalid fee");
         require(p.targetMcap >= MIN_MCAP && p.targetMcap <= MAX_MCAP, "valuation out of range");
-        require(msg.value == launchFee && p.splits.length <= 10, "invalid fee or splits");
+        require(msg.value == launchFee + p.initialBuy && p.splits.length <= 10, "invalid fee or splits");
         HookbrewRecipe.Config memory c = recipe;
         Guard memory g = Guard(c.window, c.startCapBps, c.endCapBps, c.interval);
         require(keccak256(abi.encode(p.guard)) == keccak256(abi.encode(g)), "guard differs from built hook");
@@ -116,9 +121,6 @@ contract HookbrewModularFactory is BaseHook, IUnlockCallback, ReentrancyGuard {
         l.liquidity = LiquidityAmounts.getLiquidityForAmounts(sqrtPrice, TickMath.getSqrtPriceAtTick(l.lower), TickMath.getSqrtPriceAtTick(l.upper), token < quote ? TOTAL_SUPPLY : 0, token < quote ? 0 : TOTAL_SUPPLY);
         poolManager.unlock(abi.encode(uint8(0), token, uint256(0)));
         if (p.initialBuy > 0) {
-            uint256 beforeQuote = IERC20(quote).balanceOf(address(this));
-            IERC20(quote).safeTransferFrom(msg.sender, address(this), p.initialBuy);
-            require(IERC20(quote).balanceOf(address(this)) - beforeQuote == p.initialBuy, "quote transfer mismatch");
             bought = abi.decode(poolManager.unlock(abi.encode(uint8(1), token, p.initialBuy)), (uint256));
             require(bought >= p.minTokensOut && bought <= TOTAL_SUPPLY / 10, "founder buy outside limits");
             Split[] storage split = recipients[token]; uint256 assigned;
@@ -176,7 +178,12 @@ contract HookbrewModularFactory is BaseHook, IUnlockCallback, ReentrancyGuard {
         return "";
     }
     function _settle(Currency currency, int128 delta) private {
-        if (delta < 0) { poolManager.sync(currency); IERC20(Currency.unwrap(currency)).safeTransfer(address(poolManager), uint128(-delta)); poolManager.settle(); }
+        if (delta < 0) {
+            uint256 owed = uint128(-delta);
+            poolManager.sync(currency);
+            if (Currency.unwrap(currency) == address(0)) poolManager.settle{value: owed}();
+            else { IERC20(Currency.unwrap(currency)).safeTransfer(address(poolManager), owed); poolManager.settle(); }
+        }
         else if (delta > 0) poolManager.take(currency, address(this), uint128(delta));
     }
     function harvest(address token) external nonReentrant {
@@ -195,13 +202,13 @@ contract HookbrewModularFactory is BaseHook, IUnlockCallback, ReentrancyGuard {
         require(eligible(token, recipient), "restore founder allocation to claim");
         uint256 t = claimable[token][recipient][token]; uint256 q = claimable[token][recipient][quote];
         claimable[token][recipient][token] = 0; claimable[token][recipient][quote] = 0;
-        if(t > 0) IERC20(token).safeTransfer(recipient,t); if(q > 0) IERC20(quote).safeTransfer(recipient,q);
+        if(t > 0) IERC20(token).safeTransfer(recipient,t); if(q > 0) _payNative(recipient,q);
         emit Claimed(token,recipient,t,q);
     }
     function claimProtocol(address token) external nonReentrant {
         uint256 t=protocolClaimable[token][token]; uint256 q=protocolClaimable[token][quote];
         protocolClaimable[token][token]=0; protocolClaimable[token][quote]=0;
-        if(t>0) IERC20(token).safeTransfer(treasury,t); if(q>0) IERC20(quote).safeTransfer(treasury,q);
+        if(t>0) IERC20(token).safeTransfer(treasury,t); if(q>0) _payNative(treasury,q);
         emit Claimed(token,treasury,t,q);
     }
     function _afterSwap(address, PoolKey calldata k, SwapParams calldata, BalanceDelta, bytes calldata) internal override returns (bytes4, int128) {
@@ -247,7 +254,7 @@ contract HookbrewModularFactory is BaseHook, IUnlockCallback, ReentrancyGuard {
         _credit(token, token, ct - burned - lt); _credit(token, quote, cq - rewards - buyback - lq);
         if (burned > 0) HookbrewRewardToken(token).burn(burned);
         if (c.rewardBps > 0) {
-            IERC20(quote).forceApprove(token, rewards); HookbrewRewardToken(token).distribute(rewards); IERC20(quote).forceApprove(token, 0);
+            HookbrewRewardToken(token).distribute{value: rewards}(rewards);
         }
         emit ModulesFunded(token, burned, rewards, buyback, lt, lq);
     }

@@ -9,11 +9,11 @@ describe('Hookbrew launch and trading lifecycle', function () {
  before(async function(){
   client=await hre.viem.getPublicClient(); [owner,creator,trader,recipient]=await hre.viem.getWalletClients()
   manager=await hre.viem.deployContract('PoolManager',[owner.account.address])
-  quote=await hre.viem.deployContract('TestQuote')
+  quote = { address: '0x0000000000000000000000000000000000000000', read: { balanceOf: async ([address]) => client.getBalance({address}) } }
   quoter=await hre.viem.deployContract('V4Quoter',[manager.address])
   await setCode(proxy,proxyCode)
   const a=await hre.artifacts.readArtifact('HookbrewFactory')
-  const data=encodeDeployData({abi:a.abi,bytecode:a.bytecode,args:[manager.address,quote.address,owner.account.address,parseUnits('1',18)]})
+  const data=encodeDeployData({abi:a.abi,bytecode:a.bytecode,args:[manager.address,quote.address,owner.account.address,parseUnits('0.0001',18)]})
   const hash=keccak256(data);let salt,address
   for(let i=0n;;i++){salt=toHex(i,{size:32});address=getCreate2Address({from:proxy,salt,bytecodeHash:hash});if((BigInt(address)&0x3fffn)===0x2080n)break}
   factoryTx=await owner.sendTransaction({to:proxy,data:salt+data.slice(2)})
@@ -22,12 +22,10 @@ describe('Hookbrew launch and trading lifecycle', function () {
   router=await hre.viem.deployContract('HookbrewRouter',[factory.address])
   routerTx=(await client.getBlock({includeTransactions:true})).transactions[0].hash
   vesting=await hre.viem.getContractAt('HookbrewVesting',await factory.read.vesting())
-  for(const w of [creator,trader])await quote.write.mint([w.account.address,parseUnits('10000',6)])
  })
- const draft=(extra={})=>({name:'Hookbrew Integration',symbol:'BREW',metadataURI:'https://example.com/token.json',salt:toHex(crypto.getRandomValues(new Uint8Array(32))),fee:10000,targetMcap:parseUnits('5000',6),initialBuy:0n,minTokensOut:0n,guard:{window:0,startCapBps:0,endCapBps:0,interval:0},splits:[],...extra})
+ const draft=(extra={})=>({name:'Hookbrew Integration',symbol:'BREW',metadataURI:'https://example.com/token.json',salt:toHex(crypto.getRandomValues(new Uint8Array(32))),fee:10000,targetMcap:parseUnits('1',18),initialBuy:0n,minTokensOut:0n,guard:{window:0,startCapBps:0,endCapBps:0,interval:0},splits:[],...extra})
  async function launch(p){
-  if(p.initialBuy)await quote.write.approve([factory.address,p.initialBuy],{account:creator.account})
-  const sim=await client.simulateContract({address:factory.address,abi:factory.abi,functionName:'launch',args:[p],account:creator.account,value:parseUnits('1',18)})
+  const sim=await client.simulateContract({address:factory.address,abi:factory.abi,functionName:'launch',args:[p],account:creator.account,value:parseUnits('0.0001',18) + p.initialBuy})
   const receipt=await client.waitForTransactionReceipt({hash:await creator.writeContract(sim.request)})
   assert.equal(receipt.status,'success')
   const token=await hre.viem.getContractAt('HookbrewToken',sim.result[0])
@@ -37,8 +35,8 @@ describe('Hookbrew launch and trading lifecycle', function () {
   const k=await factory.read.poolKey([token.address]);
   const q=await client.simulateContract({address:quoter.address,abi:quoter.abi,functionName:'quoteExactInputSingle',args:[{poolKey:k,zeroForOne:buy?(quote.address.toLowerCase()<token.address.toLowerCase()):(token.address.toLowerCase()<quote.address.toLowerCase()),exactAmount:input,hookData:'0x'}]})
   const out=q.result[0];assert.ok(out>0n)
-  await (buy?quote:token).write.approve([router.address,input],{account:w.account})
-  const tx=await router.write.swap([token.address,buy,input,out*99n/100n,BigInt(await time.latest())+120n],{account:w.account})
+  if (!buy) await token.write.approve([router.address,input],{account:w.account, value: buy ? input : 0n})
+  const tx=await router.write.swap([token.address,buy,input,out*99n/100n,BigInt(await time.latest())+120n],{account:w.account, value: buy ? input : 0n})
   return client.waitForTransactionReceipt({hash:tx})
  }
  it('creates fixed supply, locks a real V4 seed and trades both directions with slippage protection',async()=>{
@@ -47,7 +45,7 @@ describe('Hookbrew launch and trading lifecycle', function () {
   assert.equal(await token.read.balanceOf([creator.account.address]),0n)
   assert.ok(await token.read.balanceOf([manager.address])>0n)
   assert.ok(await factory.read.launchedToken([token.address]))
-  await trade(token,true,parseUnits('25',6))
+  await trade(token,true,parseUnits('0.005',18))
   const bought=await token.read.balanceOf([trader.account.address]);assert.ok(bought>0n)
   await token.write.approve([router.address,bought],{account:trader.account})
   await assert.rejects(()=>router.write.swap([token.address,false,bought,2n**120n,BigInt(2**32)],{account:trader.account}))
@@ -60,7 +58,7 @@ describe('Hookbrew launch and trading lifecycle', function () {
   assert.ok(await factory.read.protocolClaimable([token.address,quote.address])>0n)
  })
  it('routes founder buys into distinct funded vesting schedules and releases only to beneficiaries',async()=>{
-  const p=draft({initialBuy:parseUnits('20',6),splits:[{wallet:creator.account.address,bps:6000,cliff:0,duration:0},{wallet:recipient.account.address,bps:4000,cliff:60,duration:120}]})
+  const p=draft({initialBuy:parseUnits('0.004',18),splits:[{wallet:creator.account.address,bps:6000,cliff:0,duration:0},{wallet:recipient.account.address,bps:4000,cliff:60,duration:120}]})
   const {token,bought}=await launch(p)
   assert.ok(bought>0n);assert.equal(await token.read.balanceOf([creator.account.address]),bought*6000n/10000n)
   assert.equal(await token.read.balanceOf([recipient.account.address]),0n)
@@ -74,18 +72,16 @@ describe('Hookbrew launch and trading lifecycle', function () {
  })
  it('rejects invalid identities, fee tiers, recipient totals and excessive founder allocation atomically',async()=>{
   for(const p of [draft({name:''}),draft({fee:9000}),draft({targetMcap:1n}),draft({splits:[{wallet:creator.account.address,bps:1,cliff:0,duration:0}]})]){
-   await assert.rejects(()=>factory.write.launch([p],{account:creator.account,value:parseUnits('1',18)}))
+   await assert.rejects(()=>factory.write.launch([p],{account:creator.account,value:parseUnits('0.0001',18)}))
   }
-  await quote.write.approve([factory.address,parseUnits('2000',6)],{account:creator.account})
-  const before=await quote.read.balanceOf([creator.account.address])
-  await assert.rejects(()=>factory.write.launch([draft({initialBuy:parseUnits('2000',6)})],{account:creator.account,value:parseUnits('1',18)}))
-  assert.equal(await quote.read.balanceOf([creator.account.address]),before)
+  const before=await client.getBalance({address:factory.address})
+  await assert.rejects(()=>factory.write.launch([draft({initialBuy:parseUnits('0.4',18)})],{account:creator.account,value:parseUnits('0.4001',18)}))
+  assert.equal(await client.getBalance({address:factory.address}),before)
  })
  it('enforces temporary buy caps while allowing sells, and expires the guard',async()=>{
   const {token}=await launch(draft({guard:{window:120,startCapBps:10,endCapBps:10,interval:1}}))
-  await quote.write.approve([router.address,parseUnits('100',6)],{account:trader.account})
-  await assert.rejects(()=>router.write.swap([token.address,true,parseUnits('100',6),0n,BigInt(2**32)],{account:trader.account}))
-  await time.increase(121);await trade(token,true,parseUnits('10',6))
+  await assert.rejects(()=>router.write.swap([token.address,true,parseUnits('0.02',18),0n,BigInt(2**32)],{account:trader.account,value:parseUnits('0.02',18)}))
+  await time.increase(121);await trade(token,true,parseUnits('0.002',18))
   const balance=await token.read.balanceOf([trader.account.address]);await trade(token,false,balance/2n)
  })
  it('rejects unauthorized callbacks and vest creation; exposes no seed removal path',async()=>{
@@ -96,35 +92,34 @@ describe('Hookbrew launch and trading lifecycle', function () {
  })
  it('enforces buy spacing during the guard, permits sells inside the window, and rejects expired orders',async()=>{
   const {token}=await launch(draft({guard:{window:300,startCapBps:1000,endCapBps:1000,interval:60}}))
-  await trade(token,true,parseUnits('5',6))
-  await quote.write.approve([router.address,parseUnits('10',6)],{account:trader.account})
-  await assert.rejects(()=>router.write.swap([token.address,true,parseUnits('5',6),1n,BigInt(2**32)],{account:trader.account}),/buy spacing active|6275792073706163696e6720616374697665/)
+  await trade(token,true,parseUnits('0.001',18))
+  await assert.rejects(()=>router.write.swap([token.address,true,parseUnits('0.001',18),1n,BigInt(2**32)],{account:trader.account,value:parseUnits('0.001',18)}),/buy spacing active|6275792073706163696e6720616374697665/)
   const balance=await token.read.balanceOf([trader.account.address]);await trade(token,false,balance/4n)
   await token.write.approve([router.address,balance/4n],{account:trader.account})
   await client.simulateContract({address:router.address,abi:router.abi,functionName:'swap',args:[token.address,false,balance/4n,1n,BigInt(2**32)],account:trader.account})
   await assert.rejects(()=>router.write.swap([token.address,false,balance/4n,1n,1n],{account:trader.account}))
-  await time.increase(61);await trade(token,true,parseUnits('5',6))
+  await time.increase(61);await trade(token,true,parseUnits('0.001',18))
  })
  it('keeps protocol fees independent from founder hold requirements and rejects duplicate recipients',async()=>{
   await assert.rejects(()=>launch(draft({splits:[{wallet:creator.account.address,bps:5000,cliff:0,duration:0},{wallet:creator.account.address,bps:5000,cliff:0,duration:0}]})),/duplicate recipient/)
-  const {token}=await launch(draft({initialBuy:parseUnits('10',6),splits:[{wallet:owner.account.address,bps:10000,cliff:0,duration:0}]}))
+  const {token}=await launch(draft({initialBuy:parseUnits('0.002',18),splits:[{wallet:owner.account.address,bps:10000,cliff:0,duration:0}]}))
   const allocated=await token.read.balanceOf([owner.account.address]);await token.write.transfer([trader.account.address,allocated],{account:owner.account})
   assert.equal(await factory.read.eligible([token.address,owner.account.address]),false)
-  await trade(token,true,parseUnits('10',6));await factory.write.harvest([token.address])
+  await trade(token,true,parseUnits('0.002',18));await factory.write.harvest([token.address])
   await assert.rejects(()=>factory.write.claim([token.address,owner.account.address]),/restore founder allocation/)
   const before=await quote.read.balanceOf([owner.account.address]),due=await factory.read.protocolClaimable([token.address,quote.address]);assert.ok(due>0n)
   await factory.write.claimProtocol([token.address],{account:trader.account});assert.equal(await quote.read.balanceOf([owner.account.address]),before+due)
   await token.write.transfer([owner.account.address,allocated],{account:trader.account});assert.equal(await factory.read.eligible([token.address,owner.account.address]),true)
   await factory.write.claim([token.address,owner.account.address]);assert.equal(await factory.read.claimable([token.address,owner.account.address,quote.address]),0n)
  })
- it('launches and trades correctly on both sides of the quote-address ordering',async()=>{
+ it('launches and trades correctly on native ETH as currency0',async()=>{
   const directions=new Set()
-  for(let i=0;i<30&&directions.size<2;i++){
-   const p=draft({initialBuy:parseUnits('5',6)}),predicted=await factory.read.predictToken([p.name,p.symbol,creator.account.address,p.salt,p.metadataURI]),direction=predicted.toLowerCase()<quote.address.toLowerCase()
+  for(let i=0;i<30&&directions.size<1;i++){
+   const p=draft({initialBuy:parseUnits('0.001',18)}),predicted=await factory.read.predictToken([p.name,p.symbol,creator.account.address,p.salt,p.metadataURI]),direction=predicted.toLowerCase()<quote.address.toLowerCase()
    if(directions.has(direction))continue
-   const {token}=await launch(p);await trade(token,true,parseUnits('2',6));await trade(token,false,(await token.read.balanceOf([trader.account.address]))/2n);directions.add(direction)
+   const {token}=await launch(p);await trade(token,true,parseUnits('0.0004',18));await trade(token,false,(await token.read.balanceOf([trader.account.address]))/2n);directions.add(direction)
   }
-  assert.equal(directions.size,2)
+  assert.equal(directions.size,1)
  })
  it('activates only the signed build, indexes actual launches/swaps, persists data, and handles a reorg',async()=>{
   const {createApplication}=await import('../../../server/application.mjs'),{createServer}=require('node:http'),{mkdtemp,rm}=require('node:fs/promises'),{tmpdir}=require('node:os'),{join}=require('node:path')

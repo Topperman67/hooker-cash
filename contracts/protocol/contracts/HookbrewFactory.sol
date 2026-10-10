@@ -24,7 +24,7 @@ import {LiquidityAmounts} from "@uniswap/v4-periphery/src/libraries/LiquidityAmo
 import {HookbrewToken} from "./HookbrewToken.sol";
 import {HookbrewVesting} from "./HookbrewVesting.sol";
 
-/// @notice Hookbrew's own ERC20-quoted V4 launch venue. Seed positions have no withdrawal path.
+/// @notice Hookbrew's native ETH V4 launch venue. Seed positions have no withdrawal path.
 /// @dev This is a separate implementation/version; never describe it as the original V10 bytecode.
 contract HookbrewFactory is BaseHook, IUnlockCallback, ReentrancyGuard {
     using SafeERC20 for IERC20;
@@ -36,8 +36,8 @@ contract HookbrewFactory is BaseHook, IUnlockCallback, ReentrancyGuard {
     address public immutable treasury;
     uint256 public immutable launchFee;
     HookbrewVesting public immutable vesting;
-    uint256 public constant MIN_MCAP = 2_000e6;
-    uint256 public constant MAX_MCAP = 10_000e6;
+    uint256 public constant MIN_MCAP = 0.5 ether;
+    uint256 public constant MAX_MCAP = 5 ether;
     struct Split { address wallet; uint16 bps; uint32 cliff; uint32 duration; }
     struct Guard { uint32 window; uint16 startCapBps; uint16 endCapBps; uint16 interval; }
     struct LaunchParams { string name; string symbol; string metadataURI; bytes32 salt; uint24 fee; uint256 targetMcap; uint256 initialBuy; uint256 minTokensOut; Guard guard; Split[] splits; }
@@ -52,10 +52,15 @@ contract HookbrewFactory is BaseHook, IUnlockCallback, ReentrancyGuard {
     event Harvested(address indexed token, uint256 tokenFees, uint256 quoteFees);
     event Claimed(address indexed token, address indexed recipient, uint256 tokenAmount, uint256 quoteAmount);
     constructor(IPoolManager manager, address quote_, address treasury_, uint256 launchFee_) BaseHook(manager) {
-        require(quote_ != address(0) && treasury_ != address(0) && quote_.code.length > 0, "invalid configuration");
-        require(IERC20Metadata(quote_).decimals() == 6, "quote must use 6 decimals");
+        require(quote_ == address(0) && treasury_ != address(0) && address(manager).code.length > 0, "invalid configuration");
+        require(launchFee_ == 0.0001 ether, "invalid launch fee");
         quote = quote_; treasury = treasury_; launchFee = launchFee_;
         vesting = new HookbrewVesting(address(this));
+    }
+    receive() external payable { require(msg.sender == address(poolManager), "only pool manager"); }
+    function _payNative(address recipient, uint256 amount) private {
+        (bool paid,) = payable(recipient).call{value: amount}("");
+        require(paid, "ETH transfer failed");
     }
     function getHookPermissions() public pure override returns (Hooks.Permissions memory p) { p.beforeInitialize = true; p.beforeSwap = true; }
     function poolKey(address token) public view returns (PoolKey memory k) {
@@ -75,7 +80,7 @@ contract HookbrewFactory is BaseHook, IUnlockCallback, ReentrancyGuard {
         require(bytes(p.metadataURI).length <= 2048, "metadata too long");
         require(p.fee >= 10000 && p.fee <= 50000 && p.fee % 10000 == 0, "invalid fee");
         require(p.targetMcap >= MIN_MCAP && p.targetMcap <= MAX_MCAP, "valuation out of range");
-        require(msg.value == launchFee && p.splits.length <= 10, "invalid fee or splits");
+        require(msg.value == launchFee + p.initialBuy && p.splits.length <= 10, "invalid fee or splits");
         Guard calldata g = p.guard;
         require(g.window <= 3600 && g.interval <= 60 && g.startCapBps <= g.endCapBps && g.endCapBps <= 5000, "invalid guard");
         require(g.window == 0 ? g.interval == 0 && g.startCapBps == 0 && g.endCapBps == 0 : g.startCapBps > 0, "invalid guard window");
@@ -102,9 +107,6 @@ contract HookbrewFactory is BaseHook, IUnlockCallback, ReentrancyGuard {
         l.liquidity = LiquidityAmounts.getLiquidityForAmounts(sqrtPrice, TickMath.getSqrtPriceAtTick(l.lower), TickMath.getSqrtPriceAtTick(l.upper), token < quote ? TOTAL_SUPPLY : 0, token < quote ? 0 : TOTAL_SUPPLY);
         poolManager.unlock(abi.encode(uint8(0), token, uint256(0)));
         if (p.initialBuy > 0) {
-            uint256 beforeQuote = IERC20(quote).balanceOf(address(this));
-            IERC20(quote).safeTransferFrom(msg.sender, address(this), p.initialBuy);
-            require(IERC20(quote).balanceOf(address(this)) - beforeQuote == p.initialBuy, "quote transfer mismatch");
             bought = abi.decode(poolManager.unlock(abi.encode(uint8(1), token, p.initialBuy)), (uint256));
             require(bought >= p.minTokensOut && bought <= TOTAL_SUPPLY / 10, "founder buy outside limits");
             Split[] storage split = recipients[token]; uint256 assigned;
@@ -159,7 +161,12 @@ contract HookbrewFactory is BaseHook, IUnlockCallback, ReentrancyGuard {
         return "";
     }
     function _settle(Currency currency, int128 delta) private {
-        if (delta < 0) { poolManager.sync(currency); IERC20(Currency.unwrap(currency)).safeTransfer(address(poolManager), uint128(-delta)); poolManager.settle(); }
+        if (delta < 0) {
+            uint256 owed = uint128(-delta);
+            poolManager.sync(currency);
+            if (Currency.unwrap(currency) == address(0)) poolManager.settle{value: owed}();
+            else { IERC20(Currency.unwrap(currency)).safeTransfer(address(poolManager), owed); poolManager.settle(); }
+        }
         else if (delta > 0) poolManager.take(currency, address(this), uint128(delta));
     }
     function harvest(address token) external nonReentrant {
@@ -180,13 +187,13 @@ contract HookbrewFactory is BaseHook, IUnlockCallback, ReentrancyGuard {
         require(eligible(token, recipient), "restore founder allocation to claim");
         uint256 t = claimable[token][recipient][token]; uint256 q = claimable[token][recipient][quote];
         claimable[token][recipient][token] = 0; claimable[token][recipient][quote] = 0;
-        if(t > 0) IERC20(token).safeTransfer(recipient,t); if(q > 0) IERC20(quote).safeTransfer(recipient,q);
+        if(t > 0) IERC20(token).safeTransfer(recipient,t); if(q > 0) _payNative(recipient,q);
         emit Claimed(token,recipient,t,q);
     }
     function claimProtocol(address token) external nonReentrant {
         uint256 t=protocolClaimable[token][token]; uint256 q=protocolClaimable[token][quote];
         protocolClaimable[token][token]=0; protocolClaimable[token][quote]=0;
-        if(t>0) IERC20(token).safeTransfer(treasury,t); if(q>0) IERC20(quote).safeTransfer(treasury,q);
+        if(t>0) IERC20(token).safeTransfer(treasury,t); if(q>0) _payNative(treasury,q);
         emit Claimed(token,treasury,t,q);
     }
 }
