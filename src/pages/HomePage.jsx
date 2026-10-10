@@ -86,6 +86,7 @@ export default function HomePage() {
           </div>
         ) : (
           <Empty
+            level={3}
             title="No coins yet"
             action={
               <Link to="/launch" className="btn btn-primary">

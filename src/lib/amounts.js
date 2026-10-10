@@ -1,5 +1,7 @@
 // Spend and slippage maths for the trade ticket, in bigint lamports / raw token units. The amount a
 // person enters to buy is the most they spend: slippage only lowers the minimum they receive.
+import { transferKeepsRentExempt } from './txflow.js'
+
 export const BPS = 10_000n
 
 export const slippageBps = (pct) => BigInt(Math.round(Math.max(0, Number(pct) || 0) * 100))
@@ -7,6 +9,19 @@ export const slippageBps = (pct) => BigInt(Math.round(Math.max(0, Number(pct) ||
 /** Platform fee on `lamports` at `feeBps`. */
 export const platformFee = (lamports, feeBps) =>
   feeBps && lamports > 0n ? (lamports * BigInt(feeBps)) / BPS : 0n
+
+/**
+ * The platform fee a trade or dev buy of `lamports` is actually charged, given the treasury's
+ * balance (null when unknown). This is the rule platformFeeInstruction builds by: no treasury, no
+ * fee; and a fee below the rent-exempt minimum is left out while the treasury is not rent-exempt
+ * (or its balance is unknown), because that transfer would fail and take the whole transaction
+ * with it. Summaries use it too, so they never show a fee that will not be charged.
+ */
+export function chargedPlatformFee(platform, lamports, treasuryBalance) {
+  if (!platform?.treasury) return 0n
+  const fee = platformFee(lamports, platform.feeBps)
+  return fee > 0n && transferKeepsRentExempt(treasuryBalance, fee) ? fee : 0n
+}
 
 /** `amount` reduced by the slippage tolerance: the least a trade may deliver. */
 export const minimumOut = (amount, slippagePct) => (amount * (BPS - slippageBps(slippagePct))) / BPS

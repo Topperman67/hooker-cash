@@ -34,15 +34,23 @@ export const compact = (value) =>
         Number(value),
       )
 
-// Token prices are tiny: show significant digits, using subscript zero counts like trading UIs.
-export function price(value) {
-  if (value == null || !(value > 0)) return '—'
-  if (value >= 0.001) return value.toLocaleString('en-US', { maximumSignificantDigits: 4 })
+// Token prices are tiny. Below 0.001 a price is shown like trading UIs do, with the run of zeros
+// after the decimal point written as a count: 0.0000000412 reads "0.0₇412". `text` is always the
+// plain decimal (for copying, titles and screen readers); `zeros` and `digits` are set only for
+// the zero-count form, which the Price component draws with the brand font's own digits (Unicode
+// subscript digits are missing from the loaded font subsets and fall back to a comma-like mark).
+export function priceParts(value) {
+  if (value == null || !(value > 0) || !Number.isFinite(value)) return null
+  if (value >= 0.001)
+    return { text: value.toLocaleString('en-US', { maximumSignificantDigits: 4 }) }
   const [mantissa, exponent] = value.toExponential(3).split('e-')
   const zeros = Number(exponent) - 1
   const digits = mantissa.replace('.', '').replace(/0+$/, '')
-  return `0.0${String(zeros).replace(/\d/g, (d) => '₀₁₂₃₄₅₆₇₈₉'[d])}${digits}`
+  return { text: `0.${'0'.repeat(zeros)}${digits}`, zeros, digits }
 }
+
+/** A price as plain text (the full decimal), or '—'. */
+export const price = (value) => priceParts(value)?.text ?? '—'
 
 export function pct(value, { sign = true } = {}) {
   if (value == null || !Number.isFinite(value)) return '—'
@@ -71,6 +79,18 @@ export function duration(seconds) {
   if (s < 3600) return `${Math.round(s / 60)} min`
   if (s < 86400 * 2) return `${Math.round(s / 3600)} h`
   return `${Math.round(s / 86400)} days`
+}
+
+/** Time left until something opens, rounded up so it never reads as open early. */
+export function countdown(seconds) {
+  const s = Math.max(0, Math.ceil(seconds))
+  if (s < 60) return 'less than a minute'
+  const minutes = Math.ceil(s / 60)
+  if (minutes < 60) return `${minutes} min`
+  if (minutes < 24 * 60)
+    return `${Math.floor(minutes / 60)} h${minutes % 60 ? ` ${minutes % 60} min` : ''}`
+  const hours = Math.ceil(s / 3600)
+  return `${Math.floor(hours / 24)} d${hours % 24 ? ` ${hours % 24} h` : ''}`
 }
 
 export const safeLink = (value) => {

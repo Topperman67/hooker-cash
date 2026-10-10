@@ -31,7 +31,8 @@ test('decimal parsing never uses floating point', () => {
 })
 
 test('tiny token prices keep significant digits', () => {
-  assert.equal(price(0.00000002796), '0.0₇2796')
+  // Plain text is the full decimal; the Price component draws the zero count (frontend-r2 tests).
+  assert.equal(price(0.00000002796), '0.00000002796')
   assert.equal(price(0.05), '0.05')
   assert.equal(price(null), '—')
   assert.equal(pct(12.345), '+12.3%')

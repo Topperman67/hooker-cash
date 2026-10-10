@@ -175,6 +175,7 @@ test('IDL exposes every instruction, account and event of the spec', () => {
   const idl = q.QUANTUM_IDL as any
   const ix = idl.instructions.map((i: any) => i.name).sort()
   assert.deepEqual(ix, [
+    'cancel_epoch',
     'claim_entanglement',
     'close_epoch',
     'fusion',
@@ -185,10 +186,12 @@ test('IDL exposes every instruction, account and event of the spec', () => {
     'quantum_burn',
     'register',
     'release',
+    'set_paused',
     'update_config',
   ])
   assert.deepEqual(idl.accounts.map((a: any) => a.name).sort(), ['Config', 'Epoch', 'Quantum'])
   for (const e of [
+    'ConfigUpdated',
     'Registered',
     'Locked',
     'Released',
@@ -197,6 +200,7 @@ test('IDL exposes every instruction, account and event of the spec', () => {
     'EpochPosted',
     'Claimed',
     'EpochClosed',
+    'EpochCancelled',
     'Fused',
   ])
     assert.ok(

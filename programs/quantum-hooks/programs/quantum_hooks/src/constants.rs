@@ -19,12 +19,46 @@ pub const MAX_PROOF_LEN: usize = 24;
 /// Time Dilation locks last at most four years.
 pub const MAX_LOCK_DURATION: i64 = 4 * 365 * 86_400;
 
-/// Entanglement epochs can be claimed for 30 days. The `short-expiry` feature exists only so the
-/// local end-to-end tests can exercise `close_epoch` without a clock warp; never deploy it.
+/// Entanglement epochs expire 30 days after they are posted, and a coin gets at most one epoch
+/// every 20 hours. The `short-expiry` feature shortens both (20 s and 15 s) only so the local
+/// end-to-end tests can exercise `close_epoch` and the cadence without a clock warp; never deploy it.
 #[cfg(not(feature = "short-expiry"))]
 pub const EPOCH_TTL: i64 = 30 * 86_400;
 #[cfg(feature = "short-expiry")]
 pub const EPOCH_TTL: i64 = 20;
+#[cfg(not(feature = "short-expiry"))]
+pub const MIN_EPOCH_INTERVAL: i64 = 20 * 3_600;
+#[cfg(feature = "short-expiry")]
+pub const MIN_EPOCH_INTERVAL: i64 = 15;
+
+/// `config.claim_delay` (seconds between posting an epoch and its first claim: the authority's
+/// window to cancel it) is at most 7 days. Clients default to 6 hours.
+pub const MAX_CLAIM_DELAY: i64 = 7 * 86_400;
+
+/// A burn or fusion run by anyone but the keeper (after `keeper_grace`) may spend at most
+/// `max_burn_lamports / PUBLIC_SPEND_DIVISOR`.
+pub const PUBLIC_SPEND_DIVISOR: u64 = 10;
+
+/// Byte offset of `complete: bool` in pump.fun's `BondingCurve` account (8-byte discriminator,
+/// then five u64 reserve / supply fields).
+pub const CURVE_COMPLETE_OFFSET: usize = 8 + 5 * 8;
+
+/// `sha256("global:init_user_volume_accumulator")[..8]`, the same on pump.fun and PumpSwap. A
+/// public burn or fusion may share its transaction with this (the client adds it when the well's
+/// volume accumulator is missing) but with no other pump.fun or PumpSwap instruction.
+pub const INIT_USER_VOLUME_ACCUMULATOR_DISCRIMINATOR: [u8; 8] = [94, 6, 202, 115, 255, 96, 232, 183];
+
+/// Programs (besides this one) whose top-level instructions may share a transaction with a public
+/// (non-keeper) burn or fusion: none of them can trade. Everything else (pump.fun, PumpSwap, the
+/// pump fee program, routers, the caller's own program) is refused, so a public run cannot be
+/// sandwiched inside its own transaction.
+pub const PUBLIC_COMPANION_PROGRAMS: [Pubkey; 5] = [
+    anchor_lang::solana_program::pubkey!("ComputeBudget111111111111111111111111111111"),
+    anchor_lang::solana_program::pubkey!("11111111111111111111111111111111"),
+    anchor_lang::solana_program::pubkey!("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"),
+    anchor_lang::solana_program::pubkey!("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"),
+    anchor_lang::solana_program::pubkey!("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"),
+];
 
 pub const PUMP_PROGRAM_ID: Pubkey =
     anchor_lang::solana_program::pubkey!("6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P");
@@ -123,6 +157,10 @@ mod tests {
             assert_eq!(PUMP_AMM_BUY_DISCRIMINATORS[i], disc(name), "amm {name}");
         }
         assert_eq!(PUMP_AMM_DEPOSIT_DISCRIMINATOR, disc("deposit"));
+        assert_eq!(
+            INIT_USER_VOLUME_ACCUMULATOR_DISCRIMINATOR,
+            disc("init_user_volume_accumulator")
+        );
         // Sells must never pass the allow-list.
         for sell in ["sell", "sell_v2", "sell_v3"] {
             assert!(!PUMP_BUY_DISCRIMINATORS.contains(&disc(sell)));
@@ -157,5 +195,22 @@ mod tests {
             assert!(!RESERVED_ACCOUNT_KEYS[..i].contains(key), "{key} listed twice");
         }
         assert!(!RESERVED_ACCOUNT_KEYS.contains(&PUMP_PROGRAM_ID));
+    }
+
+    #[test]
+    #[allow(deprecated)]
+    fn public_companions_are_the_non_trading_programs() {
+        use anchor_lang::solana_program as sp;
+        assert_eq!(
+            PUBLIC_COMPANION_PROGRAMS[0].to_string(),
+            "ComputeBudget111111111111111111111111111111"
+        );
+        assert_eq!(PUBLIC_COMPANION_PROGRAMS[1], sp::system_program::ID);
+        assert_eq!(PUBLIC_COMPANION_PROGRAMS[2], anchor_spl::associated_token::ID);
+        assert_eq!(PUBLIC_COMPANION_PROGRAMS[3], anchor_spl::token::ID);
+        assert_eq!(PUBLIC_COMPANION_PROGRAMS[4], anchor_spl::token_2022::ID);
+        for trader in [PUMP_PROGRAM_ID, PUMP_AMM_PROGRAM_ID] {
+            assert!(!PUBLIC_COMPANION_PROGRAMS.contains(&trader));
+        }
     }
 }

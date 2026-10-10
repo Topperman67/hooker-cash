@@ -8,6 +8,8 @@ import { api, useResource } from '../lib/api.js'
 import { connection, friendlyWalletError, packTransactions } from '../lib/solana.js'
 import { loadQuantum } from '../lib/quantum.js'
 import { ago, bps, duration, formatUnits, sol, toSol } from '../lib/format.js'
+import { claimTiming, nextRefresh, upcomingEpochs } from '../lib/claims.js'
+import EntanglementClaims from './EntanglementClaims.jsx'
 import { explorer } from '../../shared/network.mjs'
 
 const ACTION_LABELS = {
@@ -15,6 +17,7 @@ const ACTION_LABELS = {
   burn: 'Quantum Burn',
   fusion: 'Fusion',
   entangle: 'Entanglement epoch',
+  'cancel-epoch': 'Epoch cancelled',
   'close-epoch': 'Epoch closed',
 }
 
@@ -31,6 +34,35 @@ export default function QuantumPanel({ coin, onLoaded }) {
     address ? `/api/quantum/${coin.mint}/claims?wallet=${address}` : null,
     60000,
   )
+
+  // Epoch claims open on a timer (claimStart). Keep the countdowns moving, and re-read claims and
+  // epochs just after one opens: the keeper lists a wallet's claim only once its epoch is open.
+  const [tick, setTick] = useState(0)
+  const now = Math.floor(Date.now() / 1000)
+  const upcoming = upcomingEpochs(history.data?.epochs, now)
+  const refreshAt = nextRefresh(
+    [
+      ...upcoming,
+      ...(claims.data?.items || []).filter((c) => claimTiming(c, now).state === 'pending'),
+    ],
+    now,
+  )
+  const refreshClaims = claims.refresh
+  const refreshHistory = history.refresh
+  useEffect(() => {
+    if (refreshAt == null) return
+    const timer = setTimeout(
+      () => {
+        if (Date.now() >= refreshAt * 1000) {
+          refreshClaims()
+          refreshHistory()
+        }
+        setTick((t) => t + 1)
+      },
+      Math.min(Math.max(0, refreshAt * 1000 - Date.now()), 30_000),
+    )
+    return () => clearTimeout(timer)
+  }, [refreshAt, tick, refreshClaims, refreshHistory])
 
   const load = useCallback(async () => {
     try {
@@ -88,7 +120,7 @@ export default function QuantumPanel({ coin, onLoaded }) {
   if (!state)
     return (
       <section className="panel quantum-panel">
-        <h3>Quantum Hooks</h3>
+        <h2 className="h3">Quantum Hooks</h2>
         {error ? (
           <p className="error-text">{error}</p>
         ) : (
@@ -100,14 +132,13 @@ export default function QuantumPanel({ coin, onLoaded }) {
   if (!q)
     return (
       <section className="panel quantum-panel">
-        <h3>Quantum Hooks</h3>
+        <h2 className="h3">Quantum Hooks</h2>
         <p className="muted">
           This coin's creator is a Quant Pad well, but its hook account was not found on-chain.
         </p>
       </section>
     )
 
-  const now = Math.floor(Date.now() / 1000)
   const vested = state.client.vestedAmount ? state.client.vestedAmount(q, now) : 0n
   const releasable = vested > q.releasedAmount ? vested - q.releasedAmount : 0n
   const isLauncher = address && address === q.launcher
@@ -115,19 +146,24 @@ export default function QuantumPanel({ coin, onLoaded }) {
   return (
     <section className="panel quantum-panel" aria-labelledby="quantum-title">
       <div className="panel-head">
-        <h3 id="quantum-title">Quantum Hooks</h3>
+        <h2 id="quantum-title" className="h3">
+          Quantum Hooks
+        </h2>
         <span className="chip chip-quantum">Immutable</span>
       </div>
       <AllocationBar hooks={q} />
 
       {q.splits?.length > 0 && (
         <div className="quantum-block">
-          <h4>Superposition</h4>
+          <h3>Superposition</h3>
           <ul className="split-list">
-            {q.splits.map((s) => (
+            {q.splits.map((s, i) => (
               <li key={s.wallet}>
                 <Address value={s.wallet} href={explorer.account(s.wallet)} />
-                <span className="num">{bps(s.bps)} of creator share</span>
+                <span className="num">
+                  {bps(s.bps)} of creator share
+                  {q.splitOwed?.[i] > 0n && ` · ${sol(toSol(q.splitOwed[i]))} owed`}
+                </span>
               </li>
             ))}
           </ul>
@@ -166,7 +202,19 @@ export default function QuantumPanel({ coin, onLoaded }) {
         <dd className="num">{sol(toSol(q.totalCreatorPaid))}</dd>
         <dt>Liquidity fused</dt>
         <dd className="num">{sol(toSol(q.totalFusedSol))}</dd>
+        {q.launcherOwed > 0n && (
+          <>
+            <dt>Owed to creator</dt>
+            <dd className="num">{sol(toSol(q.launcherOwed))}</dd>
+          </>
+        )}
       </dl>
+      {(q.launcherOwed > 0n || q.splitOwed?.some((owed) => owed > 0n)) && (
+        <p className="faint quantum-note">
+          Owed amounts wait for wallets holding less than Solana's rent minimum. The first pulse
+          after a wallet holds at least 0.00089 SOL pays its amount in full.
+        </p>
+      )}
 
       <button
         className="btn btn-block"
@@ -186,7 +234,7 @@ export default function QuantumPanel({ coin, onLoaded }) {
 
       {q.lockedAmount > 0n && (
         <div className="quantum-block">
-          <h4>Time Dilation lock</h4>
+          <h3>Time Dilation lock</h3>
           <dl className="kv">
             <dt>Locked</dt>
             <dd className="num">{formatUnits(q.lockedAmount, 6, 0)}</dd>
@@ -224,42 +272,31 @@ export default function QuantumPanel({ coin, onLoaded }) {
         </div>
       )}
 
-      {connected && claims.data?.items?.length > 0 && (
-        <div className="quantum-block">
-          <h4>Your Entanglement rewards</h4>
-          {claims.data.items.map((c) => (
-            <div className="claim-row" key={c.index}>
-              <span className="num">{sol(toSol(BigInt(c.amount)))}</span>
-              <span className="faint">epoch {c.index + 1}</span>
-              <button
-                className="btn btn-sm btn-primary"
-                disabled={!!busy}
-                onClick={() =>
-                  run('Claim', async (client, claimant, mint) => [
-                    await client.buildClaimInstruction({
-                      connection,
-                      claimant,
-                      mint,
-                      index: c.index,
-                      leafIndex: c.leafIndex,
-                      amount: BigInt(c.amount),
-                      proof: c.proof.map((h) =>
-                        Uint8Array.from(h.match(/../g).map((x) => parseInt(x, 16))),
-                      ),
-                    }),
-                  ])
-                }
-              >
-                Claim
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
+      <EntanglementClaims
+        upcoming={upcoming}
+        items={connected ? claims.data?.items || [] : []}
+        now={now}
+        busy={busy}
+        onClaim={(c) =>
+          run('Claim', async (client, claimant, mint) => [
+            await client.buildClaimInstruction({
+              connection,
+              claimant,
+              mint,
+              index: c.index,
+              leafIndex: c.leafIndex,
+              amount: BigInt(c.amount),
+              proof: c.proof.map((h) =>
+                Uint8Array.from(h.match(/../g).map((x) => parseInt(x, 16))),
+              ),
+            }),
+          ])
+        }
+      />
 
       {history.data?.log?.length > 0 && (
         <div className="quantum-block">
-          <h4>Recent hook activity</h4>
+          <h3>Recent hook activity</h3>
           <ul className="activity">
             {history.data.log.slice(0, 8).map((row, i) => (
               <li key={i}>

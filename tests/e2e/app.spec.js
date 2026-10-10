@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { enter, stubApi, stubTrades, MINT } from './fixtures.js'
+import { coin, enter, stubApi, stubTrades, MINT } from './fixtures.js'
 
 test('risk notice gates the app once', async ({ page }) => {
   await stubApi(page)
@@ -62,10 +62,201 @@ test('pasting a mint in search opens its coin page', async ({ page }) => {
   await stubApi(page)
   await enter(page)
   await page.goto('/')
-  await page.getByLabel('Search coins or paste a mint address').fill(MINT)
-  await page.getByLabel('Search coins or paste a mint address').press('Enter')
+  // The menu carries a second (hidden) copy of the search; the visible one is the header's.
+  const search = page
+    .getByRole('search', { name: 'Site search' })
+    .getByRole('textbox', { name: 'Search coins or paste a mint address' })
+  await search.fill(MINT)
+  await search.press('Enter')
   await expect(page).toHaveURL(new RegExp(`/coin/${MINT}$`))
 })
+
+test('the mobile menu search is labelled on its own and ids are unique', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await stubApi(page)
+  await enter(page)
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open menu' }).click()
+  const input = page
+    .locator('#mobile-nav')
+    .getByRole('textbox', { name: 'Search coins or paste a mint address' })
+  await expect(input).toBeVisible()
+  // Its own label points at it (not at the hidden header copy), and no id repeats on the page.
+  expect(await input.evaluate((el) => [...el.labels].map((l) => l.textContent.trim()))).toEqual([
+    'Search coins or paste a mint address',
+  ])
+  const duplicates = await page.evaluate(() => {
+    const ids = [...document.querySelectorAll('[id]')].map((el) => el.id)
+    return ids.filter((id, i) => ids.indexOf(id) !== i)
+  })
+  expect(duplicates).toEqual([])
+  await input.fill(MINT)
+  await input.press('Enter')
+  await expect(page).toHaveURL(new RegExp(`/coin/${MINT}$`))
+})
+
+test('landmarks: the tape is a named region and the two searches have distinct names', async ({
+  page,
+}) => {
+  await stubApi(page)
+  await enter(page)
+  await page.goto('/market')
+  await expect(page.getByRole('region', { name: 'Trending coins' })).toBeVisible()
+  await expect(page.getByRole('search', { name: 'Site search' })).toBeVisible()
+  await expect(page.getByRole('search', { name: 'Search the market' })).toBeVisible()
+  await expect(page.getByRole('search')).toHaveCount(2)
+})
+
+test('tiny prices show a zero count in the brand font and copy as the full decimal', async ({
+  page,
+}) => {
+  await stubApi(page)
+  await enter(page)
+  await page.goto(`/coin/${MINT}`)
+  const value = page.locator('.coin-stats .price-tiny')
+  await expect(value).toHaveText('0.0000000412')
+  await expect(value).toHaveAttribute('title', '0.0000000412')
+  const drawn = await value.evaluate((el) => {
+    const sub = el.querySelector('sub.price-zeros')
+    const selection = getSelection()
+    selection.removeAllRanges()
+    const range = document.createRange()
+    range.selectNodeContents(el)
+    selection.addRange(range)
+    const copied = selection.toString()
+    selection.removeAllRanges()
+    return {
+      count: getComputedStyle(sub, '::before').content,
+      hidden: sub.getAttribute('aria-hidden'),
+      font: getComputedStyle(sub).fontFamily,
+      copied,
+      subscriptDigits: /[₀-₉]/.test(el.textContent),
+    }
+  })
+  expect(drawn).toEqual({
+    count: '"7"',
+    hidden: 'true',
+    font: expect.stringContaining('Martian Mono'),
+    copied: '0.0000000412',
+    subscriptDigits: false,
+  })
+})
+
+// Chromium copies HTML with computed styles inlined, which would carry the zero run's font-size: 0
+// into a rich-text paste and show "0.0412". The page writes its own HTML for such copies.
+test('a tiny price pasted into a rich-text editor reads as the full decimal', async ({
+  page,
+  context,
+}) => {
+  await stubApi(page)
+  await enter(page)
+  await page.goto(`/coin/${MINT}`)
+  await expect(page.locator('.coin-stats .price-tiny')).toHaveText('0.0000000412')
+  await page.evaluate(() => {
+    // Read during the copy event, after the page's own handler (copy data is readable then).
+    window.__copied = null
+    window.addEventListener('copy', (e) => {
+      window.__copied = {
+        prevented: e.defaultPrevented,
+        plain: e.clipboardData.getData('text/plain'),
+        html: e.clipboardData.getData('text/html'),
+      }
+    })
+    // The price stat's value: "<price> SOL".
+    const value = document.querySelector('.coin-stats .price-tiny').parentElement
+    const range = document.createRange()
+    range.selectNodeContents(value)
+    getSelection().removeAllRanges()
+    getSelection().addRange(range)
+  })
+  await page.keyboard.press('ControlOrMeta+C')
+  const copied = await page.evaluate(() => window.__copied)
+  expect(copied).toMatchObject({ prevented: true, plain: '0.0000000412 SOL' })
+  expect(copied.html).toContain('0.0000000412')
+  expect(copied.html).not.toMatch(/font-size|price-zero-run|<sub/)
+
+  // Paste into a plain rich-text editor on another page, as into a mail composer.
+  const editor = await context.newPage()
+  await editor.setContent('<div contenteditable="true" style="font: 16px sans-serif"></div>')
+  await editor.locator('[contenteditable]').focus()
+  await editor.keyboard.press('ControlOrMeta+V')
+  await expect(editor.locator('[contenteditable]')).not.toBeEmpty()
+  const pasted = await editor.locator('[contenteditable]').evaluate((box) => {
+    // The text a reader sees: text nodes that are drawn at a non-zero size.
+    const seen = []
+    const walker = document.createTreeWalker(box, NodeFilter.SHOW_TEXT)
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const style = getComputedStyle(node.parentElement)
+      if (parseFloat(style.fontSize) > 0 && style.visibility !== 'hidden') seen.push(node.data)
+    }
+    return {
+      html: box.innerHTML,
+      seen: seen.join('').replace(/\s+/g, ' ').trim(),
+      zeroSized: [...box.querySelectorAll('*')].some(
+        (el) => parseFloat(getComputedStyle(el).fontSize) === 0,
+      ),
+    }
+  })
+  expect(pasted.html).not.toMatch(/font-size:\s*0/)
+  expect(pasted.zeroSized).toBe(false)
+  expect(pasted.seen).toBe('0.0000000412 SOL')
+  await editor.close()
+})
+
+test('a coin that migrated off pump.fun says so and cannot be traded here', async ({ page }) => {
+  const migrated = coin({
+    complete: true,
+    progress: 100,
+    poolMissing: true,
+    price: null,
+    marketCap: null,
+  })
+  await stubApi(page, { coins: [migrated] })
+  // Registered after stubApi, so it answers first.
+  await page.route(`**/api/coins/${MINT}`, (route) =>
+    route.fulfill({ json: { coin: { ...migrated, meta: {} } } }),
+  )
+  await enter(page, { wallet: true })
+  await page.goto(`/coin/${MINT}`)
+  const ticket = page.getByRole('form', { name: 'Trade ECAT' })
+  await expect(ticket.getByRole('button', { name: 'Migrated off pump.fun' })).toBeDisabled()
+  await expect(ticket.getByLabel('You pay at most')).toBeDisabled()
+  await expect(ticket).toContainText('cannot be traded here')
+  await expect(page.locator('.coin-side .curve-meta')).toContainText('Migrated off pump.fun')
+  await expect(page.getByText('Graduated to PumpSwap')).toHaveCount(0)
+  // Connecting a wallet does not open the ticket, and no market read is retried.
+  await page.getByRole('banner').getByRole('button', { name: 'Connect', exact: true }).click()
+  await page.getByRole('button', { name: 'Test Wallet' }).click()
+  await expect(page.getByRole('button', { name: 'Wallet details' })).toBeVisible()
+  await expect(ticket.getByRole('button', { name: 'Migrated off pump.fun' })).toBeDisabled()
+  await expect(ticket).not.toContainText('Could not read this coin')
+  await page.goto('/market')
+  await expect(page.locator('.coin-card .curve-meta').first()).toContainText(
+    'Migrated off pump.fun',
+  )
+})
+
+for (const withTrades of [false, true]) {
+  test(`coin page headings never skip a level (${withTrades ? 'with' : 'no'} trades)`, async ({
+    page,
+  }) => {
+    await stubApi(page)
+    if (withTrades) await stubTrades(page)
+    await enter(page)
+    await page.goto(`/coin/${MINT}`)
+    await expect(page.getByRole('heading', { level: 1 })).toContainText('Entangled Cats')
+    await expect(page.getByRole('heading', { name: 'Quantum Hooks' })).toBeVisible()
+    if (withTrades) await expect(page.locator('table').first()).toBeVisible()
+    const levels = await page.evaluate(() =>
+      [...document.querySelectorAll('main h1, main h2, main h3, main h4, main h5, main h6')]
+        .filter((h) => h.getClientRects().length)
+        .map((h) => Number(h.tagName[1])),
+    )
+    expect(levels).toContain(1)
+    for (let i = 1; i < levels.length; i++)
+      expect(levels[i] - levels[i - 1], levels.join(' ')).toBeLessThanOrEqual(1)
+  })
+}
 
 test('wallet connects through the Wallet Standard and shows the balance', async ({ page }) => {
   await stubApi(page)

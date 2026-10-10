@@ -622,8 +622,14 @@
   gap: 8px;
   pointer-events: none;
 }
-.chart-empty h3 {
+.chart-empty-title {
+  font-family: var(--font-display);
   font-size: var(--t-md);
+  font-weight: 750;
+  font-stretch: 104%;
+  line-height: 1.04;
+  letter-spacing: -0.02em;
+  text-wrap: balance;
 }
 
 .ticket {
@@ -676,16 +682,26 @@
 .ticket-quote .segmented {
   min-width: 0;
 }
+/* Why the ticket is closed (a coin that migrated off pump.fun). */
+.ticket-note {
+  font-size: var(--t-sm);
+  overflow-wrap: anywhere;
+}
+.ticket-note strong {
+  color: var(--on-graphite);
+}
 
 .quantum-panel {
   display: grid;
   gap: 16px;
   min-width: 0;
 }
-.quantum-panel h4 {
+/* Sub-headings inside the panel (h3 under the panel's h2), set small in the UI face. */
+.quantum-block h3 {
   font-family: var(--font-ui);
   font-size: var(--t-sm);
   font-weight: 750;
+  font-stretch: 112%;
   margin: 0 0 8px;
 }
 .quantum-reserves {
@@ -742,6 +758,14 @@
   gap: 10px;
   justify-content: space-between;
   padding: 6px 0;
+}
+.claim-wait {
+  font-size: var(--t-xs);
+  text-align: right;
+}
+.claim-note {
+  font-size: var(--t-xs);
+  margin-top: 8px;
 }
 .about {
   display: grid;

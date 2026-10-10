@@ -4,7 +4,13 @@ import { Connection, PublicKey } from '@solana/web3.js'
 import bs58 from 'bs58'
 import { PUMP_SDK, bondingCurvePda, canonicalPumpPoolPda } from '#pump-sdk'
 import { PUMP_AMM_SDK } from '@pump-fun/pump-swap-sdk'
-import { getTokenMetadata, TOKEN_2022_PROGRAM_ID } from '@solana/spl-token'
+import {
+  ExtensionType,
+  getExtensionData,
+  unpackMint,
+  TOKEN_PROGRAM_ID,
+  TOKEN_2022_PROGRAM_ID,
+} from '@solana/spl-token'
 import { network, priceFromReserves, curveProgress } from '../shared/network.mjs'
 
 export const PUMP = network.pumpProgram
@@ -385,12 +391,14 @@ export async function firstSignature(connection, address, { pages = 5 } = {}) {
   return { signature: null, tooDeep: true }
 }
 
+// Legacy curves (created before pump.fun recorded creators) decode with the zero key as creator:
+// that is "unknown", not the system program.
 function decodeCurve(info) {
   const curve = PUMP_SDK.decodeBondingCurveNullable(info)
   if (!curve) return null
   return {
     complete: curve.complete,
-    creator: curve.creator.toBase58(),
+    creator: curve.creator.equals(PublicKey.default) ? null : curve.creator.toBase58(),
     quoteMint: curve.quoteMint?.toBase58() || '11111111111111111111111111111111',
     mayhem: !!curve.isMayhemMode,
     virtualSolReserves: curve.virtualQuoteReserves.toString(),
@@ -415,6 +423,8 @@ const u64At = (data, offset) => Buffer.from(data).readBigUInt64LE(offset)
  * Live market state in one or two account reads: the bonding curve and, once it has completed, the
  * canonical PumpSwap pool priced from its vaults (fee buckets excluded, virtual quote included).
  * With `supply`, also the mint's current raw supply: mayhem coins mint 2B, and burns reduce it.
+ * `poolMissing` is true when the curve has completed but no canonical PumpSwap pool exists: coins
+ * that graduated before PumpSwap migrated to Raydium (and a new graduate is briefly in between).
  */
 export async function readMarket(connection, mint, { supply = true } = {}) {
   const key = new PublicKey(mint)
@@ -446,18 +456,94 @@ export async function readMarket(connection, mint, { supply = true } = {}) {
   return {
     curve,
     pool,
+    poolMissing: !!curve?.complete && !poolInfo,
     supply: mintInfo?.data?.length >= 44 ? u64At(mintInfo.data, 36).toString() : null,
   }
 }
 
+export const METAPLEX_METADATA = 'metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s'
+const METAPLEX = new PublicKey(METAPLEX_METADATA)
+export const metaplexMetadataPda = (mint) =>
+  PublicKey.findProgramAddressSync(
+    [Buffer.from('metadata'), METAPLEX.toBuffer(), new PublicKey(mint).toBuffer()],
+    METAPLEX,
+  )[0]
+
+// Borsh strings (u32 length, then UTF-8), as both metadata layouts store them. Metaplex pads its
+// fixed-size fields with NULs.
+function readStrings(data, offset, count) {
+  const out = []
+  for (let i = 0; i < count; i++) {
+    if (offset + 4 > data.length) return null
+    const length = data.readUInt32LE(offset)
+    offset += 4
+    if (offset + length > data.length) return null
+    out.push(
+      data
+        .subarray(offset, offset + length)
+        .toString('utf8')
+        .replace(/\0+$/, '')
+        .trim(),
+    )
+    offset += length
+  }
+  return out
+}
+const identityOf = ([name, symbol, uri] = []) =>
+  name || symbol || uri
+    ? { name: name.slice(0, 64), symbol: symbol.slice(0, 16), uri: uri.slice(0, 512) }
+    : null
+
+// Token-2022 metadata stored in the mint (pump.fun's current coins): update authority, mint, then
+// name, symbol and uri.
+function token2022Identity(key, info) {
+  try {
+    const data = getExtensionData(
+      ExtensionType.TokenMetadata,
+      unpackMint(key, info, TOKEN_2022_PROGRAM_ID).tlvData,
+    )
+    return data ? identityOf(readStrings(Buffer.from(data), 64, 3) || []) : null
+  } catch {
+    return null
+  }
+}
+
+// A Metaplex metadata account (pump.fun's legacy SPL Token coins): key 4 (MetadataV1), update
+// authority, mint, then name, symbol and uri.
+function metaplexIdentity(key, info) {
+  if (!info || !info.owner?.equals?.(METAPLEX)) return null
+  const data = Buffer.from(info.data)
+  if (data.length < 65 || data[0] !== 4 || !data.subarray(33, 65).equals(key.toBuffer()))
+    return null
+  return identityOf(readStrings(data, 65, 3) || [])
+}
+
+/**
+ * A coin's name, symbol and metadata URI, with the token program that owns its mint: from the
+ * Token-2022 metadata extension, else the Metaplex metadata account (legacy SPL Token coins).
+ * One RPC read. Resolves to null when the mint has neither; throws when the RPC fails or the mint
+ * is not visible (a lagging node), so a caller never mistakes a failed read for "no metadata".
+ */
 export async function readTokenIdentity(connection, mint) {
-  const meta = await getTokenMetadata(
-    connection,
-    new PublicKey(mint),
+  const key = new PublicKey(mint)
+  const [mintInfo, metaInfo] = await connection.getMultipleAccountsInfo(
+    [key, metaplexMetadataPda(key)],
     'confirmed',
-    TOKEN_2022_PROGRAM_ID,
-  ).catch(() => null)
-  return meta ? { name: meta.name, symbol: meta.symbol, uri: meta.uri } : null
+  )
+  if (!mintInfo)
+    throw Object.assign(Error('The mint is not visible on Solana yet.'), { code: 'mint_missing' })
+  const owner = mintInfo.owner?.toBase58?.() || null
+  const identity =
+    (owner === TOKEN_2022_PROGRAM_ID.toBase58() && token2022Identity(key, mintInfo)) ||
+    metaplexIdentity(key, metaInfo)
+  if (!identity) return null
+  return {
+    ...identity,
+    tokenProgram:
+      owner === TOKEN_PROGRAM_ID.toBase58() || owner === TOKEN_2022_PROGRAM_ID.toBase58()
+        ? owner
+        : null,
+  }
 }
 
 export const poolFor = (mint) => canonicalPumpPoolPda(new PublicKey(mint)).toBase58()

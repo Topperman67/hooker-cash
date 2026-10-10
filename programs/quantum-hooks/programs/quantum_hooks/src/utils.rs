@@ -1,6 +1,11 @@
 use anchor_lang::prelude::*;
-use anchor_lang::solana_program::instruction::{AccountMeta, Instruction};
+use anchor_lang::solana_program::instruction::{
+    get_stack_height, AccountMeta, Instruction, TRANSACTION_LEVEL_STACK_HEIGHT,
+};
 use anchor_lang::solana_program::program::invoke_signed;
+use anchor_lang::solana_program::sysvar::instructions::{
+    load_current_index_checked, load_instruction_at_checked,
+};
 use anchor_lang::system_program;
 use anchor_spl::associated_token::{self, get_associated_token_address};
 use anchor_spl::token::{self, spl_token};
@@ -112,11 +117,19 @@ pub fn assert_well_invariant(well: &AccountInfo, quantum: &Quantum, rent: &Rent)
     Ok(())
 }
 
-/// Keeper gating shared by `quantum_burn` and `fusion`.
-pub fn check_action_gate(config: &Config, caller: &Pubkey, last_at: i64, now: i64) -> Result<()> {
+/// Keeper gating shared by `quantum_burn` and `fusion`. The keeper may act every
+/// `min_action_interval` after `last_at`; anyone else only once `keeper_grace` has passed since
+/// `grace_from` (the last action, or for Fusion the later of the last fusion and graduation).
+pub fn check_action_gate(
+    config: &Config,
+    is_keeper: bool,
+    last_at: i64,
+    grace_from: i64,
+    now: i64,
+) -> Result<()> {
     require!(!config.paused, QuantumError::Paused);
-    if *caller != config.keeper {
-        let open_at = last_at
+    if !is_keeper {
+        let open_at = grace_from
             .checked_add(config.keeper_grace)
             .ok_or(QuantumError::MathOverflow)?;
         require!(now > open_at, QuantumError::KeeperOnly);
@@ -126,6 +139,90 @@ pub fn check_action_gate(config: &Config, caller: &Pubkey, last_at: i64, now: i6
         .ok_or(QuantumError::MathOverflow)?;
     require!(now >= next, QuantumError::TooSoon);
     Ok(())
+}
+
+/// Most a burn or fusion may spend: `max_burn_lamports` for the keeper, a tenth of it for anyone
+/// else (a public run picks its own price limits, so it gets less to lose).
+pub fn spend_cap(config: &Config, is_keeper: bool) -> u64 {
+    if is_keeper {
+        config.max_burn_lamports
+    } else {
+        config.max_burn_lamports / PUBLIC_SPEND_DIVISOR
+    }
+}
+
+pub fn check_spend(config: &Config, is_keeper: bool, spend: u64, reserve: u64) -> Result<()> {
+    require!(spend > 0, QuantumError::ZeroAmount);
+    require!(
+        spend <= reserve && spend <= spend_cap(config, is_keeper),
+        QuantumError::SpendTooHigh
+    );
+    Ok(())
+}
+
+/// A top-level instruction that may share a transaction with a public burn or fusion: this
+/// program, compute budget, system, token and associated-token instructions, and pump.fun /
+/// PumpSwap only to create a volume accumulator. Nothing that can trade.
+pub fn public_companion_ok(program_id: &Pubkey, data: &[u8]) -> bool {
+    if *program_id == crate::ID || PUBLIC_COMPANION_PROGRAMS.contains(program_id) {
+        return true;
+    }
+    (*program_id == PUMP_PROGRAM_ID || *program_id == PUMP_AMM_PROGRAM_ID)
+        && data.len() >= 8
+        && data[..8] == INIT_USER_VOLUME_ACCUMULATOR_DISCRIMINATOR
+}
+
+/// For a public (non-keeper) burn or fusion: the instruction must be invoked at the top level (no
+/// wrapper program around it) and every other top-level instruction of the transaction must pass
+/// `public_companion_ok`, so nobody can buy before it and sell after it in the same transaction.
+pub fn check_public_transaction(instructions_sysvar: &AccountInfo) -> Result<()> {
+    require!(
+        get_stack_height() == TRANSACTION_LEVEL_STACK_HEIGHT,
+        QuantumError::PublicTransactionNotAllowed
+    );
+    let count = {
+        let data = instructions_sysvar.try_borrow_data()?;
+        require!(data.len() >= 2, QuantumError::PublicTransactionNotAllowed);
+        u16::from_le_bytes([data[0], data[1]]) as usize
+    };
+    let current = load_current_index_checked(instructions_sysvar)? as usize;
+    for index in 0..count {
+        if index == current {
+            continue; // this instruction, at the top level (checked above)
+        }
+        let ix = load_instruction_at_checked(index, instructions_sysvar)?;
+        require!(
+            public_companion_ok(&ix.program_id, &ix.data),
+            QuantumError::PublicTransactionNotAllowed
+        );
+    }
+    Ok(())
+}
+
+/// The coin's pump.fun bonding curve.
+pub fn bonding_curve_address(mint: &Pubkey) -> Pubkey {
+    Pubkey::find_program_address(&[b"bonding-curve", mint.as_ref()], &PUMP_PROGRAM_ID).0
+}
+
+/// Whether `curve` (an account at `bonding_curve_address`) is a completed pump.fun curve.
+pub fn curve_complete(curve: &AccountInfo) -> bool {
+    curve.owner == &PUMP_PROGRAM_ID
+        && curve
+            .try_borrow_data()
+            .map(|d| d.len() > CURVE_COMPLETE_OFFSET && d[CURVE_COMPLETE_OFFSET] == 1)
+            .unwrap_or(false)
+}
+
+/// Whether `pool` (an account at `canonical_pool`) exists, i.e. the coin migrated to PumpSwap.
+pub fn pool_exists(pool: &AccountInfo) -> bool {
+    pool.owner == &PUMP_AMM_PROGRAM_ID && !pool.data_is_empty()
+}
+
+/// Records the first time the coin is seen graduated (`graduated_at` stays at that time).
+pub fn note_graduation(quantum: &mut Quantum, graduated: bool, now: i64) {
+    if graduated && quantum.graduated_at == 0 {
+        quantum.graduated_at = now;
+    }
 }
 
 pub fn check_discriminator(data: &[u8], allowed: &[[u8; 8]]) -> Result<()> {
@@ -288,5 +385,102 @@ mod tests {
         assert!(!split_account_ok(&rent_sysvar, &wallet, false, false));
         assert!(is_reserved_account_key(&rent_sysvar));
         assert!(!is_reserved_account_key(&wallet));
+    }
+
+    fn config() -> Config {
+        Config {
+            authority: Pubkey::new_unique(),
+            treasury: Pubkey::new_unique(),
+            keeper: Pubkey::new_unique(),
+            protocol_bps: 0,
+            max_burn_lamports: 1_000_000_000,
+            min_action_interval: 3_600,
+            keeper_grace: 86_400,
+            paused: false,
+            bump: 255,
+            claim_delay: 21_600,
+            version: 0,
+            reserved: [0; 48],
+        }
+    }
+
+    #[test]
+    fn public_fusion_grace_counts_from_graduation() {
+        let config = config();
+        let launch = 1_000_000;
+        let graduated = launch + 5 * 86_400;
+        let grace_from = launch.max(graduated);
+        // A coin that graduates days after launch: the public gate stays shut for a full grace
+        // after graduation, although the last fusion (= launch) is long past.
+        let soon = graduated + 60;
+        assert!(check_action_gate(&config, false, launch, launch, soon).is_ok());
+        assert!(check_action_gate(&config, false, launch, grace_from, soon).is_err());
+        assert!(check_action_gate(&config, true, launch, grace_from, soon).is_ok());
+        let later = graduated + 86_401;
+        assert!(check_action_gate(&config, false, launch, grace_from, later).is_ok());
+        // The keeper still waits min_action_interval after its last action.
+        assert!(check_action_gate(&config, true, later - 10, grace_from, later).is_err());
+        let mut paused = config;
+        paused.paused = true;
+        assert!(check_action_gate(&paused, true, launch, launch, later).is_err());
+    }
+
+    #[test]
+    fn public_runs_spend_a_tenth_of_the_cap() {
+        let config = config();
+        assert_eq!(spend_cap(&config, true), 1_000_000_000);
+        assert_eq!(spend_cap(&config, false), 100_000_000);
+        assert!(check_spend(&config, false, 100_000_000, u64::MAX).is_ok());
+        assert!(check_spend(&config, false, 100_000_001, u64::MAX).is_err());
+        assert!(check_spend(&config, true, 100_000_001, u64::MAX).is_ok());
+        assert!(check_spend(&config, true, 5, 4).is_err());
+        assert!(check_spend(&config, true, 0, 4).is_err());
+    }
+
+    #[test]
+    fn public_runs_share_a_transaction_only_with_non_trading_programs() {
+        use anchor_lang::solana_program as sp;
+        let volume = INIT_USER_VOLUME_ACCUMULATOR_DISCRIMINATOR.to_vec();
+        for ok in [crate::ID, PUBLIC_COMPANION_PROGRAMS[0], sp::system_program::ID] {
+            assert!(public_companion_ok(&ok, &[]));
+        }
+        assert!(public_companion_ok(&PUMP_PROGRAM_ID, &volume));
+        assert!(public_companion_ok(&PUMP_AMM_PROGRAM_ID, &volume));
+        for buy in PUMP_BUY_DISCRIMINATORS {
+            assert!(!public_companion_ok(&PUMP_PROGRAM_ID, &buy));
+        }
+        assert!(!public_companion_ok(&PUMP_AMM_PROGRAM_ID, &PUMP_AMM_DEPOSIT_DISCRIMINATOR));
+        assert!(!public_companion_ok(&PUMP_PROGRAM_ID, &volume[..7]));
+        let fees = sp::pubkey!("pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ");
+        assert!(!public_companion_ok(&fees, &volume));
+        assert!(!public_companion_ok(&Pubkey::new_unique(), &[]));
+    }
+
+    #[test]
+    fn graduation_is_seen_from_a_complete_curve_or_an_existing_pool() {
+        let key = Pubkey::new_unique();
+        static PUMP: Pubkey = PUMP_PROGRAM_ID;
+        static AMM: Pubkey = PUMP_AMM_PROGRAM_ID;
+        let leak = |len: usize, complete: bool| {
+            let mut d = vec![0u8; len];
+            if complete && len > CURVE_COMPLETE_OFFSET {
+                d[CURVE_COMPLETE_OFFSET] = 1;
+            }
+            (Box::leak(d.into_boxed_slice()), Box::leak(Box::new(1_000_000u64)))
+        };
+        let (d, l) = leak(150, true);
+        assert!(curve_complete(&AccountInfo::new(&key, false, false, l, d, &PUMP, false, 0)));
+        let (d, l) = leak(150, false);
+        assert!(!curve_complete(&AccountInfo::new(&key, false, false, l, d, &PUMP, false, 0)));
+        let (d, l) = leak(150, true);
+        assert!(!curve_complete(&AccountInfo::new(&key, false, false, l, d, &AMM, false, 0)));
+        let (d, l) = leak(10, true);
+        assert!(!curve_complete(&AccountInfo::new(&key, false, false, l, d, &PUMP, false, 0)));
+        let (d, l) = leak(300, false);
+        assert!(pool_exists(&AccountInfo::new(&key, false, false, l, d, &AMM, false, 0)));
+        let (d, l) = leak(0, false);
+        assert!(!pool_exists(&AccountInfo::new(&key, false, false, l, d, &AMM, false, 0)));
+        let (d, l) = leak(300, false);
+        assert!(!pool_exists(&AccountInfo::new(&key, false, false, l, d, &PUMP, false, 0)));
     }
 }

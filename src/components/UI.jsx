@@ -15,10 +15,13 @@ export function Spinner({ block, label }) {
   )
 }
 
-export function Empty({ title, children, action }) {
+// `level` keeps the page's heading outline in order: 1 when the message is the whole page, 2 under
+// the page's h1, 3 inside a section. It always looks the same.
+export function Empty({ title, children, action, level = 2 }) {
+  const Heading = `h${level}`
   return (
     <div className="empty">
-      <h3>{title}</h3>
+      <Heading className="h3 empty-title">{title}</Heading>
       {children && <p>{children}</p>}
       {action}
     </div>
@@ -91,7 +94,9 @@ export function Stat({ label, children, className = '' }) {
   )
 }
 
-export function CurveProgress({ progress = 0, complete }) {
+// `migrated`: graduated without a PumpSwap pool (the indexer's poolMissing), i.e. moved off
+// pump.fun to another exchange, or a new graduate whose pool does not exist yet.
+export function CurveProgress({ progress = 0, complete, migrated = false }) {
   const value = complete ? 100 : Math.max(0, Math.min(100, progress || 0))
   return (
     <div className={`curve ${complete ? 'curve-done' : ''}`}>
@@ -109,7 +114,13 @@ export function CurveProgress({ progress = 0, complete }) {
         />
       </div>
       <div className="curve-meta">
-        <span>{complete ? 'Graduated to PumpSwap' : 'Bonding curve'}</span>
+        <span>
+          {complete
+            ? migrated
+              ? 'Migrated off pump.fun'
+              : 'Graduated to PumpSwap'
+            : 'Bonding curve'}
+        </span>
         <span className="num">{value.toFixed(value < 10 ? 1 : 0)}%</span>
       </div>
     </div>

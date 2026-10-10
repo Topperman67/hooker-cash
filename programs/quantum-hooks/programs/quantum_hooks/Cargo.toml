@@ -20,7 +20,8 @@ no-entrypoint = []
 no-idl = []
 no-log-ix-name = []
 idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
-# Test-only: Entanglement epochs expire after 20 s instead of 30 days. Never deploy with it.
+# Test-only: Entanglement epochs expire after 20 s instead of 30 days and may be posted every 15 s
+# instead of every 20 h. Never deploy with it.
 short-expiry = []
 
 [dependencies]

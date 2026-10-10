@@ -23,6 +23,7 @@ declare_id!("FgAfzGavpUSkhRo1Z1CWuGRrcz1AgZVFrkPeji8DuvWK");
 pub mod quantum_hooks {
     use super::*;
 
+    #[allow(clippy::too_many_arguments)]
     pub fn initialize_config(
         ctx: Context<InitializeConfig>,
         treasury: Pubkey,
@@ -31,6 +32,7 @@ pub mod quantum_hooks {
         max_burn_lamports: u64,
         min_action_interval: i64,
         keeper_grace: i64,
+        claim_delay: i64,
     ) -> Result<()> {
         instructions::config::initialize_config(
             ctx,
@@ -40,32 +42,39 @@ pub mod quantum_hooks {
             max_burn_lamports,
             min_action_interval,
             keeper_grace,
+            claim_delay,
         )
     }
 
     #[allow(clippy::too_many_arguments)]
     pub fn update_config(
         ctx: Context<UpdateConfig>,
+        expected_version: u64,
         treasury: Pubkey,
         keeper: Pubkey,
         protocol_bps: u16,
         max_burn_lamports: u64,
         min_action_interval: i64,
         keeper_grace: i64,
-        paused: bool,
+        claim_delay: i64,
         new_authority: Pubkey,
     ) -> Result<()> {
         instructions::config::update_config(
             ctx,
+            expected_version,
             treasury,
             keeper,
             protocol_bps,
             max_burn_lamports,
             min_action_interval,
             keeper_grace,
-            paused,
+            claim_delay,
             new_authority,
         )
+    }
+
+    pub fn set_paused(ctx: Context<UpdateConfig>, paused: bool) -> Result<()> {
+        instructions::config::set_paused(ctx, paused)
     }
 
     pub fn register(ctx: Context<Register>, params: RegisterParams) -> Result<()> {
@@ -113,6 +122,10 @@ pub mod quantum_hooks {
 
     pub fn close_epoch(ctx: Context<CloseEpoch>, index: u32) -> Result<()> {
         instructions::entanglement::close_epoch(ctx, index)
+    }
+
+    pub fn cancel_epoch(ctx: Context<CancelEpoch>, index: u32) -> Result<()> {
+        instructions::entanglement::cancel_epoch(ctx, index)
     }
 
     pub fn fusion<'info>(

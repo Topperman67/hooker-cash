@@ -141,7 +141,10 @@ export default function MarketChart({ mint, symbol, supply, mayhem }) {
         <div ref={container} className="chart-canvas" />
         {empty && (
           <div className="chart-empty">
-            <h3>{resource.loading ? 'Reading trades…' : 'No trades indexed yet'}</h3>
+            {/* A status line, not a section heading: the page outline goes h1 → h2 panels. */}
+            <p className="chart-empty-title">
+              {resource.loading ? 'Reading trades…' : 'No trades indexed yet'}
+            </p>
             <p className="muted">
               {resource.error ||
                 'The chart builds from confirmed pump.fun trades as they are indexed.'}

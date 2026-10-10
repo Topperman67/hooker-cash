@@ -1,6 +1,10 @@
 // Quantum Hooks keeper: collects creator fees into each coin's well (pulse), runs Quantum Burn and
 // Fusion, and posts Entanglement epochs. Every action is also permissionless on-chain except
-// posting epoch roots, so a stalled keeper delays hooks but cannot redirect funds.
+// posting epoch roots, so a stalled keeper delays hooks but cannot redirect funds. An epoch's
+// claims open only at its claimStart (the config's claim delay after the post); until then the
+// authority may cancel it, which returns its SOL to the coin's reserve and closes its account.
+// Each tick logs (and returns as `alerts`) any recent on-chain epoch this keeper did not post,
+// while it can still be cancelled, and a keeper wallet running low.
 import { createHash, randomBytes } from 'node:crypto'
 import {
   ComputeBudgetProgram,
@@ -33,6 +37,23 @@ const EPOCH_HISTORY = 64 // indexes kept in `epochs:<mint>`
 const EPOCH_PAGE = 30 // summaries epochs() returns
 const OPEN_EPOCHS = 40 // newest epochs claims() considers (one a day, open for 30 days)
 const CLOSE_DELAY = 60 // seconds past expires_at before the keeper closes an epoch
+// The chain's clock can trail this server's: a claim is offered this long after claimStart, and a
+// post waits this long past the program's minimum interval.
+const CLOCK_SLACK = 30
+// A posted epoch whose account vanishes is checked for a cancel until this long past its
+// claimStart (cancel_epoch is refused from claimStart on), at most CANCEL_CHECKS lookups a tick,
+// each reading at most CANCEL_TXS successful transactions on the epoch's address.
+const CANCEL_LOOKBACK = 86400
+const CANCEL_CHECKS = 3
+const CANCEL_TXS = 5
+const CANCEL_MIN_AGE = 300 // seconds before a landed pending post with no account is checked
+// The program's defaults, for a client that does not export them.
+const MIN_EPOCH_INTERVAL = 20 * 3600
+const DEFAULT_CLAIM_DELAY = 6 * 3600
+const WATCH_MAX = 12 // newest on-chain epochs checked each tick for posts this keeper did not make
+// A keeper balance under this much per Quantum coin (about a mid-sized epoch's rent plus a day of
+// transaction fees; a 16,384-holder epoch alone is 0.0163 SOL) is logged as running low.
+const LOW_BALANCE_PER_COIN = 10_000_000n
 const SCAN_CHUNK = 25
 // A pending post is dropped only this many blocks past its blockhash expiry, so a lagging RPC
 // node cannot make the keeper reuse an index whose post actually landed.
@@ -113,6 +134,13 @@ export function createKeeper({
   timeLimitMs = process.env.VERCEL ? 40_000 : 180_000,
 }) {
   const enabled = !!(quantum && keeper)
+  // The program refuses a post within MIN_EPOCH_INTERVAL of the coin's last one (last_epoch_at).
+  const minInterval = Number(quantum?.MIN_EPOCH_INTERVAL) || MIN_EPOCH_INTERVAL
+  const epochGap = Math.max(EPOCH_EVERY, Number(quantum?.MIN_EPOCH_INTERVAL || 0) + CLOCK_SLACK)
+  // Only accounts the Quantum Hooks program owns are read as epochs (when the client exports
+  // its id): once an epoch is cancelled or closed, anyone can send lamports to its address,
+  // which leaves a system-owned account with no data there.
+  const programId = quantum?.QUANTUM_PROGRAM_ID ? String(quantum.QUANTUM_PROGRAM_ID) : null
   const keys = {
     list: (mint) => `epochs:${mint}`,
     epoch: (mint, index) => `epoch:${mint}:${index}`,
@@ -304,10 +332,20 @@ export function createKeeper({
     await deleteLeaves(mint, rec)
   }
 
-  async function markPosted(mint, rec, onchain) {
+  // `claimDelay` (the config's) estimates claimStart when the Epoch account could not be read; the
+  // estimate is never early, since postedAt is then read after the post confirmed.
+  async function markPosted(mint, rec, onchain, claimDelay) {
     const postedAt = onchain?.createdAt ?? nowSecs()
     const expiresAt = onchain?.expiresAt ?? postedAt + EPOCH_TTL
-    await saveEpoch(mint, { ...rec, status: 'posted', postedAt, expiresAt })
+    const claimStart =
+      onchain?.claimStart ?? (claimDelay == null ? undefined : postedAt + Number(claimDelay))
+    await saveEpoch(mint, {
+      ...rec,
+      status: 'posted',
+      postedAt,
+      expiresAt,
+      ...(claimStart == null ? {} : { claimStart: Number(claimStart) }),
+    })
     if (postedAt > Number((await store.get(keys.last(mint))) || 0))
       await store.set(keys.last(mint), postedAt)
     await record(mint, 'entangle', {
@@ -319,24 +357,83 @@ export function createKeeper({
   }
 
   // A pending record is left to reconcile(): its post may not have landed under this index.
-  async function markClosed(mint, index) {
+  async function markClosed(mint, index, extra = {}) {
     const rec = await store.get(keys.epoch(mint, index))
     if (!rec || rec.closed || rec.status === 'pending') return
-    await store.set(keys.epoch(mint, index), { ...rec, closed: true })
+    await store.set(keys.epoch(mint, index), { ...rec, ...extra, closed: true })
     await deleteLeaves(mint, rec)
   }
 
-  // On-chain Epoch accounts for `indexes`, null where closed or never posted.
+  // The transaction that cancelled epoch `index`, or null. A missing account alone proves
+  // nothing (a lagging RPC node shows none either), so this needs a successful transaction on
+  // the epoch's address that emitted EpochCancelled for it. Apart from the post and the cancel,
+  // the only transactions that succeed there send it lamports. cancel_epoch is refused from
+  // claimStart on, so transactions after it (when known) are skipped: lamports sent to the
+  // closed address later cannot push the cancel out of the few that are read.
+  async function cancelledBy(key, index, claimStart) {
+    const mint = key.toBase58()
+    const history = await connection.getSignaturesForAddress(
+      quantum.epochPda(key, index),
+      { limit: 100 }, // failed transactions (refused early claims) are listed too
+      'confirmed',
+    )
+    const latest = Number(claimStart) + CLOCK_SLACK // NaN when unknown: nothing is skipped
+    const candidates = history.filter((s) => !s.err && !(Number(s.blockTime) > latest))
+    for (const { signature } of candidates.slice(0, CANCEL_TXS)) {
+      const tx = await connection.getTransaction(signature, {
+        commitment: 'confirmed',
+        maxSupportedTransactionVersion: 0,
+      })
+      if (!tx || tx.meta?.err) continue
+      const cancel = quantum
+        .decodeQuantumEvents(tx.meta?.logMessages)
+        .find(
+          (e) =>
+            e.name === 'EpochCancelled' &&
+            Number(e.data?.index) === index &&
+            (e.data?.mint == null || String(e.data.mint) === mint),
+        )
+      if (cancel) return signature
+    }
+    return null
+  }
+
+  // A cancelled epoch pays nothing: its leaves go, and the summary says why. A pending record
+  // is dropped, since its post either never landed or was the epoch cancelled.
+  async function settleCancelled(mint, rec, signature) {
+    if (rec.status === 'pending') await dropEpoch(mint, rec)
+    else await markClosed(mint, rec.index, { cancelled: true })
+    await record(mint, 'cancel-epoch', { signature, index: rec.index })
+  }
+
+  // An account at an epoch address that is not the program's, or does not decode as an Epoch,
+  // is no epoch: lamports sent to a cancelled or closed epoch's address leave a system-owned
+  // account with no data there. It reads as missing, so it can neither stall the keeper nor
+  // break a claims lookup.
+  function asEpoch(info) {
+    if (!info) return null
+    if (programId && info.owner && String(info.owner) !== programId) return null
+    try {
+      return quantum.decodeEpoch(info.data) ?? null
+    } catch {
+      return null
+    }
+  }
+
+  // On-chain Epoch accounts for `indexes`, null where closed, cancelled or never posted. Every
+  // epoch read goes through here (RPC failures still throw).
   async function readEpochs(key, indexes) {
     const out = []
     for (let i = 0; i < indexes.length; i += 100) {
       const infos = await connection.getMultipleAccountsInfo(
         indexes.slice(i, i + 100).map((index) => quantum.epochPda(key, index)),
       )
-      out.push(...infos.map((info) => (info ? quantum.decodeEpoch(info.data) : null)))
+      out.push(...infos.map(asEpoch))
     }
     return out
   }
+
+  const epochAt = async (key, index) => (await readEpochs(key, [index]))[0]
 
   // ---- Entanglement -------------------------------------------------------------------------
 
@@ -359,18 +456,40 @@ export function createKeeper({
           continue
         }
       }
-      const onchain = await quantum.fetchEpoch(connection, key, index)
+      const onchain = await epochAt(key, index)
       if (onchain && hex(onchain.root) === rec.root) await markPosted(mint, rec, onchain)
-      else if (onchain || nowSecs() - rec.createdAt > EPOCH_TTL) await dropEpoch(mint, rec)
+      else if (onchain) {
+        // Another post took this index, so ours never landed; watchRecent flags that epoch.
+        log(`entangle ${mint} ${index}: another root holds this index; pending post dropped`)
+        await dropEpoch(mint, rec)
+      } else if (nowSecs() - rec.createdAt > EPOCH_TTL) await dropEpoch(mint, rec)
+      else if (nowSecs() - rec.createdAt > CANCEL_MIN_AGE) {
+        // Landed (the count moved past it) yet gone: cancelled, or this RPC node lags.
+        try {
+          const signature = await cancelledBy(key, index)
+          if (signature) await settleCancelled(mint, rec, signature)
+        } catch (e) {
+          log(`cancel-epoch ${mint} ${index}: ${e.message}`)
+        }
+      }
       // Otherwise the account is not visible on this RPC node yet: settle it next tick.
     }
     return true
   }
 
-  async function entangle(mint, key, state, deadline) {
+  // Nothing is spent on a post the program would refuse: only config.keeper may post, and not
+  // within the minimum interval of the coin's last post.
+  async function entangle(mint, key, state, deadline, config) {
     if (BigInt(state.entangleReserve) < MIN_EPOCH) return
+    if (!config || (config.keeper && config.keeper !== keeper.publicKey.toBase58())) return
     const now = nowSecs()
-    if (now - Number((await store.get(keys.last(mint))) || 0) < EPOCH_EVERY) return
+    // The chain's last_epoch_at also counts posts this store never recorded, such as one that
+    // was cancelled before it was reconciled.
+    const last = Math.max(
+      Number((await store.get(keys.last(mint))) || 0),
+      Number(state.lastEpochAt || 0),
+    )
+    if (now - last < epochGap) return
     const index = state.epochCount
     const existing = await store.get(keys.epoch(mint, index))
     if (existing) {
@@ -381,8 +500,8 @@ export function createKeeper({
     }
     // The newest on-chain epoch sets the pace too, in case the store lost track of it.
     if (index > 0) {
-      const latest = await quantum.fetchEpoch(connection, key, index - 1)
-      if (latest && now - latest.createdAt < EPOCH_EVERY) {
+      const latest = await epochAt(key, index - 1)
+      if (latest && now - latest.createdAt < epochGap) {
         await store.set(keys.last(mint), latest.createdAt)
         return
       }
@@ -421,30 +540,99 @@ export function createKeeper({
       beforeSend: ({ signature, lastValidBlockHeight }) =>
         saveEpoch(mint, { ...rec, signature, lastValidBlockHeight }),
     })
-    const onchain = await quantum.fetchEpoch(connection, key, index).catch(() => null)
+    const onchain = await epochAt(key, index).catch(() => null)
     await markPosted(
       mint,
       { ...rec, signature },
       onchain && hex(onchain.root) === rec.root ? onchain : null,
+      config.claimDelay,
     )
   }
 
-  // Whether the store knows epoch `index` is past its expiry (and close delay). Pending records
-  // and missing ones prove nothing.
-  async function knownExpired(mint, index) {
-    const rec = await store.get(keys.epoch(mint, index))
+  // Whether a stored epoch record is past its expiry (and close delay). Pending records and
+  // missing ones prove nothing.
+  function knownExpired(rec) {
     if (!rec || rec.status === 'pending') return false
     const ends = Number(rec.expiresAt ?? (rec.postedAt ?? rec.createdAt) + EPOCH_TTL)
     return Number.isFinite(ends) && nowSecs() >= ends + CLOSE_DELAY
+  }
+
+  // The newest epochs, every tick, with their accounts read in one call:
+  //
+  // Settle epochs the authority cancelled. cancel_epoch works only before claimStart, so only
+  // the newest records can be affected: they are read newest first, stopping at the first whose
+  // claimStart is long past (or unknown), and a missing account is settled only on proof of the
+  // cancel.
+  //
+  // Flag on-chain epochs this keeper did not post while they can still be cancelled. An epoch
+  // with no record here, or whose root differs from its record, was posted by someone else
+  // holding the keeper key (or this store lost its record), and its claimStart is the
+  // authority's deadline for cancel_epoch. Posts are at least the program's minimum interval
+  // apart, so only the newest claimDelay / interval + 2 can still be before their claimStart (a
+  // claim delay lowered in the last week can leave an older one unchecked).
+  async function watchRecent(mint, key, count, config, deadline, alerts) {
+    const now = nowSecs()
+    const records = new Map()
+    const recent = []
+    for (const index of ((await store.get(keys.list(mint))) || []).slice(0, OPEN_EPOCHS)) {
+      const rec = await store.get(keys.epoch(mint, index))
+      records.set(index, rec)
+      if (rec?.status === 'pending') continue // reconcile() settles these
+      if (!(Number(rec?.claimStart) + CANCEL_LOOKBACK > now)) break
+      if (!rec.closed) recent.push(rec)
+    }
+    const delay = Math.max(0, Number(config?.claimDelay ?? DEFAULT_CLAIM_DELAY) || 0)
+    const watch = Math.max(0, Math.min(count, WATCH_MAX, Math.floor(delay / minInterval) + 2))
+    const newest = Array.from({ length: watch }, (_, n) => count - 1 - n)
+    for (const index of newest)
+      if (!records.has(index)) records.set(index, await store.get(keys.epoch(mint, index)))
+    const indexes = [...new Set([...recent.map((r) => r.index), ...newest])]
+    if (!indexes.length) return
+    const read = await readEpochs(key, indexes)
+    const chain = new Map(indexes.map((index, k) => [index, read[k]]))
+
+    for (const index of newest) {
+      const epoch = chain.get(index)
+      // Accounts from before the claim delay have no claimStart and can no longer be cancelled.
+      if (!epoch || !(now < Number(epoch.claimStart))) continue
+      if (records.get(index)?.root === hex(epoch.root)) continue
+      const claimStart = Number(epoch.claimStart)
+      log(
+        `epoch ${mint}#${index} was not posted by this keeper; cancel it with cancel_epoch ` +
+          `before ${new Date(claimStart * 1000).toISOString()} (claimStart ${claimStart}, ` +
+          `total ${epoch.total} lamports, payer ${epoch.payer})`,
+      )
+      alerts?.push({
+        kind: 'foreign-epoch',
+        mint,
+        index,
+        claimStart,
+        total: String(epoch.total),
+        payer: epoch.payer == null ? null : String(epoch.payer),
+      })
+    }
+
+    let checks = 0
+    for (const rec of recent) {
+      if (chain.get(rec.index)) continue
+      if (checks++ >= CANCEL_CHECKS || Date.now() >= deadline) break
+      const signature = await cancelledBy(key, rec.index, rec.claimStart)
+      if (signature) await settleCancelled(mint, rec, signature)
+    }
   }
 
   // Close expired epochs found on-chain, not only those in the store: an epoch whose record was
   // lost still holds owed SOL. The claim window is fixed, so epochs expire in index order: the
   // scan stops at the first open one, and `epoch:floor:<mint>` skips the closed prefix next time.
   // A missing account means closed only once the epoch must have expired (close_epoch fails
-  // before that); until then it may be a lagging RPC node, so it is left alone and the floor
-  // stays. An expired epoch proves every earlier one expired too.
-  async function closeExpired(mint, key, count, deadline) {
+  // before that) or was proven cancelled; until then it may be a lagging RPC node, so it is left
+  // alone and the floor stays. An expired epoch proves every earlier one expired too.
+  async function closeExpired(mint, key, count, deadline, { config, alerts } = {}) {
+    try {
+      await watchRecent(mint, key, count, config, deadline, alerts)
+    } catch (e) {
+      log(`cancel-epoch ${mint}: ${e.message}`)
+    }
     const start = Number((await store.get(keys.floor(mint))) || 0)
     let floor = start
     let advancing = true
@@ -456,7 +644,13 @@ export function createKeeper({
       for (const [k, index] of indexes.entries()) {
         const epoch = chain[k]
         if (!epoch) {
-          if (!(await knownExpired(mint, index))) {
+          const rec = await store.get(keys.epoch(mint, index))
+          if (rec?.cancelled) {
+            // Gone for good, though it says nothing about when earlier epochs expire.
+            if (advancing && !unsure.length) floor = index + 1
+            continue
+          }
+          if (!knownExpired(rec)) {
             unsure.push(index)
             continue
           }
@@ -497,7 +691,7 @@ export function createKeeper({
 
   // ---- tick ---------------------------------------------------------------------------------
 
-  async function runCoin(mint, deadline) {
+  async function runCoin(mint, deadline, alerts) {
     const key = new PublicKey(mint)
     let state = await quantum.fetchQuantum(connection, key)
     if (!state) return
@@ -576,13 +770,13 @@ export function createKeeper({
     state = (await quantum.fetchQuantum(connection, key)) || state
     if (mayPost) {
       try {
-        await entangle(mint, key, state, deadline)
+        await entangle(mint, key, state, deadline, config)
       } catch (e) {
         log(`entangle ${mint}: ${e.message}`)
       }
     }
     try {
-      await closeExpired(mint, key, state.epochCount, deadline)
+      await closeExpired(mint, key, state.epochCount, deadline, { config, alerts })
     } catch (e) {
       log(`close-epoch ${mint}: ${e.message}`)
     }
@@ -600,6 +794,26 @@ export function createKeeper({
     }
   }
 
+  // A keeper that runs dry stops every hook, so a balance under roughly a day of epoch rent and
+  // fees for the coins it serves is logged each tick. A failed balance read is ignored.
+  async function checkBalance(coinCount, alerts) {
+    if (!coinCount || typeof connection.getBalance !== 'function') return
+    let lamports
+    try {
+      lamports = BigInt(await connection.getBalance(keeper.publicKey, 'confirmed'))
+    } catch {
+      return
+    }
+    const wanted = LOW_BALANCE_PER_COIN * BigInt(coinCount)
+    if (lamports >= wanted) return
+    const sol = (v) => (Number(v) / 1e9).toFixed(4)
+    log(
+      `keeper wallet ${keeper.publicKey.toBase58()} holds ${sol(lamports)} SOL, under about a ` +
+        `day of epoch rent and fees for ${coinCount} coins (${sol(wanted)} SOL); top it up`,
+    )
+    alerts.push({ kind: 'low-balance', lamports: String(lamports), wanted: String(wanted) })
+  }
+
   async function tick({ budget = 6, timeLimitMs: limit = timeLimitMs } = {}) {
     if (!enabled) return { enabled: false }
     const deadline = Date.now() + limit
@@ -608,6 +822,10 @@ export function createKeeper({
       return { skipped: true }
     try {
       const coins = (await indexer.list()).filter(isCandidate)
+      // Things the operator must act on: epochs this keeper did not post (cancel them before
+      // their claimStart) and a keeper wallet running low. Each is also logged.
+      const alerts = []
+      await checkBalance(coins.length, alerts)
       const start = Number((await store.get('keeper:cursor')) || 0) % Math.max(1, coins.length)
       let ran = 0
       for (let n = 0; n < Math.min(budget, coins.length); n++) {
@@ -615,12 +833,12 @@ export function createKeeper({
         // Advance first: a coin that keeps outliving the function's time limit is passed over
         // next tick instead of starving every coin after it.
         await store.set('keeper:cursor', (start + n + 1) % coins.length)
-        await runCoin(coins[(start + n) % coins.length].mint, deadline).catch((e) =>
+        await runCoin(coins[(start + n) % coins.length].mint, deadline, alerts).catch((e) =>
           log(`keeper ${e.message}`),
         )
         ran++
       }
-      return { enabled: true, ran }
+      return { enabled: true, ran, ...(alerts.length ? { alerts } : {}) }
     } finally {
       await store.release('keeper:lease', owner)
     }
@@ -629,8 +847,10 @@ export function createKeeper({
   // ---- read API -----------------------------------------------------------------------------
 
   // Claimable Entanglement leaves for a wallet: open epochs only (on-chain account present,
-  // root matches, not expired) and leaves not yet claimed on-chain. One summary and one bucket
-  // read per open epoch plus one account read; proofs were stored at post time.
+  // root matches, claims open, not expired) and leaves not yet claimed on-chain. One summary and
+  // one bucket read per open epoch plus one account read; proofs were stored at post time. An
+  // epoch whose claimStart is still ahead is not offered: the program refuses the claim, and the
+  // authority may yet cancel the epoch. epochs() says when its claims open.
   async function claims(mint, wallet) {
     const key = address(mint, 'coin')
     const owner = address(wallet, 'wallet').toBase58()
@@ -639,7 +859,11 @@ export function createKeeper({
     const indexes = ((await store.get(keys.list(mint))) || []).slice(0, OPEN_EPOCHS)
     const records = await Promise.all(indexes.map((i) => store.get(keys.epoch(mint, i))))
     const open = records.filter(
-      (r) => r?.buckets && !r.closed && (r.expiresAt === undefined || r.expiresAt > now),
+      (r) =>
+        r?.buckets &&
+        !r.closed &&
+        (r.expiresAt === undefined || r.expiresAt > now) &&
+        !(Number(r.claimStart) > now),
     )
     const found = (
       await Promise.all(open.map(async (rec) => ({ rec, leaf: await findLeaf(mint, rec, owner) })))
@@ -653,6 +877,8 @@ export function createKeeper({
     for (const [k, { rec, leaf }] of found.entries()) {
       const epoch = chain[k]
       if (!epoch || hex(epoch.root) !== rec.root || epoch.expiresAt <= now) continue
+      // An account without claimStart predates the claim delay: its claims opened at once.
+      if (epoch.claimStart != null && now < Number(epoch.claimStart) + CLOCK_SLACK) continue
       if (leaf.leafIndex >= epoch.leafCount || quantum.isLeafClaimed(epoch, leaf.leafIndex))
         continue
       // A single-leaf tree has an empty proof (''); leaves stored without one are not served.
@@ -662,13 +888,15 @@ export function createKeeper({
         leafIndex: leaf.leafIndex,
         amount: leaf.amount,
         proof: unpackProof(leaf.proof),
+        claimStart: Number(epoch.claimStart ?? epoch.createdAt),
         expiresAt: epoch.expiresAt,
       })
     }
     return out
   }
 
-  // Recent epoch summaries (never the leaves).
+  // Recent epoch summaries (never the leaves). claimStart (unix seconds) is when the epoch's
+  // claims open, null for records from before the claim delay; a cancelled epoch is also closed.
   async function epochs(mint) {
     address(mint, 'coin')
     const indexes = ((await store.get(keys.list(mint))) || []).slice(0, EPOCH_PAGE)
@@ -679,9 +907,11 @@ export function createKeeper({
         index: e.index,
         total: e.total,
         postedAt: e.postedAt,
+        claimStart: e.claimStart ?? null,
         expiresAt: e.expiresAt ?? null,
         holders: e.holders ?? e.leaves?.length ?? 0,
         closed: !!e.closed,
+        cancelled: !!e.cancelled,
         signature: e.signature,
       }))
   }

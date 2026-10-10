@@ -6,7 +6,8 @@ import { Segmented, Spinner } from './UI.jsx'
 import { api } from '../lib/api.js'
 import { formatUnits, parseUnits, sol, toSol, bps } from '../lib/format.js'
 import { packTransactions, friendlyWalletError } from '../lib/solana.js'
-import { buyExceedsBalance, maxBuy, platformFee } from '../lib/amounts.js'
+import { buyExceedsBalance, maxBuy } from '../lib/amounts.js'
+import { useChargedPlatformFee } from '../lib/useChargedFee.js'
 import { explorer } from '../../shared/network.mjs'
 
 const SOL_PRESETS = ['0.1', '0.5', '1', '2']
@@ -29,6 +30,10 @@ export default function TradeTicket({ coin, onTraded }) {
   const [errorSignature, setErrorSignature] = useState(null)
   const [marketError, setMarketError] = useState('')
   const tabs = useRef({})
+  // Graduated without a PumpSwap pool: a legacy coin that migrated to Raydium (or a new graduate in
+  // the moments before its pool exists). There is no market here to read or trade; the coin page
+  // re-reads the coin, so trading opens if a pool turns up.
+  const migrated = !!coin.poolMissing
 
   useEffect(() => {
     import('../lib/trade.js').then(setTrade)
@@ -68,10 +73,11 @@ export default function TradeTicket({ coin, onTraded }) {
   }, [trade, coin.mint, address])
 
   useEffect(() => {
+    if (migrated) return
     refresh()
     const timer = setInterval(refresh, 12000)
     return () => clearInterval(timer)
-  }, [refresh])
+  }, [refresh, migrated])
 
   const decimals = side === 'buy' ? 9 : 6
   const raw = parseUnits(amount, decimals)
@@ -87,13 +93,15 @@ export default function TradeTicket({ coin, onTraded }) {
   }, [trade, market, raw, side, slippage])
 
   const venue = market?.venue === 'pool' ? 'pool' : 'curve'
-  const fee =
-    platform.treasury && platform.feeBps && raw
-      ? platformFee(side === 'buy' ? raw : quote?.lamports || 0n, platform.feeBps)
-      : 0n
+  // The fee this trade's transaction will carry (none while the treasury cannot take it yet).
+  const fee = useChargedPlatformFee(
+    platform,
+    raw ? (side === 'buy' ? raw : quote?.lamports || 0n) : 0n,
+  )
   // The amount entered is the most a buy spends on either venue; the check adds the fee, network
   // fees and the token (and, for a pool, temporary WSOL) account rent.
   const insufficient =
+    !migrated &&
     connected &&
     raw &&
     (side === 'buy'
@@ -131,6 +139,7 @@ export default function TradeTicket({ coin, onTraded }) {
 
   async function submit(e) {
     e.preventDefault()
+    if (migrated) return
     if (!connected) return openDialog()
     if (!raw)
       return setError(
@@ -221,8 +230,11 @@ export default function TradeTicket({ coin, onTraded }) {
               autoComplete="off"
               placeholder="0.0"
               value={amount}
+              disabled={migrated}
               aria-invalid={!!insufficient}
-              aria-describedby={insufficient ? 'ticket-insufficient' : undefined}
+              aria-describedby={
+                migrated ? 'ticket-migrated' : insufficient ? 'ticket-insufficient' : undefined
+              }
               onChange={(e) => setAmount(e.target.value.replace(',', '.'))}
             />
             <span className="affix">{side === 'buy' ? 'SOL' : coin.symbol}</span>
@@ -230,7 +242,13 @@ export default function TradeTicket({ coin, onTraded }) {
           <div className="ticket-presets">
             {side === 'buy'
               ? SOL_PRESETS.map((p) => (
-                  <button key={p} type="button" className="btn btn-sm" onClick={() => setAmount(p)}>
+                  <button
+                    key={p}
+                    type="button"
+                    className="btn btn-sm"
+                    disabled={migrated}
+                    onClick={() => setAmount(p)}
+                  >
                     {p} SOL
                   </button>
                 ))
@@ -239,7 +257,7 @@ export default function TradeTicket({ coin, onTraded }) {
                     key={p}
                     type="button"
                     className="btn btn-sm"
-                    disabled={!held}
+                    disabled={migrated || !held}
                     onClick={() =>
                       setAmount(formatUnits((held * BigInt(p)) / 100n, 6).replace(/,/g, ''))
                     }
@@ -247,7 +265,7 @@ export default function TradeTicket({ coin, onTraded }) {
                     {p === 100 ? 'Max' : `${p}%`}
                   </button>
                 ))}
-            {side === 'buy' && maxLamports > 0n && (
+            {side === 'buy' && maxLamports > 0n && !migrated && (
               <button
                 type="button"
                 className="btn btn-sm btn-ghost"
@@ -262,7 +280,9 @@ export default function TradeTicket({ coin, onTraded }) {
         <dl className="kv ticket-quote">
           <dt>You receive about</dt>
           <dd className="num">
-            {!market ? (
+            {migrated ? (
+              '—'
+            ) : !market ? (
               <Spinner />
             ) : quote ? (
               side === 'buy' ? (
@@ -295,12 +315,12 @@ export default function TradeTicket({ coin, onTraded }) {
             </>
           )}
           <dt>Route</dt>
-          <dd>{market ? venueLabel : '—'}</dd>
+          <dd>{migrated ? 'Migrated off pump.fun' : market ? venueLabel : '—'}</dd>
           {connected && (
             <>
               <dt>{side === 'buy' ? 'SOL balance' : `${coin.symbol} balance`}</dt>
               <dd className="num">
-                {side === 'buy' ? sol(toSol(balance)) : formatUnits(held, 6, 2)}
+                {migrated ? '—' : side === 'buy' ? sol(toSol(balance)) : formatUnits(held, 6, 2)}
               </dd>
             </>
           )}
@@ -312,7 +332,14 @@ export default function TradeTicket({ coin, onTraded }) {
             {side === 'buy' ? ', its fees and account rent' : ''}.
           </p>
         )}
-        {marketError && !error && <p className="error-text">{marketError}</p>}
+        {migrated && (
+          <p className="muted ticket-note" id="ticket-migrated">
+            <strong>Migrated off pump.fun.</strong> This coin graduated before PumpSwap pools and
+            trades on another exchange, so it cannot be traded here. A coin that graduated moments
+            ago opens for trading here once its PumpSwap pool exists.
+          </p>
+        )}
+        {marketError && !error && !migrated && <p className="error-text">{marketError}</p>}
         {error && (
           <p className="error-text" role="alert">
             {error}
@@ -328,10 +355,12 @@ export default function TradeTicket({ coin, onTraded }) {
         )}
         <button
           type="submit"
-          className={`btn btn-lg btn-block ${side === 'buy' ? 'btn-buy' : 'btn-sell'}`}
-          disabled={!!busy || (connected && (!raw || insufficient || !market))}
+          className={`btn btn-lg btn-block${migrated ? '' : side === 'buy' ? ' btn-buy' : ' btn-sell'}`}
+          disabled={migrated || !!busy || (connected && (!raw || insufficient || !market))}
         >
-          {busy ? (
+          {migrated ? (
+            'Migrated off pump.fun'
+          ) : busy ? (
             <>
               <Spinner /> {busy}
             </>

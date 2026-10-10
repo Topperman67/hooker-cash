@@ -66,6 +66,7 @@ export default function MarketPage() {
         <form
           className="market-search"
           role="search"
+          aria-label="Search the market"
           onSubmit={(e) => {
             e.preventDefault()
             const value = text.trim()

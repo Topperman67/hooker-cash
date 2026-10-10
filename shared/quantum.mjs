@@ -4,7 +4,7 @@
 import { Buffer } from 'buffer'
 import BN from 'bn.js'
 import { AnchorProvider, BorshCoder, EventParser, Program } from '@coral-xyz/anchor'
-import { PublicKey, SystemProgram } from '@solana/web3.js'
+import { PublicKey, SYSVAR_INSTRUCTIONS_PUBKEY, SystemProgram } from '@solana/web3.js'
 import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   NATIVE_MINT,
@@ -47,6 +47,14 @@ export const MAX_SPLITS = 4
 export const MAX_PROTOCOL_BPS = 1_000
 export const MIN_PULSE_LAMPORTS = 1_000_000n
 export const MAX_LOCK_DURATION = 4 * 365 * 86_400
+// Entanglement: claims open `config.claimDelay` seconds after an epoch is posted (the authority
+// can cancel it until then); a coin gets at most one epoch per MIN_EPOCH_INTERVAL seconds.
+// Same values as constants.rs (the `short-expiry` test build shortens the interval to 15 s).
+export const DEFAULT_CLAIM_DELAY = 21_600
+export const MAX_CLAIM_DELAY = 7 * 86_400
+export const MIN_EPOCH_INTERVAL = 20 * 3_600
+// A burn or fusion run by anyone but the keeper may spend at most max_burn_lamports / 10.
+export const PUBLIC_SPEND_DIVISOR = 10n
 // Rent-exempt minimum of a 0-byte account (the well, pump.fun's creator vault).
 export const RENT_EXEMPT_EMPTY = 890_880n
 // Rent-exempt minimum of a 165-byte SPL Token account (the well's WSOL ATA). `pulse` refunds it to
@@ -151,7 +159,42 @@ export const canonicalPool = (mint) => canonicalPumpPoolPda(pk(mint))
 // Account reads
 // ---------------------------------------------------------------------------------------------
 
+// The 8-byte Anchor discriminator every Config, Quantum and Epoch account starts with.
+const ACCOUNT_DISCRIMINATORS = Object.fromEntries(
+  idl.accounts.map((a) => [a.name, Buffer.from(a.discriminator)]),
+)
+
+function hasDiscriminator(data, name) {
+  if (!data) return false
+  const bytes = Buffer.isBuffer(data) ? data : Buffer.from(data)
+  const disc = ACCOUNT_DISCRIMINATORS[name]
+  return bytes.length >= disc.length && bytes.subarray(0, disc.length).equals(disc)
+}
+
+/**
+ * Whether `info` (an AccountInfo, or null) is a live Quantum Hooks `name` account ('Config',
+ * 'Quantum' or 'Epoch'): owned by the program and starting with that account's discriminator.
+ * Anyone can send lamports to any address, so an address holding lamports proves nothing: a
+ * closed or cancelled Epoch PDA that someone re-funded is a System-owned account with no data.
+ */
+export function isQuantumAccount(info, name, programId) {
+  if (!info?.data || !info.owner || !(name in ACCOUNT_DISCRIMINATORS)) return false
+  let owner
+  try {
+    owner = b58(info.owner)
+  } catch {
+    return false
+  }
+  return owner === pid(programId).toBase58() && hasDiscriminator(info.data, name)
+}
+
+// The decoders return null for bytes that are not that account (another account type, or the
+// empty data of a re-funded closed PDA), the same as for a missing account, so callers that
+// decode raw getMultipleAccountsInfo results treat such an address as absent.
+
+/** Config fields, or null when `data` is not a Config account. */
 export function decodeConfig(data) {
+  if (!hasDiscriminator(data, 'Config')) return null
   const raw = coder.accounts.decode('Config', Buffer.from(data))
   return {
     authority: b58(field(raw, 'authority')),
@@ -163,14 +206,25 @@ export function decodeConfig(data) {
     keeperGrace: num(field(raw, 'keeper_grace')),
     paused: !!field(raw, 'paused'),
     bump: num(field(raw, 'bump')),
+    claimDelay: num(field(raw, 'claim_delay')),
+    // Bumped by every config change; update_config must name the version it was built on.
+    version: num(field(raw, 'version')),
   }
 }
 
+/** Most a non-keeper burn or fusion may spend (bigint lamports). */
+export const publicSpendCap = (config) => BigInt(config.maxBurnLamports) / PUBLIC_SPEND_DIVISOR
+
+/** Quantum fields, or null when `data` is not a Quantum account. */
 export function decodeQuantum(data) {
+  if (!hasDiscriminator(data, 'Quantum')) return null
   const raw = coder.accounts.decode('Quantum', Buffer.from(data))
   const splitCount = num(field(raw, 'split_count'))
   const u64 = (name) => big(field(raw, name))
   const i64 = (name) => num(field(raw, name))
+  const splitOwed = field(raw, 'split_owed').map(big)
+  const launcherOwed = u64('launcher_owed')
+  const protocolOwed = u64('protocol_owed')
   return {
     mint: b58(field(raw, 'mint')),
     launcher: b58(field(raw, 'launcher')),
@@ -206,10 +260,23 @@ export function decodeQuantum(data) {
     lastFusionAt: i64('last_fusion_at'),
     plannedCliffSecs: i64('planned_cliff_secs'),
     plannedDurationSecs: i64('planned_duration_secs'),
+    // Unix seconds of the newest Entanglement epoch (0 = none); the next may be posted at
+    // lastEpochAt + MIN_EPOCH_INTERVAL.
+    lastEpochAt: i64('last_epoch_at'),
+    // When a pulse, burn or fusion first saw the coin graduated (0 = not yet).
+    graduatedAt: i64('graduated_at'),
+    // Shares a pulse could not pay yet (the recipient would stay below its rent minimum), held in
+    // the well and paid first once the recipient can receive. splitOwed follows `splits`.
+    splitOwed: splitOwed.slice(0, splitCount),
+    launcherOwed,
+    protocolOwed,
+    owedTotal: splitOwed.reduce((a, b) => a + b, launcherOwed + protocolOwed),
   }
 }
 
+/** Epoch fields, or null when `data` is not an Epoch account. */
 export function decodeEpoch(data) {
+  if (!hasDiscriminator(data, 'Epoch')) return null
   const raw = coder.accounts.decode('Epoch', Buffer.from(data))
   return {
     mint: b58(field(raw, 'mint')),
@@ -219,40 +286,58 @@ export function decodeEpoch(data) {
     claimed: big(field(raw, 'claimed')),
     leafCount: num(field(raw, 'leaf_count')),
     createdAt: num(field(raw, 'created_at')),
+    // Claims open here (unix seconds); before it `claim_entanglement` fails with ClaimNotOpen and
+    // the authority may cancel the epoch.
+    claimStart: num(field(raw, 'claim_start')),
     expiresAt: num(field(raw, 'expires_at')),
     payer: b58(field(raw, 'payer')),
     bitmap: Uint8Array.from(field(raw, 'bitmap')),
   }
 }
 
+// The fetchers return null unless the address holds a live Quantum Hooks account of that type
+// (see isQuantumAccount), so a cancelled or closed epoch reads as gone even after a re-funding.
+
 export async function fetchConfig(connection, programId) {
   const info = await connection.getAccountInfo(configPda(programId))
-  return info ? decodeConfig(info.data) : null
+  return isQuantumAccount(info, 'Config', programId) ? decodeConfig(info.data) : null
 }
 
 export async function fetchQuantum(connection, mint, programId) {
   const info = await connection.getAccountInfo(quantumPda(mint, programId))
-  if (!info) return null
+  if (!isQuantumAccount(info, 'Quantum', programId)) return null
   return { ...decodeQuantum(info.data), well: wellPda(mint, programId).toBase58() }
 }
 
 export async function fetchEpoch(connection, mint, index, programId) {
   const info = await connection.getAccountInfo(epochPda(mint, index, programId))
-  return info ? decodeEpoch(info.data) : null
+  return isQuantumAccount(info, 'Epoch', programId) ? decodeEpoch(info.data) : null
 }
 
 export function isLeafClaimed(epoch, leafIndex) {
   return (epoch.bitmap[leafIndex >> 3] & (1 << (leafIndex & 7))) !== 0
 }
 
-const reservedOf = (q) => q.burnReserve + q.entangleReserve + q.entangleOwed + q.fusionReserve
+/** Whether `epoch`'s claims are open at `nowSecs` (after claimStart, before expiresAt). */
+export function isEpochClaimable(epoch, nowSecs) {
+  const now = Number(nowSecs)
+  return now >= Number(epoch.claimStart ?? 0) && now < Number(epoch.expiresAt)
+}
+
+/** Unix seconds from which the next Entanglement epoch of `quantum` may be posted. */
+export const nextEpochAt = (quantum) => Number(quantum.lastEpochAt ?? 0) + MIN_EPOCH_INTERVAL
+
+const reservedOf = (q) =>
+  q.burnReserve + q.entangleReserve + q.entangleOwed + q.fusionReserve + (q.owedTotal ?? 0n)
 
 // The well's lamports above rent and module ledgers. fetchWellBalance().unallocated and the
 // well term of pendingCreatorFees must be this same amount: the keeper subtracts one from the
 // other to see creator fees still outside the well.
-function wellLedger(wellInfo, quantumInfo) {
+function wellLedger(wellInfo, quantumInfo, programId) {
   const lamports = BigInt(wellInfo?.lamports ?? 0)
-  const reserved = quantumInfo ? reservedOf(decodeQuantum(quantumInfo.data)) : 0n
+  const reserved = isQuantumAccount(quantumInfo, 'Quantum', programId)
+    ? reservedOf(decodeQuantum(quantumInfo.data))
+    : 0n
   const free = lamports - RENT_EXEMPT_EMPTY - reserved
   return { lamports, reserved, unallocated: free > 0n ? free : 0n }
 }
@@ -263,7 +348,7 @@ export async function fetchWellBalance(connection, mint, programId) {
     wellPda(mint, programId),
     quantumPda(mint, programId),
   ])
-  const { lamports, reserved, unallocated } = wellLedger(wellInfo, quantumInfo)
+  const { lamports, reserved, unallocated } = wellLedger(wellInfo, quantumInfo, programId)
   return { lamports, rentExempt: RENT_EXEMPT_EMPTY, reserved, unallocated }
 }
 
@@ -321,7 +406,7 @@ export async function pendingCreatorFees(connection, mint, programId) {
   }
   total += tokenAmount(ammVaultAta, ammVaultInfo, TOKEN_PROGRAM_ID)
   total += wsolFeeLamports(wsolInfo)
-  total += wellLedger(wellInfo, quantumInfo).unallocated
+  total += wellLedger(wellInfo, quantumInfo, programId).unallocated
   return total
 }
 
@@ -334,7 +419,7 @@ export async function verifyQuantumCoin(connection, mint, programId) {
   ])
   const curve = curveInfo ? PUMP_SDK.decodeBondingCurve(curveInfo) : null
   return {
-    registered: !!quantumInfo,
+    registered: isQuantumAccount(quantumInfo, 'Quantum', programId),
     curveExists: !!curve,
     creatorIsWell: !!curve && curve.creator.equals(wellPda(mint, programId)),
     complete: !!curve?.complete,
@@ -685,15 +770,17 @@ export async function buildPulseInstructions({ connection, payer, mint, programI
       ammVaultAta,
       wsolAta,
     ])
-  if (!quantumInfo) throw new Error(`${mint.toBase58()} is not a Quantum coin`)
-  if (!configInfo) throw new Error('Quantum config is not initialized')
+  if (!isQuantumAccount(quantumInfo, 'Quantum', programId))
+    throw new Error(`${mint.toBase58()} is not a Quantum coin`)
+  if (!isQuantumAccount(configInfo, 'Config', programId))
+    throw new Error('Quantum config is not initialized')
   const quantum = decodeQuantum(quantumInfo.data)
   const config = decodeConfig(configInfo.data)
 
+  const curve = curveInfo ? PUMP_SDK.decodeBondingCurve(curveInfo) : null
   const curveLeg = []
   let curveSweep = false
-  if (curveInfo) {
-    const curve = PUMP_SDK.decodeBondingCurve(curveInfo)
+  if (curve) {
     let collect = vaultInfo && BigInt(vaultInfo.lamports) > RENT_EXEMPT_EMPTY
     if (curve.creator.equals(well) && curve.creatorFee.gtn(0)) {
       curveLeg.push(
@@ -759,6 +846,14 @@ export async function buildPulseInstructions({ connection, payer, mint, programI
   const unwrap =
     (!!wsolInfo && wsolInfo.owner.equals(TOKEN_PROGRAM_ID)) ||
     instructions.some((ix) => poolLeg.includes(ix))
+  // Until the program has recorded the coin's graduation, show it the evidence (the canonical pool,
+  // or the completed curve before migration): the public Fusion grace counts from that moment.
+  const poolLive =
+    !!poolInfo && poolInfo.owner.equals(PUMP_AMM_PROGRAM_ID) && poolInfo.data.length > 0
+  const recordGraduation = quantum.graduatedAt === 0
+  const graduationPool = recordGraduation && poolLive ? pool : null
+  const graduationCurve =
+    recordGraduation && !poolLive && curve?.complete ? bondingCurvePda(mint) : null
 
   instructions.push(
     await program.methods
@@ -772,6 +867,8 @@ export async function buildPulseInstructions({ connection, payer, mint, programI
         launcher: pk(quantum.launcher),
         wellWsolAta: unwrap ? wsolAta : null,
         tokenProgram: unwrap ? TOKEN_PROGRAM_ID : null,
+        bondingCurve: graduationCurve,
+        pool: graduationPool,
         systemProgram: SystemProgram.programId,
       })
       .remainingAccounts(
@@ -926,6 +1023,10 @@ export async function buildBurnInstructions({
       quoteTokenProgram: poolRoute ? TOKEN_PROGRAM_ID : null,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
+      // Read when the caller is not the keeper: a public burn may not share its transaction with
+      // pump.fun / PumpSwap trades (or any program but compute budget, system, token, ATA and
+      // Quantum Hooks), and spends at most max_burn_lamports / 10.
+      instructionsSysvar: SYSVAR_INSTRUCTIONS_PUBKEY,
       targetProgram: buy.programId,
     })
     .remainingAccounts(asRemaining(buy))
@@ -1014,6 +1115,9 @@ export async function buildFusionInstructions({
       quoteTokenProgram: TOKEN_PROGRAM_ID,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
+      // Same public-caller rules as buildBurnInstructions; the public grace counts from the later
+      // of the last fusion and graduation.
+      instructionsSysvar: SYSVAR_INSTRUCTIONS_PUBKEY,
       targetProgram: PUMP_AMM_PROGRAM_ID,
     })
     .remainingAccounts([...buyAccounts, ...asRemaining(deposit)])
@@ -1113,6 +1217,37 @@ export async function buildCloseEpochInstruction({
     .instruction()
 }
 
+/**
+ * Authority only, before the epoch's `claimStart`: returns the epoch's total to the coin's
+ * Entanglement reserve and closes the account (its rent goes to `config.keeper`, read from the
+ * chain unless `keeper` is given).
+ */
+export async function buildCancelEpochInstruction({
+  connection,
+  authority,
+  mint,
+  index,
+  keeper,
+  programId,
+}) {
+  mint = pk(mint)
+  if (!keeper) {
+    const config = await fetchConfig(connection, programId)
+    if (!config) throw new Error('Quantum config is not initialized')
+    keeper = config.keeper
+  }
+  return quantumProgram(connection, programId)
+    .methods.cancelEpoch(Number(index))
+    .accountsStrict({
+      authority: pk(authority),
+      config: configPda(programId),
+      quantum: quantumPda(mint, programId),
+      epoch: epochPda(mint, index, programId),
+      keeper: pk(keeper),
+    })
+    .instruction()
+}
+
 export async function buildLockInstruction({
   connection,
   launcher,
@@ -1167,6 +1302,7 @@ export async function buildInitializeConfigInstruction({
   maxBurnLamports,
   minActionInterval,
   keeperGrace,
+  claimDelay = DEFAULT_CLAIM_DELAY,
   programId,
 }) {
   return quantumProgram(connection, programId)
@@ -1177,6 +1313,7 @@ export async function buildInitializeConfigInstruction({
       bn(maxBurnLamports),
       bn(minActionInterval),
       bn(keeperGrace),
+      bn(claimDelay),
     )
     .accountsStrict({
       authority: pk(authority),
@@ -1188,28 +1325,46 @@ export async function buildInitializeConfigInstruction({
     .instruction()
 }
 
-/** Fields left undefined keep their current on-chain value (requires `connection`). */
+/**
+ * update_config: fields left undefined keep their current on-chain value (requires `connection`).
+ * The instruction carries `expectedVersion` (default: the config version read now), so it fails
+ * with ConfigChanged if any other change (a pause, a keeper rotation) lands before it. It cannot
+ * pause or unpause: use buildSetPausedInstruction.
+ */
 export async function buildUpdateConfigInstruction({
   connection,
   authority,
   programId,
+  expectedVersion,
   ...changes
 }) {
+  if (changes.paused !== undefined)
+    throw new Error('update_config does not change `paused`; use buildSetPausedInstruction')
   const current = await fetchConfig(connection, programId)
   if (!current) throw new Error('Quantum config is not initialized')
   const next = { ...current, newAuthority: current.authority }
   for (const [k, v] of Object.entries(changes)) if (v !== undefined) next[k] = v
   return quantumProgram(connection, programId)
     .methods.updateConfig(
+      bn(expectedVersion ?? current.version),
       pk(next.treasury),
       pk(next.keeper),
       Number(next.protocolBps),
       bn(next.maxBurnLamports),
       bn(next.minActionInterval),
       bn(next.keeperGrace),
-      !!next.paused,
+      bn(next.claimDelay),
       pk(next.newAuthority),
     )
+    .accountsStrict({ authority: pk(authority), config: configPda(programId) })
+    .instruction()
+}
+
+/** set_paused: authority only; always lands (no expected version) and bumps the config version. */
+export async function buildSetPausedInstruction({ connection, authority, paused, programId }) {
+  if (typeof paused !== 'boolean') throw new Error('paused must be true or false')
+  return quantumProgram(connection, programId)
+    .methods.setPaused(paused)
     .accountsStrict({ authority: pk(authority), config: configPda(programId) })
     .instruction()
 }

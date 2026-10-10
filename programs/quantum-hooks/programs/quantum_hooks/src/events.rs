@@ -10,6 +10,9 @@ pub struct ConfigUpdated {
     pub min_action_interval: i64,
     pub keeper_grace: i64,
     pub paused: bool,
+    pub claim_delay: i64,
+    /// The config version after this change.
+    pub version: u64,
 }
 
 #[event]
@@ -51,17 +54,23 @@ pub struct Pulsed {
     /// WSOL (creator fees) unwrapped from the well's WSOL account before allocation, without the
     /// account's rent (see `rent_refunded`).
     pub unwrapped: u64,
-    /// Unallocated lamports this pulse distributed (`available`).
+    /// Unallocated lamports this pulse distributed (`available`; 0 when below the 0.001 SOL floor
+    /// and the pulse only paid owed amounts).
     pub collected: u64,
+    /// Paid to the treasury, launcher and splits by this pulse, including amounts owed from
+    /// earlier pulses (`owed_paid` of the total).
     pub protocol: u64,
     pub launcher_paid: u64,
     pub splits_paid: u64,
     pub burn_added: u64,
     pub entangle_added: u64,
     pub fusion_added: u64,
-    /// Payments skipped because the recipient could not hold them (would stay below its rent
-    /// minimum, or is executable). They stay in the well and are re-pulsed later.
+    /// Shares this pulse could not pay: the recipient would stay below its rent-exempt minimum
+    /// (recorded as owed to it and paid first once it can receive), or a split is a key that can
+    /// never be paid (reserved or executable; stays in the well unledgered and is re-pulsed).
     pub deferred: u64,
+    /// Owed amounts from earlier pulses paid by this one.
+    pub owed_paid: u64,
     /// Rent of the closed WSOL account, returned to the pulse's `rent_payer` (not fees).
     pub rent_refunded: u64,
 }
@@ -83,6 +92,8 @@ pub struct EpochPosted {
     pub root: [u8; 32],
     pub total: u64,
     pub leaf_count: u32,
+    /// Claims open here (`created_at + config.claim_delay`); until then the authority may cancel.
+    pub claim_start: i64,
     pub expires_at: i64,
 }
 
@@ -101,6 +112,16 @@ pub struct EpochClosed {
     pub index: u32,
     pub unclaimed: u64,
     pub payer: Pubkey,
+}
+
+/// The authority cancelled an epoch before its claims opened: `returned` went back to the
+/// Entanglement reserve and the account's rent to `rent_to` (`config.keeper`).
+#[event]
+pub struct EpochCancelled {
+    pub mint: Pubkey,
+    pub index: u32,
+    pub returned: u64,
+    pub rent_to: Pubkey,
 }
 
 #[event]

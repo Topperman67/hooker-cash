@@ -10,6 +10,8 @@ import { api } from '../lib/api.js'
 import { MODULES, PRESETS, MAX_SPLITS, setAllocation } from '../lib/hooks.js'
 import { bps, formatUnits, parseUnits, sol, toSol } from '../lib/format.js'
 import { friendlyWalletError, packTransactions } from '../lib/solana.js'
+import { platformFee } from '../lib/amounts.js'
+import { useChargedPlatformFee } from '../lib/useChargedFee.js'
 import {
   assertQuantumOpen,
   devBuyQuote,
@@ -132,10 +134,10 @@ export default function LaunchPage() {
   }, [devLamports])
 
   const splitTotal = draft.splits.reduce((s, x) => s + Number(x.bps || 0), 0)
-  const fee =
-    platform.treasury && platform.feeBps && devLamports
-      ? (devLamports * BigInt(platform.feeBps)) / 10_000n
-      : 0n
+  // The balance check counts the full fee (a treasury funded before the launch is sent takes it);
+  // the summary shows only a fee the launch transaction will actually carry.
+  const fee = platformFee(devLamports || 0n, platform.treasury ? platform.feeBps : 0)
+  const feeCharged = useChargedPlatformFee(platform, devLamports || 0n)
   const supplyPct = devTokens ? (Number(devTokens) / 1e15) * 100 : 0
 
   function validate() {
@@ -828,10 +830,10 @@ export default function LaunchPage() {
             <dl className="kv summary-costs">
               <dt>Dev buy</dt>
               <dd className="num">{sol(toSol(devLamports || 0n))}</dd>
-              {fee > 0n && (
+              {feeCharged > 0n && (
                 <>
                   <dt>Quant Pad fee ({bps(platform.feeBps)})</dt>
-                  <dd className="num">{sol(toSol(fee))}</dd>
+                  <dd className="num">{sol(toSol(feeCharged))}</dd>
                 </>
               )}
               <dt>Network fees and rent</dt>

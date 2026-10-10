@@ -77,8 +77,9 @@ node --test programs\quantum-hooks\tests\merkle.test.ts    # offline unit tests 
    (default `https://api.mainnet-beta.solana.com`), with back-off. The `.so` dumps (~24 MB) and
    account JSONs are gitignored; `tests/fixtures/manifest.txt` records the slot they came from.
 2. builds `target/deploy-test/quantum_hooks.so` with `--features short-expiry` (Entanglement
-   epochs expire after 20 s instead of 30 days, so `close_epoch` is testable without a clock warp;
-   never deploy this build),
+   epochs expire after 20 s instead of 30 days and may be posted every 15 s instead of every 20 h,
+   so `close_epoch` and the epoch cadence are testable without a clock warp; never deploy this
+   build; the claim delay is a config value, which the tests set to 5 s),
 3. starts `solana-test-validator` in Docker (`--account-dir` fixtures, `--bpf-program` dumps,
    `--upgradeable-program` for quantum_hooks with a throwaway test upgrade authority in
    `tests/fixtures/.keys/`) on `127.0.0.1:8899`,
@@ -87,27 +88,40 @@ node --test programs\quantum-hooks\tests\merkle.test.ts    # offline unit tests 
 No transaction is ever sent anywhere but the local validator, and no real keys are used.
 
 Last full run (2026-10-10, Agave 2.1.0 test validator, mainnet dumps from slot 455127538):
-**35/35 passing** — 6 client checks, 11 merkle checks and 18 e2e tests: config init/update
-guards; 3-transaction launch (register → create_v2 with creator = well + dev buy → lock) and
-register rejections (including sysvar, builtin and program split wallets); creator fees accruing
-from other wallets; curve pulse (protocol cut, Superposition, deferral, exact rounding, split
-order, NothingToPulse); curve Quantum Burn (reserve and per-action caps, Overspent, sell
-discriminator, non-pump target, KeeperOnly, TooSoon, grace); Entanglement (post, proofs,
-bad/double claims, expiry, close); Time Dilation (cliff, partial, full); buy-out + `migrate_v2` to
-PumpSwap; PumpSwap pulse with WSOL unwrap, the WSOL ATA rent refunded to the payer and exactly the
-pending fees split; NothingToPulse when only the ATA rent would have crossed the 0.001 SOL floor;
-pool Quantum Burn (non-canonical pool rejected); Fusion (keeper gating, LP kept by the well); plain
-launch; a legacy SPL Token coin (pump.fun `create`) through curve pulse and burn, graduation, pool
-pulse and burn, and Fusion; pause. Rust unit tests (`unit`): 9/9. Measured sizes without a lookup
-table: curve burn 977 B, pool burn 942 B, fusion 1045 B, pool pulse 883 B (the keeper adds ~50 B of
-compute-budget instructions). `create_v2` + dev buy needs a lookup table (the tests build one).
+**39/39 passing** — 6 client checks, 11 merkle checks and 22 e2e tests: config init/update
+guards (claim delay bound, version); an `update_config` drafted before `set_paused` failing with
+`ConfigChanged` and leaving the pause in place; 3-transaction launch (register → create_v2 with
+creator = well + dev buy → lock) and register rejections (including sysvar, builtin and program
+split wallets); creator fees accruing from other wallets; curve pulse (protocol cut,
+Superposition, a share owed to an empty split wallet, exact rounding, split order,
+NothingToPulse); the owed share paid in full by a no-fee pulse once the wallet is funded; curve
+Quantum Burn (reserve and per-action caps, Overspent, sell discriminator, non-pump target,
+KeeperOnly, TooSoon, grace, the public cap of max_burn / 10, a public burn bundled with a pump.fun
+sell refused); Entanglement (ClaimNotOpen before `claim_start`, EpochTooSoon inside the interval,
+no cancel once claims are open, proofs, bad/double claims, expiry, close); `cancel_epoch` (keeper
+and strangers refused, the total back in the reserve, rent to the keeper, cadence not reset, the
+closed address re-funded by a stranger reading as gone); Time Dilation (cliff, partial, full);
+buy-out + `migrate_v2` to PumpSwap; PumpSwap pulse with WSOL
+unwrap, the WSOL ATA rent refunded to the payer, exactly the pending fees split and graduation
+recorded; NothingToPulse when only the ATA rent would have crossed the 0.001 SOL floor; pool
+Quantum Burn (non-canonical pool rejected); Fusion (public run refused inside a grace counted from
+graduation although long past launch, then allowed; keeper run; LP kept by the well); plain launch;
+a legacy SPL Token coin (pump.fun `create`) through curve pulse and burn, graduation, pool pulse
+and burn, and Fusion; pause blocking register and burns but not pulses; the operator CLI
+(`scripts/program-ops.mjs`: simulated dry runs, pause/unpause, an update pinned to a stale
+version refused, cancel inside the window, refused once claims are open). Rust unit tests
+(`unit`): 17/17. Measured
+sizes without a lookup table, including one compute-budget instruction: curve burn 1010 B, pool
+burn 975 B, fusion 1078 B, pool pulse 917 B (the first post-graduation pulse also passes the pool).
+`create_v2` + dev buy needs a lookup table (the tests build one).
 
 ## Deploy (outline)
 
 1. Restore the program keypair (see above), run `scripts\anchor-docker.ps1 build` and commit
    `shared/idl/quantum_hooks.json`. The client and the program must ship together: `pulse` takes
-   a `rent_payer` signer and Fusion an `lp_token_program`, so an old client fails against the new
-   program and the other way round.
+   a `rent_payer` signer and optional graduation accounts, burn and Fusion the Instructions
+   sysvar, `update_config` an `expected_version` (pausing is `set_paused`), so an old client fails
+   against the new program and the other way round.
 2. Deploy `target/deploy/quantum_hooks.so` with the program keypair from a funded deployer
    (`solana program deploy --program-id target/deploy/quantum_hooks-keypair.json …` inside
    `scripts\anchor-docker.ps1 shell`, with the deployer key mounted deliberately).
@@ -117,12 +131,31 @@ compute-budget instructions). `create_v2` + dev buy needs a lookup table (the te
    ```bash
    node scripts/init-config.mjs --rpc <url> --authority <upgrade-authority.json> --treasury <pubkey> \
      --keeper <pubkey of QUANTPAD_KEEPER_SECRET> [--protocol-bps 0-1000] [--max-burn-sol 1] \
-     [--min-action-interval 3600] [--keeper-grace 86400] [--mainnet] [--yes]
+     [--min-action-interval 3600] [--keeper-grace 86400] [--claim-delay 21600] [--mainnet] [--yes]
    ```
 
    Without `--yes` it prints a dry run (cluster, upgrade authority check, values) and sends
-   nothing. Mainnet-beta RPCs are refused unless `--mainnet` is passed too.
-4. Get an independent audit before the program holds meaningful value.
+   nothing. Mainnet-beta RPCs are refused unless `--mainnet` is passed too. `--claim-delay` is the
+   time between an Entanglement post and its first claim, the authority's window to
+   `cancel_epoch` a root posted with a leaked keeper key (0..604800 s; see the trust model in
+   `docs/QUANTUM_HOOKS_SPEC.md`).
+4. Later authority operations go through `scripts/program-ops.mjs`, with the same dry-run default,
+   `--yes` and mainnet guard:
+
+   ```bash
+   node scripts/program-ops.mjs --rpc <url>                     # print the config
+   node scripts/program-ops.mjs --rpc <url> --epochs <mint>     # epochs, which are cancellable
+   node scripts/program-ops.mjs --rpc <url> --authority <authority.json> \
+     --pause | --unpause | --cancel-epoch <mint> <index> | \
+     [--treasury <pk>] [--keeper <pk>] [--protocol-bps n] [--max-burn-sol sol] \
+     [--min-action-interval s] [--keeper-grace s] [--claim-delay s] [--new-authority <pk>] \
+     [--expected-version n]   [--yes]
+   ```
+
+   Every dry run is simulated against the chain. `--authority-pubkey <pk>` instead of
+   `--authority` prints the instruction (program id, accounts, base64 data) for a multisig
+   proposal and never sends.
+5. Get an independent audit before the program holds meaningful value.
 
 ## Client (`shared/quantum.mjs`)
 

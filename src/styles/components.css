@@ -132,7 +132,8 @@
   gap: 12px;
   margin-bottom: 14px;
 }
-.panel-head h3 {
+.panel-head h3,
+.panel-head .h3 {
   font-size: var(--t-md);
 }
 /* Graphite instrument panel (chart, ticket, trades) */
@@ -629,7 +630,7 @@
   padding: 48px 20px;
   color: var(--steel);
 }
-.empty h3 {
+.empty-title {
   color: var(--ink);
 }
 .empty p {
@@ -750,4 +751,25 @@
 }
 .instrument .copy:hover {
   color: #fff;
+}
+
+/* Tiny prices (Price.js): "0.0₇412" drawn with the brand font's own digits. The zeros the count
+   stands for stay in the text at zero size (still copied and read out, still inline so copying
+   adds no line breaks); the count is generated content, so it is neither copied nor read. */
+.price-tiny {
+  white-space: nowrap;
+}
+.price-zero-run {
+  font-size: 0;
+  line-height: 0;
+  letter-spacing: 0;
+}
+.price-zeros {
+  font-size: 0.72em;
+  line-height: 0;
+  vertical-align: sub;
+  margin: 0 0.06em 0 0.03em;
+}
+.price-zeros::before {
+  content: attr(data-zeros);
 }

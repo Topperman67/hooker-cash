@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
-import { Link, NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { Menu, Search, Wallet, X } from 'lucide-react'
+import { Link, NavLink, useLocation } from 'react-router-dom'
+import { Menu, Wallet, X } from 'lucide-react'
 import Logo from './Logo.jsx'
+import SearchBox from './SearchBox.jsx'
 import Tape from './Tape.jsx'
 import Glass from './Glass.jsx'
 import StudioLights from './StudioLights.jsx'
 import WalletDialog from './WalletDialog.jsx'
 import { useWallet } from '../context/WalletContext.jsx'
 import { usePlatform } from '../context/PlatformContext.jsx'
-import { isAddress } from '../../shared/network.mjs'
 import { short, sol, toSol, usd } from '../lib/format.js'
 
 const LINKS = [
@@ -18,38 +18,6 @@ const LINKS = [
   ['/portfolio', 'Portfolio'],
   ['/docs', 'Docs'],
 ]
-
-function SearchBox({ onDone }) {
-  const [q, setQ] = useState('')
-  const navigate = useNavigate()
-  return (
-    <form
-      className="topbar-search"
-      role="search"
-      onSubmit={(e) => {
-        e.preventDefault()
-        const value = q.trim()
-        if (!value) return
-        navigate(isAddress(value) ? `/coin/${value}` : `/market?q=${encodeURIComponent(value)}`)
-        setQ('')
-        onDone?.()
-      }}
-    >
-      <Search size={16} aria-hidden="true" />
-      <label className="sr-only" htmlFor="global-search">
-        Search coins or paste a mint address
-      </label>
-      <input
-        id="global-search"
-        value={q}
-        onChange={(e) => setQ(e.target.value)}
-        placeholder="Search or paste a mint"
-        autoComplete="off"
-        spellCheck="false"
-      />
-    </form>
-  )
-}
 
 function WalletButton() {
   const { connected, address, balance, openDialog, wallet } = useWallet()

@@ -1,9 +1,11 @@
 // End-to-end tests against solana-test-validator running mainnet's pump.fun, PumpSwap, pump fees,
 // mayhem and Token-2022 programs (dumped by tests/fixtures/fetch-fixtures.mjs) plus quantum_hooks
-// built with the `short-expiry` feature. Started by tests/run-local.mjs.
+// built with the `short-expiry` feature (epochs expire after 20 s and may be posted every 15 s).
+// Started by tests/run-local.mjs.
 import { before, describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import {
   AddressLookupTableProgram,
   ComputeBudgetProgram,
@@ -12,6 +14,7 @@ import {
   LAMPORTS_PER_SOL,
   PublicKey,
   SYSVAR_CLOCK_PUBKEY,
+  SYSVAR_INSTRUCTIONS_PUBKEY,
   SystemProgram,
   TransactionMessage,
   VersionedTransaction,
@@ -35,6 +38,7 @@ import {
   lpMintPda,
 } from '@pump-fun/pump-swap-sdk'
 import * as q from '../../../shared/quantum.mjs'
+import * as ops from '../../../scripts/program-ops.mjs'
 import { buildEntanglementTree } from '../../../shared/merkle.mjs'
 import {
   OnlinePumpSdk,
@@ -45,7 +49,8 @@ import {
   getFeeRecipient,
 } from '../../../shared/vendor/pump-sdk.node.mjs'
 
-const connection = new Connection(process.env.QH_RPC ?? 'http://127.0.0.1:8899', 'confirmed')
+const rpcUrl = process.env.QH_RPC ?? 'http://127.0.0.1:8899'
+const connection = new Connection(rpcUrl, 'confirmed')
 const authorityFile =
   process.env.QH_AUTHORITY ?? new URL('./fixtures/.keys/authority.json', import.meta.url)
 const authority = Keypair.fromSecretKey(
@@ -71,7 +76,11 @@ const CONFIG = {
   maxBurnLamports: 2n * SOL,
   minActionInterval: 3,
   keeperGrace: 8,
+  // Entanglement claims open 5 s after a post (the 20 s test epochs leave a 15 s claim window).
+  claimDelay: 5,
 }
+// MIN_EPOCH_INTERVAL of the `short-expiry` build.
+const TEST_EPOCH_INTERVAL = 15
 const HOOKS = {
   creatorBps: 4000,
   burnBps: 2500,
@@ -207,9 +216,9 @@ const event = (sent: Sent, name: string) => {
   return found.data
 }
 const pct = (v: bigint, bps: number) => (v * BigInt(bps)) / 10_000n
-// quantum_burn: 13 named accounts (optional ones as program-id placeholders), then the CPI accounts;
+// quantum_burn: 14 named accounts (optional ones as program-id placeholders), then the CPI accounts;
 // data = discriminator (8) + spend (8) + Vec length (4) + CPI data.
-const BURN_FIXED_ACCOUNTS = 13
+const BURN_FIXED_ACCOUNTS = 14
 const BURN_DATA_PREFIX = 20
 const program = () => q.quantumProgram(connection)
 
@@ -231,6 +240,7 @@ async function rawBurn(cpi: any, spend: bigint, caller: PublicKey, target = cpi.
       quoteTokenProgram: null,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
+      instructionsSysvar: SYSVAR_INSTRUCTIONS_PUBKEY,
       targetProgram: target,
     })
     .remainingAccounts(
@@ -374,6 +384,8 @@ describe('quantum_hooks on a local validator with mainnet pump.fun', () => {
         keeperGrace: 8,
         paused: false,
         bump: undefined,
+        claimDelay: CONFIG.claimDelay,
+        version: 0,
       },
     )
     const again = await q.buildInitializeConfigInstruction({
@@ -405,6 +417,86 @@ describe('quantum_hooks on a local validator with mainnet pump.fun', () => {
       protocolBps: 500,
     })
     await send([same], [authority])
+    assert.equal((await q.fetchConfig(connection)).version, 1)
+    // claim_delay is bounded to 7 days.
+    const tooLong = await q.buildUpdateConfigInstruction({
+      connection,
+      authority: authority.publicKey,
+      claimDelay: q.MAX_CLAIM_DELAY + 1,
+    })
+    await expectFail(send([tooLong], [authority]), /InvalidConfig/)
+  })
+
+  test('update_config prepared before a set_paused fails (stale expected_version) and cannot unpause', async () => {
+    const before = await q.fetchConfig(connection)
+    // Drafted while unpaused: a treasury change.
+    const drafted = await q.buildUpdateConfigInstruction({
+      connection,
+      authority: authority.publicKey,
+      treasury: keeper.publicKey,
+    })
+    // Only the authority can pause.
+    await expectFail(
+      send(
+        [
+          await q.buildSetPausedInstruction({
+            connection,
+            authority: keeper.publicKey,
+            paused: true,
+          }),
+        ],
+        [keeper],
+      ),
+      /NotAuthority/,
+    )
+    const paused = await send(
+      [
+        await q.buildSetPausedInstruction({
+          connection,
+          authority: authority.publicKey,
+          paused: true,
+        }),
+      ],
+      [authority],
+    )
+    assert.equal(event(paused, 'ConfigUpdated').version, BigInt(before.version + 1))
+    // The drafted update lands after the pause: refused, the pause and the treasury stand.
+    await expectFail(send([drafted], [authority]), /ConfigChanged/)
+    let config = await q.fetchConfig(connection)
+    assert.equal(config.paused, true)
+    assert.equal(config.treasury, treasury.publicKey.toBase58())
+    assert.equal(config.version, before.version + 1)
+    // An update built on the current version works and leaves the pause alone.
+    await send(
+      [
+        await q.buildUpdateConfigInstruction({
+          connection,
+          authority: authority.publicKey,
+          keeperGrace: CONFIG.keeperGrace,
+        }),
+      ],
+      [authority],
+    )
+    config = await q.fetchConfig(connection)
+    assert.equal(config.paused, true)
+    assert.equal(config.version, before.version + 2)
+    await assert.rejects(
+      q.buildUpdateConfigInstruction({ connection, authority: authority.publicKey, paused: false }),
+      /buildSetPausedInstruction/,
+    )
+    await send(
+      [
+        await q.buildSetPausedInstruction({
+          connection,
+          authority: authority.publicKey,
+          paused: false,
+        }),
+      ],
+      [authority],
+    )
+    config = await q.fetchConfig(connection)
+    assert.equal(config.paused, false)
+    assert.equal(config.version, before.version + 3)
   })
 
   test('quantum launch: register, create_v2 (creator = well) + dev buy, lock — three transactions', async () => {
@@ -654,7 +746,7 @@ describe('quantum_hooks on a local validator with mainnet pump.fun', () => {
     assert.equal(pulsed.burnAdded, burn)
     assert.equal(pulsed.entangleAdded, entangle)
     assert.equal(pulsed.fusionAdded, fusion)
-    // splitB holds no lamports: a share below the rent minimum is deferred, never lost.
+    // splitB holds no lamports: a share below the rent minimum is owed to it, never re-split.
     const bDeferred = b < RENT0
     assert.ok(
       bDeferred,
@@ -662,6 +754,7 @@ describe('quantum_hooks on a local validator with mainnet pump.fun', () => {
     )
     assert.equal(pulsed.splitsPaid, a + (bDeferred ? 0n : b))
     assert.equal(pulsed.deferred, bDeferred ? b : 0n)
+    assert.equal(pulsed.owedPaid, 0n)
     assert.equal(pulsed.launcherPaid, launcherShare)
     assert.equal(
       protocol + burn + entangle + fusion + a + b + launcherShare,
@@ -682,6 +775,10 @@ describe('quantum_hooks on a local validator with mainnet pump.fun', () => {
     assert.equal(q1.entangleReserve - q0.entangleReserve, entangle)
     assert.equal(q1.fusionReserve - q0.fusionReserve, fusion)
     assert.equal(q1.totalProtocol, protocol)
+    assert.deepEqual(q1.splitOwed, [0n, b], "splitB's share is owed to it")
+    assert.equal(q1.launcherOwed, 0n)
+    assert.equal(q1.protocolOwed, 0n)
+    assert.equal(q1.totalCollected, available, 'an owed share counts as collected once')
     const wellBalance = await q.fetchWellBalance(connection, mint)
     assert.equal(
       wellBalance.lamports,
@@ -694,9 +791,45 @@ describe('quantum_hooks on a local validator with mainnet pump.fun', () => {
     )
     assert.equal(await bal(well), wellBalance.lamports)
 
-    // Nothing left (deferred dust < 0.001 SOL) → NothingToPulse.
+    // Nothing new, and splitB still cannot hold what it is owed → NothingToPulse.
     const again = await q.buildPulseInstructions({ connection, payer: keeper.publicKey, mint })
     await expectFail(send(again, [keeper]), /NothingToPulse/)
+  })
+
+  test('a deferred split is paid its full owed share once its wallet can hold it, without new fees', async () => {
+    const q0 = await q.fetchQuantum(connection, mint)
+    const owed = q0.splitOwed[1]
+    assert.ok(owed > 0n && owed < RENT0, `splitB owed ${owed}`)
+    await airdrop(splitB.publicKey, 1)
+    const b0 = await bal(splitB.publicKey)
+    const treasury0 = await bal(treasury.publicKey)
+    // Anyone may pulse: below the 0.001 SOL floor it allocates nothing new, only pays what is owed.
+    const stranger = traders[2]
+    const sent = await send(
+      await q.buildPulseInstructions({ connection, payer: stranger.publicKey, mint }),
+      [stranger],
+    )
+    const pulsed = event(sent, 'Pulsed')
+    assert.equal(pulsed.collected, 0n)
+    assert.equal(pulsed.owedPaid, owed)
+    assert.equal(pulsed.splitsPaid, owed)
+    assert.equal(pulsed.deferred, 0n)
+    assert.equal(await bal(splitB.publicKey), b0 + owed, 'splitB received its whole share')
+    assert.equal(await bal(treasury.publicKey), treasury0, 'no second protocol cut')
+    const q1 = await q.fetchQuantum(connection, mint)
+    assert.deepEqual(q1.splitOwed, [0n, 0n])
+    assert.equal(q1.totalCreatorPaid, q0.totalCreatorPaid + owed)
+    assert.equal(q1.totalCollected, q0.totalCollected)
+    const well = await q.fetchWellBalance(connection, mint)
+    assert.equal(
+      well.reserved,
+      q1.burnReserve + q1.entangleReserve + q1.entangleOwed + q1.fusionReserve,
+    )
+    // Nothing owed and nothing new: NothingToPulse again.
+    await expectFail(
+      send(await q.buildPulseInstructions({ connection, payer: keeper.publicKey, mint }), [keeper]),
+      /NothingToPulse/,
+    )
   })
 
   test('quantum_burn on the curve: caps, discriminator allow-list, target check, keeper gating and grace', async () => {
@@ -844,19 +977,53 @@ describe('quantum_hooks on a local validator with mainnet pump.fun', () => {
       spendLamports: q1.burnReserve / 3n,
     })
     await expectFail(send(asKeeper, [keeper]), /TooSoon/)
-    // After the grace anyone may run it.
+    // After the grace anyone may run it, within the public limits.
     await waitForChainTime(q1.lastBurnAt + CONFIG.keeperGrace + 1)
-    const late = await q.buildBurnInstructions({
-      connection,
-      caller: stranger.publicKey,
+    const spend = q1.burnReserve / 3n
+    const strangerBurn = () =>
+      q.buildBurnInstructions({
+        connection,
+        caller: stranger.publicKey,
+        mint,
+        spendLamports: spend,
+      })
+    // (1) A public run spends at most max_burn_lamports / 10 (the keeper keeps the full cap).
+    const setMaxBurn = async (lamports: bigint) =>
+      send(
+        [
+          await q.buildUpdateConfigInstruction({
+            connection,
+            authority: authority.publicKey,
+            maxBurnLamports: lamports,
+          }),
+        ],
+        [authority],
+      )
+    await setMaxBurn(spend * 10n - 10n)
+    assert.equal(q.publicSpendCap(await q.fetchConfig(connection)), spend - 1n)
+    await expectFail(send(await strangerBurn(), [stranger]), /SpendTooHigh/)
+    await setMaxBurn(CONFIG.maxBurnLamports)
+    // (2) It may not share its transaction with a pump.fun trade (here the sandwich's back leg; the
+    // check reads every top-level instruction through the Instructions sysvar).
+    const backRun = await PUMP_SDK.getSellInstructionRaw({
+      user: stranger.publicKey,
       mint,
-      spendLamports: q1.burnReserve / 3n,
+      creator: well,
+      amount: new BN(1_000_000),
+      solAmount: new BN(0),
+      feeRecipient: getFeeRecipient(global, false),
+      tokenProgram: T22,
     })
-    const lateSent = await send(late, [stranger])
-    assert.ok(event(lateSent, 'Burned').tokensBurned > 0n)
+    const bundled = [...(await strangerBurn()), backRun]
+    await expectFail(send(bundled, [stranger]), /PublicTransactionNotAllowed/)
+    // (3) Alone (plus compute budget and the volume-accumulator init) it goes through.
+    const lateSent = await send(await strangerBurn(), [stranger])
+    const late = event(lateSent, 'Burned')
+    assert.equal(late.caller, stranger.publicKey.toBase58())
+    assert.ok(late.tokensBurned > 0n && late.spent <= spend)
   })
 
-  test('entanglement: post, claim with proofs, double claim / bad proofs rejected, close after expiry', async () => {
+  test('entanglement: post, claims closed until claim_start, one epoch per interval, claim with proofs, double claim / bad proofs rejected, close after expiry', async () => {
     const q0 = await q.fetchQuantum(connection, mint)
     const reserve = q0.entangleReserve
     assert.ok(reserve > 3000n)
@@ -897,6 +1064,11 @@ describe('quantum_hooks on a local validator with mainnet pump.fun', () => {
     const q1 = await q.fetchQuantum(connection, mint)
     assert.equal(q1.entangleOwed, tree.total)
     assert.equal(q1.entangleReserve, reserve - tree.total)
+    const posted0 = await q.fetchEpoch(connection, mint, 0)
+    assert.equal(posted0.claimStart, posted0.createdAt + CONFIG.claimDelay)
+    assert.equal(ev.claimStart, BigInt(posted0.claimStart))
+    assert.equal(posted0.expiresAt, posted0.createdAt + 20, 'short-expiry build')
+    assert.equal(q1.lastEpochAt, posted0.createdAt)
 
     const claim = (
       i: number,
@@ -913,6 +1085,35 @@ describe('quantum_hooks on a local validator with mainnet pump.fun', () => {
         amount,
         proof,
       })
+    // Claims stay closed for claim_delay after the post (the authority's cancel window).
+    await expectFail(send([await claim(0)], [traders[0]]), /ClaimNotOpen/)
+    // One epoch per MIN_EPOCH_INTERVAL: a second root right away is refused.
+    const second = await q.buildPostEpochInstruction({
+      connection,
+      keeper: keeper.publicKey,
+      mint,
+      index: q0.epochCount + 1,
+      root: new Uint8Array(32).fill(7),
+      total: 1n,
+      leafCount: 1,
+    })
+    await expectFail(send([second], [keeper]), /EpochTooSoon/)
+    await waitForChainTime(posted0.claimStart)
+    // Once claims are open the authority can no longer cancel.
+    await expectFail(
+      send(
+        [
+          await q.buildCancelEpochInstruction({
+            connection,
+            authority: authority.publicKey,
+            mint,
+            index: 0,
+          }),
+        ],
+        [authority],
+      ),
+      /CancelWindowClosed/,
+    )
     // Wrong amount and someone else's proof fail.
     await expectFail(
       send([await claim(0, traders[0], entries[0].amount + 1n)], [traders[0]]),
@@ -948,6 +1149,145 @@ describe('quantum_hooks on a local validator with mainnet pump.fun', () => {
     assert.equal(q2.entangleReserve, reserve - entries[0].amount - entries[1].amount)
     assert.equal(q2.totalClaimed, entries[0].amount + entries[1].amount)
     assert.equal(await connection.getAccountInfo(q.epochPda(mint, 0)), null)
+  })
+
+  test('cancel_epoch: the authority vetoes an epoch before its claims open; the total returns to the reserve', async () => {
+    // A long claim delay keeps the cancel window open for the whole test.
+    const setClaimDelay = async (claimDelay: number) =>
+      send(
+        [
+          await q.buildUpdateConfigInstruction({
+            connection,
+            authority: authority.publicKey,
+            claimDelay,
+          }),
+        ],
+        [authority],
+      )
+    await setClaimDelay(3600)
+    const q0 = await q.fetchQuantum(connection, mint)
+    await waitForChainTime(q0.lastEpochAt + TEST_EPOCH_INTERVAL)
+    const index = q0.epochCount
+    // What a leaked keeper key could post: everything to itself.
+    const total = q0.entangleReserve
+    const tree = buildEntanglementTree([{ wallet: keeper.publicKey.toBase58(), amount: total }])
+    const keeper0 = await bal(keeper.publicKey)
+    const posted = await send(
+      [
+        await q.buildPostEpochInstruction({
+          connection,
+          keeper: keeper.publicKey,
+          mint,
+          index,
+          root: tree.root,
+          total,
+          leafCount: 1,
+        }),
+      ],
+      [keeper],
+    )
+    const epoch = await q.fetchEpoch(connection, mint, index)
+    assert.equal(epoch.claimStart, epoch.createdAt + 3600)
+    const epochRent = BigInt((await connection.getAccountInfo(q.epochPda(mint, index)))!.lamports)
+    assert.equal(await bal(keeper.publicKey), keeper0 - epochRent - posted.fee)
+    let q1 = await q.fetchQuantum(connection, mint)
+    assert.equal(q1.entangleReserve, 0n)
+    assert.equal(q1.entangleOwed, q0.entangleOwed + total)
+    // The keeper cannot claim it before claim_start, nor cancel it.
+    await expectFail(
+      send(
+        [
+          await q.buildClaimInstruction({
+            connection,
+            claimant: keeper.publicKey,
+            mint,
+            index,
+            leafIndex: 0,
+            amount: total,
+            proof: tree.proof(0),
+          }),
+        ],
+        [keeper],
+      ),
+      /ClaimNotOpen/,
+    )
+    for (const who of [keeper, traders[0]])
+      await expectFail(
+        send(
+          [
+            await q.buildCancelEpochInstruction({
+              connection,
+              authority: who.publicKey,
+              mint,
+              index,
+            }),
+          ],
+          [who],
+        ),
+        /NotAuthority/,
+      )
+    // The authority cancels: the total goes back to the reserve, the rent to config.keeper.
+    const keeper1 = await bal(keeper.publicKey)
+    const cancelled = await send(
+      [
+        await q.buildCancelEpochInstruction({
+          connection,
+          authority: authority.publicKey,
+          mint,
+          index,
+        }),
+      ],
+      [authority],
+    )
+    const ev = event(cancelled, 'EpochCancelled')
+    assert.equal(ev.index, index)
+    assert.equal(ev.returned, total)
+    assert.equal(ev.rentTo, keeper.publicKey.toBase58())
+    assert.equal(await bal(keeper.publicKey), keeper1 + epochRent)
+    assert.equal(await connection.getAccountInfo(q.epochPda(mint, index)), null)
+    // Anyone can send lamports to the closed address. It is then a System account, and the client
+    // reads the epoch as gone instead of failing to decode it.
+    await send(
+      [
+        SystemProgram.transfer({
+          fromPubkey: traders[0].publicKey,
+          toPubkey: q.epochPda(mint, index),
+          lamports: 1_000_000,
+        }),
+      ],
+      [traders[0]],
+    )
+    const refunded = await connection.getAccountInfo(q.epochPda(mint, index))
+    assert.ok(refunded?.owner.equals(SystemProgram.programId))
+    assert.equal(await q.fetchEpoch(connection, mint, index), null)
+    await expectFail(
+      q.buildCloseEpochInstruction({ connection, caller: traders[0].publicKey, mint, index }),
+      /does not exist/,
+    )
+    q1 = await q.fetchQuantum(connection, mint)
+    assert.equal(q1.entangleReserve, q0.entangleReserve)
+    assert.equal(q1.entangleOwed, q0.entangleOwed)
+    assert.equal(q1.epochCount, index + 1, 'the index stays used')
+    assert.equal(q1.totalClaimed, q0.totalClaimed)
+    // Cancelling does not reset the cadence: the next root waits for the interval.
+    await expectFail(
+      send(
+        [
+          await q.buildPostEpochInstruction({
+            connection,
+            keeper: keeper.publicKey,
+            mint,
+            index: index + 1,
+            root: tree.root,
+            total: 1n,
+            leafCount: 1,
+          }),
+        ],
+        [keeper],
+      ),
+      /EpochTooSoon/,
+    )
+    await setClaimDelay(CONFIG.claimDelay)
   })
 
   test('release: partial after the cliff, everything after the end', async () => {
@@ -1006,6 +1346,8 @@ describe('quantum_hooks on a local validator with mainnet pump.fun', () => {
     assert.ok(poolInfo, 'canonical pool exists')
     const decoded = PUMP_AMM_SDK.decodePool(poolInfo)
     assert.ok(decoded.coinCreator.equals(q.wellPda(mint)), 'pool coin creator is the well')
+    // Nothing of ours has run since: the program has not seen the graduation yet.
+    assert.equal((await q.fetchQuantum(connection, mint)).graduatedAt, 0)
   })
 
   test('post-graduation pulse: PumpSwap sweep + collect (WSOL) unwrapped by pulse, ATA rent refunded', async () => {
@@ -1021,8 +1363,15 @@ describe('quantum_hooks on a local validator with mainnet pump.fun', () => {
     const vaultExisted = !!(await connection.getAccountInfo(vaultAta))
     const keeper0 = await bal(keeper.publicKey)
     const ixs = await q.buildPulseInstructions({ connection, payer: keeper.publicKey, mint })
+    const t0 = await chainNow()
     const sent = await send(ixs, [keeper], { cu: 600_000 })
     const pulsed = event(sent, 'Pulsed')
+    // The pulse saw the canonical pool and recorded the graduation (the public Fusion grace
+    // counts from here).
+    const graduatedAt = (await q.fetchQuantum(connection, mint)).graduatedAt
+    assert.ok(graduatedAt >= t0 && graduatedAt <= (await chainNow()), `graduatedAt ${graduatedAt}`)
+    // splitB was funded earlier, so its share is paid directly: nothing deferred.
+    assert.equal(pulsed.deferred, 0n)
     console.log(
       `    pool pulse tx ${sent.size} B, ${sent.cu} CU, unwrapped ${pulsed.unwrapped}, collected ${pulsed.collected}, rent refunded ${pulsed.rentRefunded}`,
     )
@@ -1089,59 +1438,83 @@ describe('quantum_hooks on a local validator with mainnet pump.fun', () => {
     assert.equal(q1.burnReserve, q0.burnReserve - burned.spent)
   })
 
-  test('fusion: buy + deposit on the canonical pool, LP stays in the well', async () => {
+  test('fusion: the public grace counts from graduation; buy + deposit on the canonical pool, LP stays in the well', async () => {
     const q0 = await q.fetchQuantum(connection, mint)
     assert.ok(q0.fusionReserve > 1_000_000n, `fusion reserve ${q0.fusionReserve}`)
+    assert.equal(q0.lastFusionAt, q0.createdAt, 'no fusion yet')
+    assert.ok(q0.graduatedAt > q0.createdAt, 'graduation recorded by the pool pulse')
+    const setGrace = async (keeperGrace: number) =>
+      send(
+        [
+          await q.buildUpdateConfigInstruction({
+            connection,
+            authority: authority.publicKey,
+            keeperGrace,
+          }),
+        ],
+        [authority],
+      )
+    const stranger = traders[2]
+    const publicSpend = (() => {
+      const half = q0.fusionReserve / 2n
+      const cap = CONFIG.maxBurnLamports / q.PUBLIC_SPEND_DIVISOR
+      return half < cap ? half : cap
+    })()
+    const strangerFusion = async () =>
+      q.buildFusionInstructions({
+        connection,
+        caller: stranger.publicKey,
+        mint,
+        spendLamports: publicSpend,
+      })
+    // A grace that ended long ago if counted from launch (the last fusion) but not if counted from
+    // graduation: the public run is still refused.
+    const now = await chainNow()
+    const grace = now - q0.graduatedAt + 30
+    assert.ok(
+      now - q0.lastFusionAt > grace + 5,
+      `launch ${now - q0.lastFusionAt} s ago, graduation ${now - q0.graduatedAt} s ago`,
+    )
+    await setGrace(grace)
+    await expectFail(send(await strangerFusion(), [stranger], { cu: 800_000 }), /KeeperOnly/)
+    // A full grace after graduation, anyone may fuse (within max_burn_lamports / 10).
+    await setGrace(CONFIG.keeperGrace)
+    await waitForChainTime(q0.graduatedAt + CONFIG.keeperGrace + 1)
+    const pub = await send(await strangerFusion(), [stranger], { cu: 800_000 })
+    const publicFused = event(pub, 'Fused')
+    console.log(
+      `    public fusion tx ${pub.size} B, ${pub.cu} CU, spent ${publicFused.spent}, lp ${publicFused.lpReceived}`,
+    )
+    assert.equal(publicFused.caller, stranger.publicKey.toBase58())
+    assert.ok(publicFused.lpReceived > 0n && publicFused.spent <= publicSpend)
+
+    // The keeper, after min_action_interval, with the rest of the reserve.
+    const q1 = await q.fetchQuantum(connection, mint)
+    assert.equal(q1.fusionReserve, q0.fusionReserve - publicFused.spent)
+    await waitForChainTime(q1.lastFusionAt + CONFIG.minActionInterval)
     const ixs = await q.buildFusionInstructions({
       connection,
       caller: keeper.publicKey,
       mint,
-      spendLamports: q0.fusionReserve,
+      spendLamports: q1.fusionReserve,
     })
-    // Only the keeper may fuse before the grace period (it started at launch, long ago, so tighten it).
-    await send(
-      [
-        await q.buildUpdateConfigInstruction({
-          connection,
-          authority: authority.publicKey,
-          keeperGrace: 3600,
-        }),
-      ],
-      [authority],
-    )
-    const stranger = await q.buildFusionInstructions({
-      connection,
-      caller: traders[2].publicKey,
-      mint,
-      spendLamports: q0.fusionReserve,
-    })
-    await expectFail(send(stranger, [traders[2]], { cu: 800_000 }), /KeeperOnly/)
-    await send(
-      [
-        await q.buildUpdateConfigInstruction({
-          connection,
-          authority: authority.publicKey,
-          keeperGrace: CONFIG.keeperGrace,
-        }),
-      ],
-      [authority],
-    )
     const sent = await send(ixs, [keeper], { cu: 800_000 })
     const fused = event(sent, 'Fused')
     console.log(
       `    fusion tx ${sent.size} B, ${sent.cu} CU, spent ${fused.spent}, lp ${fused.lpReceived}, burned ${fused.tokensBurned}`,
     )
-    assert.ok(fused.lpReceived > 0n && fused.spent > 0n && fused.spent <= q0.fusionReserve)
+    assert.ok(fused.lpReceived > 0n && fused.spent > 0n && fused.spent <= q1.fusionReserve)
     const lpAta = getAssociatedTokenAddressSync(
       lpMintPda(canonicalPumpPoolPda(mint)),
       q.wellPda(mint),
       true,
       T22,
     )
-    assert.equal(await tokenBalance(lpAta), fused.lpReceived)
-    const q1 = await q.fetchQuantum(connection, mint)
-    assert.equal(q1.fusionReserve, q0.fusionReserve - fused.spent)
-    assert.equal(q1.totalFusedSol, fused.spent)
+    assert.equal(await tokenBalance(lpAta), publicFused.lpReceived + fused.lpReceived)
+    const q2 = await q.fetchQuantum(connection, mint)
+    assert.equal(q2.fusionReserve, q1.fusionReserve - fused.spent)
+    assert.equal(q2.totalFusedSol, publicFused.spent + fused.spent)
+    assert.equal(q2.graduatedAt, q0.graduatedAt, 'graduation is recorded once')
     assert.equal(await connection.getAccountInfo(q.wellWsolAta(mint)), null)
   })
 
@@ -1255,6 +1628,7 @@ describe('quantum_hooks on a local validator with mainnet pump.fun', () => {
     assert.ok(poolPulse.unwrapped > 0n)
     assert.equal(poolPulse.rentRefunded, q.RENT_EXEMPT_TOKEN_ACCOUNT)
     assert.equal(poolPulse.collected, pending)
+    assert.ok((await q.fetchQuantum(connection, m)).graduatedAt > 0, 'graduation recorded')
 
     // Pool burn.
     quantum = await q.fetchQuantum(connection, m)
@@ -1304,16 +1678,12 @@ describe('quantum_hooks on a local validator with mainnet pump.fun', () => {
   })
 
   test('paused config blocks register and burns', async () => {
-    await send(
-      [
-        await q.buildUpdateConfigInstruction({
-          connection,
-          authority: authority.publicKey,
-          paused: true,
-        }),
-      ],
-      [authority],
-    )
+    const setPaused = async (paused: boolean) =>
+      send(
+        [await q.buildSetPausedInstruction({ connection, authority: authority.publicKey, paused })],
+        [authority],
+      )
+    await setPaused(true)
     const m = Keypair.generate()
     const built = await q.buildQuantumLaunchInstructions({
       connection,
@@ -1325,16 +1695,152 @@ describe('quantum_hooks on a local validator with mainnet pump.fun', () => {
       hooks: { ...HOOKS, lock: null },
     })
     await expectFail(send(built.stages.register, [launcher, m]), /Paused/)
+    // A pause stops only register, quantum_burn and fusion: pulses keep paying out.
     await send(
       [
-        await q.buildUpdateConfigInstruction({
-          connection,
-          authority: authority.publicKey,
-          paused: false,
+        SystemProgram.transfer({
+          fromPubkey: traders[1].publicKey,
+          toPubkey: q.wellPda(mint),
+          lamports: 2_000_000,
         }),
       ],
-      [authority],
+      [traders[1]],
     )
+    const pulsed = await send(
+      await q.buildPulseInstructions({ connection, payer: keeper.publicKey, mint }),
+      [keeper],
+      { cu: 600_000 },
+    )
+    assert.ok(event(pulsed, 'Pulsed').collected >= 2_000_000n)
+    const quantum = await q.fetchQuantum(connection, mint)
+    await waitForChainTime(quantum.lastBurnAt + CONFIG.minActionInterval)
+    await expectFail(
+      q
+        .buildBurnInstructions({
+          connection,
+          caller: keeper.publicKey,
+          mint,
+          spendLamports: quantum.burnReserve / 2n,
+        })
+        .then((ixs: any) => send(ixs, [keeper], { cu: 600_000 })),
+      /Paused/,
+    )
+    await setPaused(false)
     await send(built.stages.register, [launcher, m])
+  })
+
+  test('operator CLI (scripts/program-ops.mjs): dry runs send nothing; pause, versioned update, cancel_epoch', async () => {
+    const authPath =
+      typeof authorityFile === 'string' ? authorityFile : fileURLToPath(authorityFile)
+    const auth = ['--authority', authPath]
+    const run = async (...args: string[]) => {
+      const lines: string[] = []
+      const io = {
+        log: (m: any) => lines.push(String(m)),
+        error: (m: any) => lines.push(String(m)),
+      }
+      const code = await ops.main(
+        ['--rpc', rpcUrl, '--program-id', q.QUANTUM_PROGRAM_ID.toBase58(), ...args],
+        io,
+      )
+      return { code, out: lines.join('\n') }
+    }
+    const v0 = (await q.fetchConfig(connection)).version
+    let r = await run()
+    assert.equal(r.code, 0, r.out)
+    assert.match(r.out, new RegExp(`v${v0}, not paused`))
+
+    // Dry run: simulated against the chain, nothing signed or sent.
+    r = await run('--pause', ...auth)
+    assert.equal(r.code, 0, r.out)
+    assert.match(r.out, /dry run/)
+    assert.match(r.out, /simulation\s+ok/)
+    assert.equal((await q.fetchConfig(connection)).version, v0)
+    // For a key that is not the authority it prints the instruction and the simulated error.
+    r = await run('--pause', '--authority-pubkey', traders[0].publicKey.toBase58())
+    assert.equal(r.code, 1, r.out)
+    assert.match(r.out, /NotAuthority/)
+    assert.match(r.out, /"data": "/)
+
+    // Pause, then an update pinned to the version before the pause is refused before sending.
+    r = await run('--pause', ...auth, '--yes')
+    assert.equal(r.code, 0, r.out)
+    let config = await q.fetchConfig(connection)
+    assert.equal(config.paused, true)
+    assert.equal(config.version, v0 + 1)
+    r = await run('--keeper-grace', '9', '--expected-version', String(v0), ...auth, '--yes')
+    assert.equal(r.code, 1, r.out)
+    assert.match(r.out, /ConfigChanged/)
+    assert.match(r.out, /Not sent/)
+    r = await run('--unpause', ...auth, '--yes')
+    assert.equal(r.code, 0, r.out)
+    config = await q.fetchConfig(connection)
+    assert.equal(config.paused, false)
+    assert.equal(config.keeperGrace, CONFIG.keeperGrace)
+    assert.equal(config.version, v0 + 2)
+
+    // A versioned update; repeating it is "nothing to change".
+    r = await run('--claim-delay', '3600', ...auth, '--yes')
+    assert.equal(r.code, 0, r.out)
+    config = await q.fetchConfig(connection)
+    assert.equal(config.claimDelay, 3600)
+    assert.equal(config.version, v0 + 3)
+    r = await run('--claim-delay', '3600', ...auth)
+    assert.equal(r.code, 1, r.out)
+    assert.match(r.out, /Nothing to change/)
+
+    // Cancel a posted epoch inside its window.
+    const q0 = await q.fetchQuantum(connection, mint)
+    assert.ok(q0.entangleReserve > 0n, 'pulses refilled the Entanglement reserve')
+    await waitForChainTime(q0.lastEpochAt + TEST_EPOCH_INTERVAL)
+    const post = async (index: number, total: bigint) => {
+      const tree = buildEntanglementTree([{ wallet: keeper.publicKey.toBase58(), amount: total }])
+      await send(
+        [
+          await q.buildPostEpochInstruction({
+            connection,
+            keeper: keeper.publicKey,
+            mint,
+            index,
+            root: tree.root,
+            total,
+            leafCount: 1,
+          }),
+        ],
+        [keeper],
+      )
+      return q.fetchEpoch(connection, mint, index)
+    }
+    const index = q0.epochCount
+    await post(index, q0.entangleReserve)
+    r = await run('--epochs', mint.toBase58())
+    assert.equal(r.code, 0, r.out)
+    assert.match(r.out, new RegExp(`#${index} .*CANCELLABLE`))
+    const cancel = ['--cancel-epoch', mint.toBase58(), String(index), ...auth]
+    r = await run(...cancel)
+    assert.equal(r.code, 0, r.out)
+    assert.match(r.out, /simulation\s+ok/)
+    assert.ok(await q.fetchEpoch(connection, mint, index), 'a dry run cancels nothing')
+    r = await run(...cancel, '--yes')
+    assert.equal(r.code, 0, r.out)
+    assert.equal(await q.fetchEpoch(connection, mint, index), null)
+    const q1 = await q.fetchQuantum(connection, mint)
+    assert.equal(q1.entangleReserve, q0.entangleReserve)
+    assert.equal(q1.entangleOwed, q0.entangleOwed)
+    r = await run(...cancel)
+    assert.equal(r.code, 1, r.out)
+    assert.match(r.out, /no longer exists/)
+
+    // Once claims are open the CLI refuses (and the program would fail with CancelWindowClosed).
+    r = await run('--claim-delay', String(CONFIG.claimDelay), ...auth, '--yes')
+    assert.equal(r.code, 0, r.out)
+    await waitForChainTime(q1.lastEpochAt + TEST_EPOCH_INTERVAL)
+    const open = await post(index + 1, 1n)
+    await waitForChainTime(open.claimStart)
+    r = await run('--cancel-epoch', mint.toBase58(), String(index + 1), ...auth, '--yes')
+    assert.equal(r.code, 1, r.out)
+    assert.match(r.out, /claims are already open/)
+    assert.match(r.out, /CancelWindowClosed/)
+    assert.ok(await q.fetchEpoch(connection, mint, index + 1), 'not cancelled')
   })
 })

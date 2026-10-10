@@ -1,4 +1,5 @@
 import { resolve } from 'node:path'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 import { lookup as dnsLookup } from 'node:dns/promises'
 import { request as httpsRequest } from 'node:https'
@@ -6,7 +7,7 @@ import { BlockList, isIP } from 'node:net'
 import { pipeline } from 'node:stream'
 import { createBrotliDecompress, createGunzip, createInflate } from 'node:zlib'
 import { createConnection } from './solana.mjs'
-import { createIndexer, issuedUriKey, summarize } from './indexer.mjs'
+import { createIndexer, issuedUriClaimKey, issuedUriKey, summarize } from './indexer.mjs'
 import {
   createKeeper,
   loadQuantumClient,
@@ -14,7 +15,7 @@ import {
   quantumClientError,
 } from './keeper.mjs'
 import { createPriceFeed } from './prices.mjs'
-import { createRpcProxy, writeRpcResponse } from './rpc-proxy.mjs'
+import { createRpcProxy, globalRpcLimit, writeRpcResponse } from './rpc-proxy.mjs'
 import { configuredStore, createFileStore } from './storage.mjs'
 import * as requestLimits from './request-limits.mjs'
 import {
@@ -26,14 +27,24 @@ import {
   MAX_PLATFORM_FEE_BPS,
 } from '../shared/network.mjs'
 
-const json = (res, status, data, cache = 'no-store') => {
+const json = (res, status, data, cache = 'no-store', headers = {}) => {
   res.writeHead(status, {
     'Content-Type': 'application/json',
     'Cache-Control': cache,
     'X-Content-Type-Options': 'nosniff',
+    ...headers,
   })
   res.end(JSON.stringify(data, (_, v) => (typeof v === 'bigint' ? v.toString() : v)))
 }
+
+// Public market data is the same for every visitor. Shared caches (Vercel's CDN) may serve a
+// successful answer for a few seconds, so a burst of identical requests never reaches the function;
+// browsers always revalidate. Errors stay `no-store`, so a "not tracked yet" is never replayed
+// after the coin is tracked.
+export const PUBLIC_READ_CACHE = 'public, max-age=0, s-maxage=5, stale-while-revalidate=10'
+// Media names are content hashes, so a blob never changes. Without s-maxage Vercel's CDN does not
+// cache function responses, and every view would read the store again.
+export const MEDIA_CACHE = 'public, max-age=31536000, s-maxage=31536000, immutable'
 
 const { clientKey, createLimiter, createWriteGuard } = requestLimits
 
@@ -42,10 +53,51 @@ const { clientKey, createLimiter, createWriteGuard } = requestLimits
 const clientError = (message, status = 400, code) =>
   Object.assign(Error(message), { status, ...(code ? { code } : {}) })
 const sha256 = (data) => createHash('sha256').update(data).digest('hex')
+const digest = (value) => createHash('sha256').update(String(value)).digest()
+
+// Secret comparison in constant time whatever the input: both sides are hashed to 32 bytes first,
+// so neither the secret's length nor a multi-byte character in the supplied value matters.
+export function secretMatches(supplied, secret) {
+  return !!secret && timingSafeEqual(digest(supplied ?? ''), digest(secret))
+}
+
+// Routes and the methods they answer, so a known path called with another method gets a 405 with
+// Allow instead of a 404 (or a write check). Mint routes validate the mint themselves.
+const POST_ROUTES = new Set([
+  '/api/rpc',
+  '/api/launches',
+  '/api/coins/track',
+  '/api/media',
+  '/api/metadata',
+  '/api/sync',
+])
+const GET_ROUTES = new Set(['/api/status', '/api/market', '/api/coins', '/api/stats'])
+const COIN_ROUTE = /^\/api\/coins\/([^/]+)(?:\/(trades|candles))?$/
+const QUANTUM_ROUTE = /^\/api\/quantum\/([^/]+)(?:\/(claims))?$/
+function allowedMethods(path) {
+  if (POST_ROUTES.has(path)) return ['POST']
+  if (path === '/api/keeper/tick') return ['GET', 'POST']
+  if (GET_ROUTES.has(path) || COIN_ROUTE.test(path) || QUANTUM_ROUTE.test(path)) return ['GET']
+  return null
+}
+
+// /api/market only accepts these; anything else (including inherited names such as __proto__)
+// falls back to the default instead of reaching the indexer.
+const MARKET_SORTS = { newest: true, trending: true, volume: true, mcap: true, progress: true }
+const MARKET_FILTERS = { all: true, quantum: true, graduated: true, tracked: true }
+const oneOf = (allowed, value, fallback) =>
+  typeof value === 'string' && Object.hasOwn(allowed, value) ? value : fallback
+// Integer query parameter clamped to [0, max]; anything unreadable is 0.
+const clampedInt = (value, max) => Math.max(0, Math.min(max, Math.floor(Number(value) || 0)))
+const MAX_MARKET_OFFSET = 10_000
+// The indexer keeps at most 4000 trades per coin; a later page is always empty.
+const MAX_TRADE_OFFSET = 4_000
+// Trades per /trades page (the response size is fixed whatever the request asks).
+const TRADE_PAGE = 50
 
 // Internal bookkeeping that never leaves the server: signature cursors, backlog anchors (`gaps`
-// holds signatures too) and the indexer's sync state.
-const INTERNAL_COIN_FIELDS = [
+// holds signatures too), the indexer's sync state and its onNativeLaunch notice state (K5).
+export const INTERNAL_COIN_FIELDS = [
   'cursor',
   'poolCursor',
   'gaps',
@@ -53,6 +105,8 @@ const INTERNAL_COIN_FIELDS = [
   'historyFrom',
   'supplyAt',
   'day',
+  'nativeNotice',
+  'nativeNoticeAt',
 ]
 function publicCoin(record) {
   if (!record) return record
@@ -135,6 +189,42 @@ const normalizeHost = (hostname) =>
     .replace(/^\[|\]$/g, '')
     .toLowerCase()
     .replace(/\.+$/, '')
+
+// Development hosts whose Host header the standalone server may use for links it issues: they
+// resolve to the visitor's own machine, so nobody else can serve content under them.
+const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '::1'])
+export const isLoopbackHost = (hostname) => LOOPBACK_HOSTS.has(normalizeHost(hostname))
+
+// A Host header value (host[:port]) as an origin with `protocol`, or null when it is anything else
+// (userinfo, a path, whitespace...).
+export function hostOrigin(host, protocol) {
+  if (typeof host !== 'string' || !host || /[\s/\\?#@]/.test(host)) return null
+  try {
+    return new URL(`${protocol}//${host}`).origin
+  } catch {
+    return null
+  }
+}
+
+// QUANTPAD_PUBLIC_URL without a trailing slash, or null when unset or not a plain http(s) address.
+export function configuredPublicUrl(value) {
+  const raw = String(value || '')
+    .trim()
+    .replace(/\/+$/, '')
+  if (!raw) return null
+  try {
+    const url = new URL(raw)
+    return ['http:', 'https:'].includes(url.protocol) &&
+      !url.username &&
+      !url.password &&
+      !url.search &&
+      !url.hash
+      ? raw
+      : null
+  } catch {
+    return null
+  }
+}
 
 // Literal check only: names are vetted again after DNS resolution by resolvePublicAddress.
 export function isPublicHost(hostname) {
@@ -342,14 +432,33 @@ export async function createApplication(options = {}) {
   // metadata), so a visitor gets a dozen launches' worth a day.
   const pinClientLimit =
     options.pinClientLimit || Number(process.env.QUANTPAD_PIN_CLIENT_DAILY || 24)
-  // Uploads stay pending until metadata references them, so abandoned uploads expire and give
-  // their space back (on stores that support it; others keep every upload).
+  // Pins are files on the operator's Pinata plan and are made before any coin exists on-chain, so
+  // the whole deployment also has a daily pin budget: abuse pauses pinning for the day instead of
+  // using up the plan.
+  const pinDailyLimit = options.pinDailyLimit || Number(process.env.QUANTPAD_PIN_DAILY || 400)
+  // Uploads, and the metadata documents that reference them, stay pending until a launch with that
+  // metadata registers (K5), so media bytes are only kept for good once someone paid for an
+  // on-chain create; everything else expires and gives its space back (on stores that support it;
+  // others keep every upload). Keeping a pending artwork for another period through /api/metadata
+  // costs its full size again, so keeping bytes stored never costs less than uploading them.
   const pendingMediaMs = options.pendingMediaMs || 24 * 3600_000
+  // Public reads (market, lists, trades, candles) share one store read per key for this long.
+  const READ_CACHE_MS = options.readCacheMs ?? 2_000
+  // Deployment-wide RPC budget (QUANTPAD_RPC_GLOBAL_PER_MIN, calls per minute; 0 means none). The
+  // proxy charges it per call; tracking a new coin and a coin sync are charged here, by estimate.
+  const RPC_GLOBAL_LIMIT = options.rpcGlobalLimit ?? globalRpcLimit()
+  // About what tracking a new coin (market, identity, Quantum check and its first history page)
+  // or one coin sync costs in RPC calls.
+  const COIN_RPC_COST = 45
+  // POST /api/coins/track requests per visitor and minute.
+  const TRACK_LIMIT = options.trackLimit || 10
+  // Every serverless request schedules a background pass; one instance starts at most one per gap.
+  const BACKGROUND_GAP_MS = options.backgroundGapMs ?? (serverless ? 5_000 : 0)
   const vercel = serverless && process.env.VERCEL === '1'
   const trustProxy = requestLimits.trustedProxyHops?.() ?? 0
   const limiter = createLimiter({ store: redis, vercel })
   const writeAllowed = createWriteGuard({ store: redis, vercel })
-  const rpcProxy = createRpcProxy({ rpcUrl, limiter })
+  const rpcProxy = createRpcProxy({ rpcUrl, limiter, globalLimit: RPC_GLOBAL_LIMIT })
   // Serverless functions are stopped at 60 s (vercel.json maxDuration), counting the request
   // that started the work, so an index pass (15 s unless QUANTPAD_SYNC_MS says otherwise) and
   // the keeper share one budget below that.
@@ -394,6 +503,8 @@ export async function createApplication(options = {}) {
       paused: !!config?.paused,
       protocolBps: config?.protocolBps ?? null,
       keeper: config?.keeper ?? null,
+      // Seconds between an entanglement epoch being posted and its claims opening (K1).
+      claimDelay: config?.claimDelay == null ? null : Number(config.claimDelay),
       reason: !deployed
         ? 'not-deployed'
         : !config
@@ -404,8 +515,16 @@ export async function createApplication(options = {}) {
     }
   }
   // The indexer verifies Quantum coins (C3) with the same client as the rest of the app; null (no
-  // client loaded) leaves the flag unknown rather than loading a second copy.
-  const indexer = createIndexer({ connection, store, quantum })
+  // client loaded) leaves the flag unknown rather than loading a second copy. A launch it registers
+  // as native makes that launch's metadata and artwork permanent (K5); keepLaunchMedia is hoisted.
+  const indexer = createIndexer({
+    connection,
+    store,
+    quantum,
+    onNativeLaunch: (launch) => keepLaunchMedia(launch),
+    // The same moderation list as the routes (QUANTPAD_HIDDEN_MINTS or options.hiddenMints).
+    hidden,
+  })
   let keeperKey = null
   try {
     keeperKey = options.keeperKey || parseKeeperSecret(process.env.QUANTPAD_KEEPER_SECRET)
@@ -458,31 +577,47 @@ export async function createApplication(options = {}) {
     const known = await store.get(key)
     if (typeof known === 'string') return known
     await chargeDaily(req, 'pins', 1, pinClientLimit)
+    if ((await countDaily(`media:pins:all:${today()}`, 1)) > pinDailyLimit)
+      throw clientError(
+        "Quant Pad has reached today's limit for new token metadata. Try again tomorrow.",
+        429,
+        'PIN_QUOTA',
+      )
     const url = await pin(bytes, name, type)
     await store.set(key, url)
     return url
   }
 
   const DAY_MS = 86_400_000
+  const today = () => Math.floor(Date.now() / DAY_MS)
   // Every media write is charged at least this much, so tiny distinct files cannot be created
   // without bound.
   const MEDIA_MIN_CHARGE = 128 * 1024
   const dailyUsage = new Map()
-  async function chargeDaily(req, kind, amount, limit) {
-    const day = Math.floor(Date.now() / DAY_MS)
-    // clientKey counts an IPv6 visitor by its /64, which one host can rotate through freely.
-    const key = `media:${kind}:${clientKey(req, vercel, trustProxy)}:${day}`
-    let used
+  // Adds `amount` to a counter that lives for the day and returns its new value.
+  async function countDaily(key, amount) {
     if (redis && redis.mode !== 'filesystem') {
       // INCR sets the expiry on first use; INCRBY keeps it.
-      used = await redis.incrementExpiring(key, 2 * DAY_MS)
-      if (amount > 1) used = await redis.increment(key, amount - 1)
-    } else {
-      for (const [k, v] of dailyUsage) if (v.day !== day) dailyUsage.delete(k)
-      used = (dailyUsage.get(key)?.used || 0) + amount
-      dailyUsage.set(key, { day, used })
+      const used = await redis.incrementExpiring(key, 2 * DAY_MS)
+      return amount > 1 ? redis.increment(key, amount - 1) : used
     }
-    if (used > limit)
+    const day = today()
+    for (const [k, v] of dailyUsage) if (v.day !== day) dailyUsage.delete(k)
+    const used = (dailyUsage.get(key)?.used || 0) + amount
+    dailyUsage.set(key, { day, used })
+    return used
+  }
+  async function chargeDaily(req, kind, amount, limit) {
+    const day = today()
+    // clientKey counts an IPv6 visitor by its /64, which one host can rotate through freely, so an
+    // IPv6 visitor is also charged to its /48, which gets PREFIX_FACTOR visitors' worth together.
+    const prefix = requestLimits.clientPrefixKey?.(req, vercel, trustProxy)
+    const factor = requestLimits.PREFIX_FACTOR ?? 8
+    const [used, prefixUsed] = await Promise.all([
+      countDaily(`media:${kind}:${clientKey(req, vercel, trustProxy)}:${day}`, amount),
+      prefix ? countDaily(`media:${kind}:p48:${prefix}:${day}`, amount) : 0,
+    ])
+    if (used > limit || prefixUsed > limit * factor)
       throw clientError(
         'Daily upload limit reached for this connection. Try again tomorrow.',
         429,
@@ -492,31 +627,79 @@ export async function createApplication(options = {}) {
   const chargeMediaQuota = (req, size) =>
     chargeDaily(req, 'client', Math.max(size, MEDIA_MIN_CHARGE), mediaClientLimit)
 
-  // Keeps uploaded artwork that metadata references. Returns its bytes, or null when the upload
-  // is gone (never stored, or a pending upload that expired).
-  async function keepArtwork(name) {
-    let bytes
+  // An uploaded artwork's bytes, or null when the upload is gone (never stored, or a pending upload
+  // that expired).
+  async function readArtwork(name) {
     try {
-      bytes = await store.getMedia(name)
+      return await store.getMedia(name)
     } catch (error) {
       if (error?.code !== 'ENOENT') throw error
       return null
     }
-    if (typeof store.promoteMedia === 'function') {
-      // false: the pending upload expired between the read and the promotion.
-      if ((await store.promoteMedia(name, mediaLimit)) === false) return null
+  }
+
+  // K5: a launch registered with a metadata document this deployment issued makes the document
+  // and the artwork it references permanent. Until then both are pending and expire like abandoned
+  // uploads, so permanent media bytes always belong to a coin someone paid to create on-chain.
+  // Idempotent. The document was written here, so a /media/<name> in it is this deployment's.
+  async function keepIssuedMedia(id, document) {
+    if (typeof store.promoteMedia !== 'function') return
+    const artwork = typeof document?.image === 'string' && document.image.match(OWN_MEDIA)
+    if (artwork) await store.promoteMedia(artwork[1], mediaLimit)
+    await store.promoteMedia(`meta-${id}.json`, mediaLimit)
+  }
+  // The indexer's onNativeLaunch callback. Throws only when storage fails, so the indexer retries
+  // the notice later; a uri that is not this deployment's, or a document that already expired,
+  // leaves nothing to keep.
+  async function keepLaunchMedia({ uri } = {}) {
+    const id = ownMetaId(uri)
+    if (!id) return
+    let document
+    try {
+      document = JSON.parse((await store.getMedia(`meta-${id}.json`)).toString('utf8').trimStart())
+    } catch (e) {
+      if (e?.code === 'ENOENT' || e instanceof SyntaxError) return
+      throw e
     }
-    return bytes
+    await keepIssuedMedia(id, document)
   }
-  function baseUrl(req) {
-    return (
-      process.env.QUANTPAD_PUBLIC_URL ||
-      (serverless
-        ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL || req.headers.host}`
-        : '') ||
-      `${req.socket?.encrypted ? 'https' : 'http'}://${req.headers.host}`
-    ).replace(/\/$/, '')
+
+  // Where links this deployment issues (metadata URIs, artwork) point. Never built from the Host
+  // header of a standalone server, which any client chooses: QUANTPAD_PUBLIC_URL, or on Vercel the
+  // project's production domain (Vercel only routes its own domains to the function). A
+  // standalone server without QUANTPAD_PUBLIC_URL issues links only while it is reached on a
+  // loopback host (development); otherwise this is null.
+  const publicUrlSetting = () =>
+    configuredPublicUrl(options.publicUrl ?? process.env.QUANTPAD_PUBLIC_URL)
+  const requestProtocol = (req) =>
+    (requestLimits.requestIsHttps?.(req, trustProxy) ?? !!req.socket?.encrypted)
+      ? 'https:'
+      : 'http:'
+  function publicBase(req) {
+    const configured = publicUrlSetting()
+    if (configured) return configured
+    if (serverless)
+      return hostOrigin(process.env.VERCEL_PROJECT_PRODUCTION_URL || req.headers.host, 'https:')
+    const origin = hostOrigin(req.headers.host, requestProtocol(req))
+    return origin && isLoopbackHost(new URL(origin).hostname) ? origin : null
   }
+  // Whether a URL is on an origin this deployment issues links under (see publicBase).
+  function isOwnOrigin(url) {
+    const configured = publicUrlSetting()
+    if (configured) return url.origin === new URL(configured).origin
+    if (serverless) {
+      const production = process.env.VERCEL_PROJECT_PRODUCTION_URL
+      return !!production && url.origin === hostOrigin(production, 'https:')
+    }
+    return isLoopbackHost(url.hostname)
+  }
+  const publicUrlUnset = () =>
+    Object.assign(
+      Error(
+        "Launches are not set up on this server: set QUANTPAD_PUBLIC_URL to the site's public https address (or PINATA_JWT to pin metadata to IPFS).",
+      ),
+      { status: 503, code: 'PUBLIC_URL_UNSET', expose: true },
+    )
   async function readJsonBody(req, max) {
     if (req.body !== undefined) {
       const text =
@@ -558,27 +741,30 @@ export async function createApplication(options = {}) {
   const resolveMetadataHost = options.resolveMetadataHost || resolvePublicAddress
   const OWN_META = /^\/m\/([a-f0-9]{32})$/
   const OWN_MEDIA = /^https?:\/\/[^/?#]+\/media\/([a-f0-9]{64}\.(?:png|jpg|webp|gif))$/
-  const isOwnMetaUri = (uri) => {
+  // The id of a metadata document this deployment issued: /m/<id> on its own origin. The same path
+  // on any other host is someone else's document, whatever this deployment has stored under it.
+  function ownMetaId(uri) {
+    let url
     try {
-      return OWN_META.test(new URL(uri).pathname)
+      url = new URL(String(uri))
     } catch {
-      return false
+      return null
     }
+    const own = url.pathname.match(OWN_META)
+    return own && isOwnOrigin(url) ? own[1] : null
   }
+  const isOwnMetaUri = (uri) => !!ownMetaId(uri)
   async function readMetadataDocument(uri) {
-    let own = null
-    try {
-      own = new URL(uri).pathname.match(OWN_META)
-    } catch {}
-    if (own) {
+    const id = ownMetaId(uri)
+    if (id) {
       try {
-        return { text: (await store.getMedia(`meta-${own[1]}.json`)).toString('utf8'), own: true }
+        return { text: (await store.getMedia(`meta-${id}.json`)).toString('utf8'), own: id }
       } catch (e) {
         if (e?.code !== 'ENOENT') throw metadataFailure('Storage is unavailable.', true)
         // Not in this deployment's storage: fetch it like any other public URI.
       }
     }
-    return { text: await fetchMetadataText(uri, { resolveHost: resolveMetadataHost }), own: false }
+    return { text: await fetchMetadataText(uri, { resolveHost: resolveMetadataHost }), own: null }
   }
   // Returns { ok: true, meta } or { ok: false, transient }.
   async function resolveMetadata(uri) {
@@ -595,6 +781,15 @@ export async function createApplication(options = {}) {
     } catch {}
     if (!data || typeof data !== 'object' || Array.isArray(data))
       return { ok: false, transient: false }
+    // A coin exists on-chain with this deployment's metadata (records only come from the chain),
+    // so its media are kept even when the launch never registered here (a closed tab after the
+    // create): the coin would otherwise lose its metadata once the pending copies expire.
+    // Best effort: the coin's metadata is shown either way, and for a native launch the indexer's
+    // onNativeLaunch notice (retried until it succeeds) keeps the media too.
+    if (document.own)
+      await keepIssuedMedia(document.own, data).catch((e) =>
+        console.error('[media]', `meta-${document.own}.json`, e?.message || e),
+      )
     const pick = (v) => (typeof v === 'string' && v.length <= 2048 ? v : '')
     // Links render as anchors (http or https); remote images must be https for the page's CSP.
     const web = (v) => (/^https?:\/\/\S+$/i.test(pick(v)) ? pick(v) : '')
@@ -690,6 +885,29 @@ export async function createApplication(options = {}) {
     return state?.meta ? { ...record, meta: state.meta, image: state.image } : record
   }
 
+  // ---- deployment-wide RPC budget -----------------------------------------------------------
+  // Charges `cost` calls to the budget all visitors share (QUANTPAD_RPC_GLOBAL_PER_MIN, the same
+  // bucket as the RPC proxy) when one is set; past it, throws the limiter's 429.
+  async function chargeRpcBudget(req, cost) {
+    if (RPC_GLOBAL_LIMIT > 0)
+      await limiter(req ?? { headers: {}, socket: {} }, {
+        bucket: 'rpc-all',
+        limit: RPC_GLOBAL_LIMIT,
+        cost,
+        shared: true,
+      })
+  }
+  // The same for work that can wait: false instead of a 429 once the budget is spent.
+  async function withinRpcBudget(req, cost) {
+    try {
+      await chargeRpcBudget(req, cost)
+      return true
+    } catch (e) {
+      if (e?.status === 429) return false
+      throw e
+    }
+  }
+
   // ---- manual sync -------------------------------------------------------------------------
   // A coin sync costs up to ~90 RPC calls, so each mint syncs at most once per cooldown however
   // many requests ask; a request inside the cooldown gets the stored record and one trailing
@@ -706,7 +924,7 @@ export async function createApplication(options = {}) {
     timer.unref?.()
     trailingSyncs.set(mint, timer)
   }
-  async function syncMintOnce(mint, trailing) {
+  async function syncMintOnce(mint, trailing, req) {
     const record = await indexer.coin(mint)
     if (!record) return null
     const fresh = !trailing && record.syncedAt && Date.now() - record.syncedAt < SYNC_COOLDOWN_MS
@@ -715,12 +933,18 @@ export async function createApplication(options = {}) {
       if (!trailing) queueTrailingSync(mint)
       return record
     }
+    // The sync's RPC calls count against the deployment-wide budget. Past it, the stored record
+    // is answered and a later sync (or the background pass) picks the coin up.
+    if (!(await withinRpcBudget(req, COIN_RPC_COST))) {
+      if (!trailing) queueTrailingSync(mint)
+      return record
+    }
     return indexer.syncCoin(mint, serverless ? { deadline: Date.now() + INDEX_MS.timeMs } : {})
   }
-  function syncMint(mint, { trailing = false } = {}) {
+  function syncMint(mint, { trailing = false, req = null } = {}) {
     let run = coinSyncs.get(mint)
     if (!run) {
-      run = syncMintOnce(mint, trailing).finally(() => coinSyncs.delete(mint))
+      run = syncMintOnce(mint, trailing, req).finally(() => coinSyncs.delete(mint))
       coinSyncs.set(mint, run)
     }
     return run
@@ -784,6 +1008,104 @@ export async function createApplication(options = {}) {
     return run
   }
 
+  // ---- public reads ------------------------------------------------------------------------
+  // The market, list, stats, trades and candles routes read large stored values (coins:list holds
+  // every summary; a coin's trades are up to 4000, about 2 MB as JSON). They run on `reads`, a
+  // read-only indexer over a view of the store that shares each stored value: one store read per
+  // key and instance, kept for READ_CACHE_MS after it settles, whatever the request asks of it
+  // (any offset, side, sort, filter or search). Shared values are never changed: the indexer's
+  // read paths filter, sort and slice copies. A key read again within one request is being
+  // re-checked (the indexer reads a coin's trade index again when a chunk it listed was replaced
+  // meanwhile), so that read goes to the store and refreshes the shared value.
+  // A request that has to go to the store is first charged to its visitor's store-read bucket
+  // (STORE_READ_LIMIT a minute, once per request), so cycling through coins or waiting out the
+  // cache costs a unit per request; a request served entirely from shared reads costs nothing
+  // more. The store is read only once the charge passed, so a visitor over the limit causes no
+  // store read, and their refusal is theirs alone: requests that joined their read start (and
+  // pay for) it themselves. At most READ_CACHE_MAX values are held, each for a few seconds.
+  const READ_CACHE_MAX = options.readCacheMax || 32
+  const STORE_READ_LIMIT = options.storeReadLimit || 60
+  const sharedValues = new Map()
+  let sharedSweptAt = 0
+  const readContext = new AsyncLocalStorage()
+  function freshValue(key) {
+    const hit = sharedValues.get(key)
+    return hit && hit.expires > Date.now() ? hit : null
+  }
+  function startValue(key, charge) {
+    const now = Date.now()
+    if (now - sharedSweptAt >= READ_CACHE_MS || sharedValues.size >= READ_CACHE_MAX) {
+      sharedSweptAt = now
+      for (const [k, v] of sharedValues) if (v.expires <= now) sharedValues.delete(k)
+      while (sharedValues.size >= READ_CACHE_MAX)
+        sharedValues.delete(sharedValues.keys().next().value)
+    }
+    const entry = { expires: Infinity, refused: false, value: null }
+    entry.value = Promise.resolve()
+      .then(() => charge?.())
+      .then(
+        () => store.get(key),
+        (error) => {
+          entry.refused = true
+          throw error
+        },
+      )
+      .then(
+        (value) => {
+          entry.expires = Date.now() + READ_CACHE_MS
+          return value
+        },
+        (error) => {
+          if (sharedValues.get(key) === entry) sharedValues.delete(key)
+          throw error
+        },
+      )
+    sharedValues.set(key, entry)
+    return entry
+  }
+  async function sharedGet(key) {
+    const request = readContext.getStore()
+    // The request's one charge, shared by all its store reads (some run in parallel).
+    const pay = () => request && (request.paid ??= Promise.resolve().then(request.charge))
+    if (!(READ_CACHE_MS > 0)) {
+      await pay()
+      return store.get(key)
+    }
+    const again = !!request?.seen.has(key)
+    request?.seen.add(key)
+    const shared = !again && freshValue(key)
+    if (!shared) return startValue(key, pay).value
+    try {
+      return await shared.value
+    } catch (error) {
+      if (!shared.refused) throw error
+      // The visitor who started that read was over their limit: read it for this request.
+      request?.seen.delete(key)
+      return sharedGet(key)
+    }
+  }
+  const reads = createIndexer({
+    connection,
+    store: Object.create(store, { get: { value: sharedGet } }),
+    quantum: null,
+    hidden,
+  })
+  // Runs `read` (calls on `reads`) for one request, charging its visitor if it reads the store.
+  const publicRead = (req, read) =>
+    readContext.run(
+      {
+        charge: () => limiter(req, { bucket: 'read-store', limit: STORE_READ_LIMIT }),
+        paid: null,
+        seen: new Set(),
+      },
+      read,
+    )
+  // Every public read also counts against one generous per-visitor bucket: the app polls a
+  // handful of these every 8 to 30 seconds, so only a script reaches it.
+  const READ_LIMIT = options.readLimit || 300
+  const limitRead = (req) => limiter(req, { bucket: 'read', limit: READ_LIMIT })
+  const invalidMint = () => clientError('Enter a valid Solana mint address.', 400, 'invalid_mint')
+
   async function status() {
     const [price, q] = await Promise.all([solUsd(), quantumStatus()])
     return {
@@ -824,13 +1146,20 @@ export async function createApplication(options = {}) {
         const bytes = await store.getMedia(name)
         res.writeHead(200, {
           'Content-Type': MEDIA_MIME[name.split('.').at(-1)],
-          'Cache-Control': 'public,max-age=31536000,immutable',
+          'Cache-Control': MEDIA_CACHE,
           'X-Content-Type-Options': 'nosniff',
           'Content-Security-Policy': "default-src 'none'",
           'Access-Control-Allow-Origin': '*',
         })
         return res.end(bytes)
       }
+
+      const allowed = allowedMethods(path)
+      if (!allowed) return json(res, 404, { error: 'Endpoint not found.' })
+      if (!allowed.includes(req.method))
+        return json(res, 405, { error: 'Method not allowed.' }, 'no-store', {
+          Allow: allowed.join(', '),
+        })
 
       if (req.method === 'GET' && path === '/api/status') return json(res, 200, await status())
 
@@ -840,46 +1169,51 @@ export async function createApplication(options = {}) {
         return writeRpcResponse(res, await rpcProxy(req, await readJsonBody(req, 1_500_000)))
 
       if (req.method === 'GET' && path === '/api/market') {
-        const offset = Math.max(0, Math.min(100000, Number(url.searchParams.get('offset')) || 0))
-        const result = await indexer.market({
-          hidden,
-          q: (url.searchParams.get('q') || '').slice(0, 100),
-          sort: url.searchParams.get('sort') || 'newest',
-          filter: url.searchParams.get('filter') || 'all',
-          launcher: isAddress(url.searchParams.get('launcher'))
-            ? url.searchParams.get('launcher')
-            : '',
-          offset,
-        })
-        return json(res, 200, result)
+        await limitRead(req)
+        const launcher = url.searchParams.get('launcher')
+        const query = {
+          q: (url.searchParams.get('q') || '').slice(0, 100).toLowerCase().trim(),
+          sort: oneOf(MARKET_SORTS, url.searchParams.get('sort'), 'newest'),
+          filter: oneOf(MARKET_FILTERS, url.searchParams.get('filter'), 'all'),
+          launcher: isAddress(launcher) ? launcher : '',
+          offset: clampedInt(url.searchParams.get('offset'), MAX_MARKET_OFFSET),
+        }
+        const result = await publicRead(req, () => reads.market({ hidden, ...query }))
+        return json(res, 200, result, PUBLIC_READ_CACHE)
       }
 
       if (req.method === 'GET' && path === '/api/coins') {
+        await limitRead(req)
         const wanted = new Set(
           (url.searchParams.get('mints') || '').split(',').filter(isAddress).slice(0, 100),
         )
-        const items = (await indexer.list()).filter(
+        const items = (await publicRead(req, () => reads.list())).filter(
           (c) => wanted.has(c.mint) && !hidden.has(c.mint),
         )
-        return json(res, 200, { items })
+        return json(res, 200, { items }, PUBLIC_READ_CACHE)
       }
 
       if (req.method === 'GET' && path === '/api/stats') {
-        const coins = (await indexer.list()).filter((c) => !c.external && !hidden.has(c.mint))
-        return json(res, 200, {
+        await limitRead(req)
+        const coins = (await publicRead(req, () => reads.list())).filter(
+          (c) => !c.external && !hidden.has(c.mint),
+        )
+        const stats = {
           coins: coins.length,
           quantum: coins.filter((c) => c.quantum).length,
           graduated: coins.filter((c) => c.complete).length,
           volume24h: coins.reduce((s, c) => s + (c.volume24h || 0), 0),
           trades24h: coins.reduce((s, c) => s + (c.trades24h || 0), 0),
-        })
+        }
+        return json(res, 200, stats, PUBLIC_READ_CACHE)
       }
 
-      const coinMatch = path.match(
-        /^\/api\/coins\/([1-9A-HJ-NP-Za-km-z]{32,44})(?:\/(trades|candles))?$/,
-      )
-      if (req.method === 'GET' && coinMatch) {
+      // POST /api/coins/track is a POST route; every other /api/coins/<x> is a coin read.
+      const coinMatch = req.method === 'GET' && path.match(COIN_ROUTE)
+      if (coinMatch) {
+        await limitRead(req)
         const [, mint, part] = coinMatch
+        if (!isAddress(mint)) throw invalidMint()
         if (hidden.has(mint))
           return json(res, 404, {
             error: 'This coin is not available on Quant Pad.',
@@ -891,29 +1225,25 @@ export async function createApplication(options = {}) {
         if (part === 'candles') {
           const n = Number(url.searchParams.get('interval'))
           const interval = [15, 60, 300, 900, 3600, 14400, 86400].includes(n) ? n : 300
-          return json(res, 200, { items: await indexer.candles(mint, interval), interval })
+          const items = await publicRead(req, () => reads.candles(mint, interval))
+          return json(res, 200, { items, interval }, PUBLIC_READ_CACHE)
         }
         if (part === 'trades') {
-          const side = ['buy', 'sell'].includes(url.searchParams.get('side'))
-            ? url.searchParams.get('side')
-            : null
-          return json(
-            res,
-            200,
-            await indexer.trades(mint, {
-              side,
-              offset: Math.max(0, Number(url.searchParams.get('offset')) || 0),
-            }),
+          const side = oneOf({ buy: true, sell: true }, url.searchParams.get('side'), null)
+          const offset = clampedInt(url.searchParams.get('offset'), MAX_TRADE_OFFSET)
+          // Pages are TRADE_PAGE trades: every page (and side) of a coin shares one stored read.
+          const page = await publicRead(req, () =>
+            reads.trades(mint, { side, offset, limit: TRADE_PAGE }),
           )
+          return json(res, 200, page, PUBLIC_READ_CACHE)
         }
-        return json(res, 200, { coin: publicCoin(await withMetadata(record)) })
+        return json(res, 200, { coin: publicCoin(await withMetadata(record)) }, PUBLIC_READ_CACHE)
       }
 
-      const quantumMatch = path.match(
-        /^\/api\/quantum\/([1-9A-HJ-NP-Za-km-z]{32,44})(?:\/(claims))?$/,
-      )
-      if (req.method === 'GET' && quantumMatch) {
+      const quantumMatch = req.method === 'GET' && path.match(QUANTUM_ROUTE)
+      if (quantumMatch) {
         const [, mint, part] = quantumMatch
+        if (!isAddress(mint)) throw invalidMint()
         if (part === 'claims') {
           // Claims may rebuild merkle proofs per open epoch; the app polls this once a minute.
           await limiter(req, { bucket: 'quantum-claims', limit: 30 })
@@ -925,14 +1255,10 @@ export async function createApplication(options = {}) {
         return json(res, 200, await quantumHistory(mint))
       }
 
-      if (path === '/api/keeper/tick' && (req.method === 'GET' || req.method === 'POST')) {
-        const secret = process.env.CRON_SECRET
+      if (path === '/api/keeper/tick') {
         const supplied = String(req.headers.authorization || '').replace(/^Bearer /, '')
-        const ok =
-          secret &&
-          supplied.length === secret.length &&
-          timingSafeEqual(Buffer.from(supplied), Buffer.from(secret))
-        if (!ok) return json(res, 401, { error: 'Unauthorized' })
+        if (!secretMatches(supplied, process.env.CRON_SECRET))
+          return json(res, 401, { error: 'Unauthorized' })
         const started = Date.now()
         const index = await indexer.sync({ budget: 8, ...INDEX_MS })
         const keep = await keeper.tick({ timeLimitMs: keeperBudget(started) })
@@ -941,7 +1267,7 @@ export async function createApplication(options = {}) {
         return json(res, 200, { index, keeper: keep })
       }
 
-      if (req.method !== 'POST') return json(res, 404, { error: 'Endpoint not found.' })
+      // Only the POST routes are left (allowedMethods above).
       await writeAllowed(req)
       if (!storage.ready)
         return json(res, 503, { error: storage.error, code: 'STORAGE_UNCONFIGURED' })
@@ -965,6 +1291,9 @@ export async function createApplication(options = {}) {
         return json(res, 201, { coin: publicCoin(await withMetadata(coin)) })
       }
       if (path === '/api/coins/track') {
+        // Tracking a new coin reads its market, identity and history from the chain (about
+        // COIN_RPC_COST calls): a tight bucket of its own, and the deployment-wide RPC budget.
+        await limiter(req, { bucket: 'track', limit: TRACK_LIMIT })
         const { mint } = await readJsonObject(req, 2000)
         if (!isAddress(mint)) throw clientError('Enter a valid Solana mint address.')
         if (hidden.has(mint))
@@ -972,10 +1301,15 @@ export async function createApplication(options = {}) {
             error: 'This coin is not available on Quant Pad.',
             code: 'HIDDEN',
           })
+        if (RPC_GLOBAL_LIMIT > 0 && !(await indexer.coin(mint)))
+          await chargeRpcBudget(req, COIN_RPC_COST)
         const coin = await indexer.track(mint)
         return json(res, 201, { coin: publicCoin(await withMetadata(coin)) })
       }
       if (path === '/api/media') {
+        // Uploads only serve launches, which need a public address for their metadata.
+        const base = publicBase(req)
+        if (!base && !pinataJwt) throw publicUrlUnset()
         const b = await readJsonObject(req, 2_200_000)
         const m = String(b.data || '').match(
           /^data:image\/(png|jpeg|webp|gif);base64,([A-Za-z0-9+/=]+)$/,
@@ -987,11 +1321,17 @@ export async function createApplication(options = {}) {
         if (!type.ok(bytes)) throw clientError('The file does not match its image type.')
         const name = sha256(bytes) + '.' + type.ext
         await chargeMediaQuota(req, bytes.length)
-        // Pending until /api/metadata references it (and pinned to IPFS only then).
+        // Pending until a launch with metadata that references it registers (K5), and pinned to
+        // IPFS only once metadata references it. With pinning and no public address the link is
+        // only this visitor's handle for /api/metadata (which reads its path), never published.
         await store.putMedia(name, bytes, mediaLimit, { ttl: pendingMediaMs })
-        return json(res, 201, { url: `${baseUrl(req)}/media/${name}` })
+        const origin = base || hostOrigin(req.headers.host, requestProtocol(req)) || ''
+        return json(res, 201, { url: `${origin}/media/${name}` })
       }
       if (path === '/api/metadata') {
+        // Metadata URIs are written on-chain: never under a host the request chose (QP-SEC-6).
+        const base = publicBase(req)
+        if (!base && !pinataJwt) throw publicUrlUnset()
         const b = await readJsonObject(req, 16000)
         const data = {}
         for (const key of [
@@ -1027,33 +1367,64 @@ export async function createApplication(options = {}) {
           if (data[key] && !isWebLink(data[key]))
             throw clientError('Links must be full http or https addresses.')
         if (!data.image) throw clientError('Upload token artwork before launching.')
-        // Documents are under 16 KB, so each one costs the minimum charge.
-        await chargeMediaQuota(req, 0)
-        const own = new URL(data.image).pathname.match(
-          /^\/media\/([a-f0-9]{64}\.(?:png|jpg|webp|gif))$/,
-        )
-        if (own) {
-          // Our own upload: keep it for good, and point the document at its IPFS pin when
-          // pinning is configured, otherwise at this deployment's copy.
-          const artwork = await keepArtwork(own[1])
-          if (!artwork)
-            throw clientError(
-              'Token artwork is no longer available. Upload it again before launching.',
-            )
-          data.image =
-            (await pinOnce(req, artwork, own[1], MEDIA_MIME[own[1].split('.').at(-1)])) ||
-            `${baseUrl(req)}/media/${own[1]}`
+        const ownArt =
+          new URL(data.image).pathname.match(
+            /^\/media\/([a-f0-9]{64}\.(?:png|jpg|webp|gif))$/,
+          )?.[1] ?? null
+        const artworkGone = () =>
+          clientError('Token artwork is no longer available. Upload it again before launching.')
+        // The document is content-addressed: the same fields give the same uri.
+        const documentBytes = () => {
+          const document = { ...data, showName: true, ...(base ? { createdOn: base } : {}) }
+          for (const key of ['website', 'twitter', 'telegram'])
+            if (!document[key]) delete document[key]
+          const bytes = Buffer.from(JSON.stringify(document))
+          return { bytes, id: sha256(bytes).slice(0, 32) }
         }
-        const document = { ...data, showName: true, createdOn: baseUrl(req) }
-        for (const key of ['website', 'twitter', 'telegram'])
-          if (!document[key]) delete document[key]
-        const bytes = Buffer.from(JSON.stringify(document))
-        const id = sha256(bytes).slice(0, 32)
-        await store.putMedia(`meta-${id}.json`, bytes, mediaLimit)
-        const uri =
-          (await pinOnce(req, bytes, `${id}.json`, 'application/json')) || `${baseUrl(req)}/m/${id}`
-        if (uri.length > 200)
-          throw clientError('Metadata URI exceeds the 200 character on-chain limit.')
+        const checkUri = async (uri) => {
+          if (uri.length > 200)
+            throw clientError('Metadata URI exceeds the 200 character on-chain limit.')
+          // The indexer binds an issued uri to the first coin that registers with it and lists
+          // no other coin with it, so a second launch with the same metadata would pay for its
+          // create and then be refused. Say so before anything is created.
+          if (await store.get(issuedUriClaimKey(uri)))
+            throw clientError(
+              'This token metadata was already used by another launch. Change the description or the artwork to launch a new coin.',
+              409,
+              'METADATA_USED',
+            )
+        }
+        let uri
+        if (pinataJwt) {
+          // The document and our own artwork are pinned to IPFS (each blob once); nothing is
+          // stored here. Documents are under 16 KB, so the request costs the minimum charge.
+          await chargeMediaQuota(req, 0)
+          if (ownArt) {
+            const artwork = await readArtwork(ownArt)
+            if (!artwork) throw artworkGone()
+            data.image = await pinOnce(req, artwork, ownArt, MEDIA_MIME[ownArt.split('.').at(-1)])
+          }
+          const { bytes, id } = documentBytes()
+          uri = await pinOnce(req, bytes, `${id}.json`, 'application/json')
+          await checkUri(uri)
+        } else {
+          // This deployment serves the document and our own artwork, both pending until a launch
+          // with this uri registers (K5): abandoned ones expire like uploads.
+          if (ownArt) data.image = `${base}/media/${ownArt}`
+          const { bytes, id } = documentBytes()
+          uri = `${base}/m/${id}`
+          await checkUri(uri)
+          // The document costs the minimum charge. Keeping the artwork for another pending period
+          // costs its full size again, like uploading it again (QP-SEC-2), so re-issuing metadata
+          // never keeps bytes stored for less than they cost.
+          await chargeMediaQuota(req, 0)
+          const artwork = ownArt ? await readArtwork(ownArt) : null
+          if (ownArt && !artwork) throw artworkGone()
+          if (artwork) await chargeDaily(req, 'client', artwork.length, mediaClientLimit)
+          // A permanent artwork is left as it is; one that expired since the read is stored again.
+          if (artwork) await store.putMedia(ownArt, artwork, mediaLimit, { ttl: pendingMediaMs })
+          await store.putMedia(`meta-${id}.json`, bytes, mediaLimit, { ttl: pendingMediaMs })
+        }
         // Launch provenance: /api/launches only lists a coin as a Quant Pad launch when its
         // on-chain uri was issued here (or it is a verified Quantum coin).
         await store.set(issuedUriKey(uri), { at: Date.now() }, { ttl: DAY_MS })
@@ -1064,7 +1435,7 @@ export async function createApplication(options = {}) {
         const body = await readJsonBody(req, 2000).catch(() => null)
         const mint = body?.mint
         if (isAddress(mint)) {
-          const coin = await syncMint(mint)
+          const coin = await syncMint(mint, { req })
           return json(res, 202, { coin: coin && summarize(coin) })
         }
         // A full pass is shared by every visitor: at most one manual pass per cooldown.
@@ -1095,19 +1466,31 @@ export async function createApplication(options = {}) {
   // time budget after the index pass, so it is never stopped mid-run with its lease held.
   // On serverless the budget counts from the start of the invocation (startedAt), which includes
   // the request this pass runs after, so a slow request leaves less (or nothing) for the pass.
+  // Every serverless request schedules a pass, and even a pass that finds the index lease taken
+  // costs store commands, so one instance runs one pass at a time and starts at most one per
+  // BACKGROUND_GAP_MS; the index lease already keeps instances from duplicating work.
+  let backgroundRunning = false
+  let backgroundAt = 0
   async function background({ startedAt } = {}) {
     const started = startedAt ?? Date.now()
     const MIN_MS = 10_000
     if (serverless && timeLeft(started) < MIN_MS) return
-    const index = serverless
-      ? { timeMs: Math.min(INDEX_MS.timeMs, timeLeft(started) - 5_000) }
-      : INDEX_MS
-    await indexer.sync({ budget: serverless ? 3 : 6, ...index }).catch(() => {})
-    if (serverless && timeLeft(started) < MIN_MS) return
-    if (keeper.enabled && (await store.set('keeper:throttle', 1, { nx: true, ttl: 120000 })))
-      await keeper
-        .tick({ timeLimitMs: serverless ? timeLeft(started) - 3_000 : keeperBudget(started) })
-        .catch((e) => console.error('[keeper]', e.message))
+    if (backgroundRunning || Date.now() - backgroundAt < BACKGROUND_GAP_MS) return
+    backgroundRunning = true
+    backgroundAt = Date.now()
+    try {
+      const index = serverless
+        ? { timeMs: Math.min(INDEX_MS.timeMs, timeLeft(started) - 5_000) }
+        : INDEX_MS
+      await indexer.sync({ budget: serverless ? 3 : 6, ...index }).catch(() => {})
+      if (serverless && timeLeft(started) < MIN_MS) return
+      if (keeper.enabled && (await store.set('keeper:throttle', 1, { nx: true, ttl: 120000 })))
+        await keeper
+          .tick({ timeLimitMs: serverless ? timeLeft(started) - 3_000 : keeperBudget(started) })
+          .catch((e) => console.error('[keeper]', e.message))
+    } finally {
+      backgroundRunning = false
+    }
   }
   let timer = null
   if (!serverless && options.background !== false) {
@@ -1124,8 +1507,12 @@ export async function createApplication(options = {}) {
       trailingSyncs.clear()
     },
     indexer,
+    // The read-only indexer the public GET routes use (shared store reads).
+    reads,
     keeper,
     store,
     connection,
+    // The callback the indexer calls for each launch it registers native (K5).
+    onNativeLaunch: keepLaunchMedia,
   }
 }

@@ -8,6 +8,111 @@
   },
   "instructions": [
     {
+      "name": "cancel_epoch",
+      "discriminator": [
+        120,
+        226,
+        234,
+        25,
+        215,
+        85,
+        0,
+        155
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "config",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  113,
+                  112,
+                  45,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "name": "quantum",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  113,
+                  117,
+                  97,
+                  110,
+                  116,
+                  117,
+                  109
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "quantum.mint",
+                "account": "Quantum"
+              }
+            ]
+          }
+        },
+        {
+          "name": "epoch",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  101,
+                  112,
+                  111,
+                  99,
+                  104
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "quantum.mint",
+                "account": "Quantum"
+              },
+              {
+                "kind": "arg",
+                "path": "index"
+              }
+            ]
+          }
+        },
+        {
+          "name": "keeper",
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "index",
+          "type": "u32"
+        }
+      ]
+    },
+    {
       "name": "claim_entanglement",
       "discriminator": [
         51,
@@ -453,6 +558,10 @@
           "address": "11111111111111111111111111111111"
         },
         {
+          "name": "instructions_sysvar",
+          "address": "Sysvar1nstructions1111111111111111111111111"
+        },
+        {
           "name": "target_program",
           "address": "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA"
         }
@@ -554,6 +663,10 @@
         },
         {
           "name": "keeper_grace",
+          "type": "i64"
+        },
+        {
+          "name": "claim_delay",
           "type": "i64"
         }
       ]
@@ -976,6 +1089,20 @@
           "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
         },
         {
+          "name": "bonding_curve",
+          "docs": [
+            "while `graduated_at` is unset and the curve is complete, so the pulse records graduation."
+          ],
+          "optional": true
+        },
+        {
+          "name": "pool",
+          "docs": [
+            "for the same reason once the coin has migrated."
+          ],
+          "optional": true
+        },
+        {
           "name": "system_program",
           "address": "11111111111111111111111111111111"
         }
@@ -1163,6 +1290,10 @@
         {
           "name": "system_program",
           "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "instructions_sysvar",
+          "address": "Sysvar1nstructions1111111111111111111111111"
         },
         {
           "name": "target_program"
@@ -1467,6 +1598,56 @@
       "args": []
     },
     {
+      "name": "set_paused",
+      "discriminator": [
+        91,
+        60,
+        125,
+        192,
+        176,
+        225,
+        166,
+        218
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  113,
+                  112,
+                  45,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "paused",
+          "type": "bool"
+        }
+      ]
+    },
+    {
       "name": "update_config",
       "discriminator": [
         29,
@@ -1511,6 +1692,10 @@
       ],
       "args": [
         {
+          "name": "expected_version",
+          "type": "u64"
+        },
+        {
           "name": "treasury",
           "type": "pubkey"
         },
@@ -1535,8 +1720,8 @@
           "type": "i64"
         },
         {
-          "name": "paused",
-          "type": "bool"
+          "name": "claim_delay",
+          "type": "i64"
         },
         {
           "name": "new_authority",
@@ -1624,6 +1809,19 @@
         19,
         198,
         194
+      ]
+    },
+    {
+      "name": "EpochCancelled",
+      "discriminator": [
+        207,
+        234,
+        62,
+        125,
+        97,
+        159,
+        190,
+        48
       ]
     },
     {
@@ -1928,6 +2126,31 @@
       "code": 6041,
       "name": "WellInvariant",
       "msg": "Well balance is below its rent minimum plus reserved ledgers"
+    },
+    {
+      "code": 6042,
+      "name": "ConfigChanged",
+      "msg": "The config changed since this update was prepared (expected_version does not match)"
+    },
+    {
+      "code": 6043,
+      "name": "ClaimNotOpen",
+      "msg": "Claims for this Entanglement epoch are not open yet"
+    },
+    {
+      "code": 6044,
+      "name": "CancelWindowClosed",
+      "msg": "This Entanglement epoch can no longer be cancelled: its claims have opened"
+    },
+    {
+      "code": 6045,
+      "name": "EpochTooSoon",
+      "msg": "The minimum interval between Entanglement epochs has not elapsed"
+    },
+    {
+      "code": 6046,
+      "name": "PublicTransactionNotAllowed",
+      "msg": "A public burn or fusion must be a top-level instruction and may share its transaction only with compute-budget, system, token, associated-token and Quantum Hooks instructions"
     }
   ],
   "types": [
@@ -2032,11 +2255,27 @@
             "type": "u8"
           },
           {
+            "name": "claim_delay",
+            "docs": [
+              "Seconds between posting an Entanglement epoch and its first claim: the authority's window",
+              "to `cancel_epoch` a bad root (0..=MAX_CLAIM_DELAY)."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "version",
+            "docs": [
+              "Incremented by every config change (`update_config`, `set_paused`). `update_config` names",
+              "the version it was prepared against, so a stale update cannot undo a later change."
+            ],
+            "type": "u64"
+          },
+          {
             "name": "reserved",
             "type": {
               "array": [
                 "u8",
-                64
+                48
               ]
             }
           }
@@ -2079,6 +2318,17 @@
           {
             "name": "paused",
             "type": "bool"
+          },
+          {
+            "name": "claim_delay",
+            "type": "i64"
+          },
+          {
+            "name": "version",
+            "docs": [
+              "The config version after this change."
+            ],
+            "type": "u64"
           }
         ]
       }
@@ -2122,6 +2372,13 @@
             "type": "i64"
           },
           {
+            "name": "claim_start",
+            "docs": [
+              "`created_at + config.claim_delay`: claims open here; until then the authority may cancel."
+            ],
+            "type": "i64"
+          },
+          {
             "name": "expires_at",
             "type": "i64"
           },
@@ -2139,6 +2396,34 @@
               "One bit per leaf, `ceil(leaf_count / 8)` bytes."
             ],
             "type": "bytes"
+          }
+        ]
+      }
+    },
+    {
+      "name": "EpochCancelled",
+      "docs": [
+        "The authority cancelled an epoch before its claims opened: `returned` went back to the",
+        "Entanglement reserve and the account's rent to `rent_to` (`config.keeper`)."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "index",
+            "type": "u32"
+          },
+          {
+            "name": "returned",
+            "type": "u64"
+          },
+          {
+            "name": "rent_to",
+            "type": "pubkey"
           }
         ]
       }
@@ -2196,6 +2481,13 @@
           {
             "name": "leaf_count",
             "type": "u32"
+          },
+          {
+            "name": "claim_start",
+            "docs": [
+              "Claims open here (`created_at + config.claim_delay`); until then the authority may cancel."
+            ],
+            "type": "i64"
           },
           {
             "name": "expires_at",
@@ -2300,12 +2592,17 @@
           {
             "name": "collected",
             "docs": [
-              "Unallocated lamports this pulse distributed (`available`)."
+              "Unallocated lamports this pulse distributed (`available`; 0 when below the 0.001 SOL floor",
+              "and the pulse only paid owed amounts)."
             ],
             "type": "u64"
           },
           {
             "name": "protocol",
+            "docs": [
+              "Paid to the treasury, launcher and splits by this pulse, including amounts owed from",
+              "earlier pulses (`owed_paid` of the total)."
+            ],
             "type": "u64"
           },
           {
@@ -2331,8 +2628,16 @@
           {
             "name": "deferred",
             "docs": [
-              "Payments skipped because the recipient could not hold them (would stay below its rent",
-              "minimum, or is executable). They stay in the well and are re-pulsed later."
+              "Shares this pulse could not pay: the recipient would stay below its rent-exempt minimum",
+              "(recorded as owed to it and paid first once it can receive), or a split is a key that can",
+              "never be paid (reserved or executable; stays in the well unledgered and is re-pulsed)."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "owed_paid",
+            "docs": [
+              "Owed amounts from earlier pulses paid by this one."
             ],
             "type": "u64"
           },
@@ -2492,11 +2797,47 @@
             "type": "i64"
           },
           {
+            "name": "last_epoch_at",
+            "docs": [
+              "When the newest Entanglement epoch was posted (0 = never); paces `post_entanglement`."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "graduated_at",
+            "docs": [
+              "When `pulse`, `quantum_burn` or `fusion` first saw the coin graduated (0 = not yet). The",
+              "public Fusion grace counts from here."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "split_owed",
+            "docs": [
+              "Shares `pulse` owes but could not pay yet (the recipient would stay below its rent-exempt",
+              "minimum). Held in the well and paid first once the recipient can receive."
+            ],
+            "type": {
+              "array": [
+                "u64",
+                4
+              ]
+            }
+          },
+          {
+            "name": "launcher_owed",
+            "type": "u64"
+          },
+          {
+            "name": "protocol_owed",
+            "type": "u64"
+          },
+          {
             "name": "reserved",
             "type": {
               "array": [
                 "u8",
-                48
+                16
               ]
             }
           }

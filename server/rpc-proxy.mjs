@@ -90,6 +90,14 @@ export function writeRpcResponse(res, { status, text, headers = {} }) {
   res.end(text)
 }
 
+// Optional deployment-wide budget for the proxy, in calls per minute (QUANTPAD_RPC_GLOBAL_PER_MIN).
+// Unset or invalid means none. It caps what all visitors together can spend of the provider plan,
+// at the price that a busy minute answers everyone 429.
+export function globalRpcLimit(env = process.env) {
+  const value = String(env.QUANTPAD_RPC_GLOBAL_PER_MIN ?? '').trim()
+  return /^\d+$/.test(value) ? Number(value) : 0
+}
+
 // Resolves to { status, body, text, headers }: 200 with the upstream JSON, 429 with Retry-After when
 // the provider rate limits, 502 for any other upstream failure. Client mistakes throw a 4xx error.
 export function createRpcProxy({
@@ -97,7 +105,14 @@ export function createRpcProxy({
   limiter,
   request = fetch,
   maxResponseBytes = MAX_RESPONSE_BYTES,
+  globalLimit = globalRpcLimit(),
 }) {
+  // The visitor's own budget first, so one visitor over theirs does not use up everyone's.
+  const charge = async (req, cost) => {
+    await limiter(req, { bucket: 'rpc', limit: 900, cost })
+    if (globalLimit > 0)
+      await limiter(req, { bucket: 'rpc-all', limit: globalLimit, cost, shared: true })
+  }
   return async function proxy(req, payload) {
     if (!sameOrigin(req)) throw fail(403, 'Open this action from the Quant Pad app.')
     const calls = Array.isArray(payload) ? payload : [payload]
@@ -110,7 +125,7 @@ export function createRpcProxy({
         throw fail(403, `RPC method ${call.method} is not available.`)
       cost += callCost(call)
     }
-    await limiter(req, { bucket: 'rpc', limit: 900, cost })
+    await charge(req, cost)
     const unavailable = result(502, { error: 'Solana RPC is unreachable. Try again shortly.' })
     let response, read
     try {
@@ -126,8 +141,7 @@ export function createRpcProxy({
     }
     // Bandwidth counts too: every full MiB relayed (or refused as oversized) costs one more call.
     const megabytes = Math.floor((read ? read.bytes : maxResponseBytes) / MIB)
-    if (megabytes)
-      await limiter(req, { bucket: 'rpc', limit: 900, cost: megabytes }).catch(() => {})
+    if (megabytes) await charge(req, megabytes).catch(() => {})
     if (!read) return result(502, { error: 'Solana RPC response is too large.' })
     // Upstream error bodies can echo the provider URL (and key); only JSON bodies pass.
     let body = null

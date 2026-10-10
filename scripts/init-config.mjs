@@ -10,22 +10,29 @@
 //        [--min-action-interval <secs>]  minimum time between two burns / fusions (default 3600)
 //        [--keeper-grace <secs>]         time before anyone, not just the keeper, may run them
 //                                        (default 86400)
+//        [--claim-delay <secs>]          time between posting an Entanglement epoch and its first
+//                                        claim, during which the authority can cancel_epoch it
+//                                        (default 21600 = 6 h, at most 604800 = 7 days)
 //        [--program-id <base58>]         default: "address" in shared/idl/quantum_hooks.json
 //        [--mainnet]                     allow a mainnet-beta RPC
 //        [--yes]                         sign and send
 //
 // Without --yes it only prints a dry-run summary (read-only RPC calls) and exits. It refuses
 // mainnet-beta RPC URLs, and any RPC whose genesis hash is mainnet-beta's, unless --mainnet is also
-// passed. Every value except the authority can be changed later with update_config.
+// passed. Every value except the authority can be changed later with update_config (pausing
+// uses set_paused).
 import { readFile } from 'node:fs/promises'
 import { pathToFileURL } from 'node:url'
 
 export const MAINNET_GENESIS_HASH = '5eykt4UsFv8P8NJdTREpY1vzqKqZKvdpKuc147dw2N9d'
+// Same bounds as the program (constants.rs MAX_CLAIM_DELAY) and shared/quantum.mjs.
+export const DEFAULT_CLAIM_DELAY = 21_600
+export const MAX_CLAIM_DELAY = 604_800
 export const USAGE =
   'Usage: node scripts/init-config.mjs --rpc <url> --authority <keypair.json> --treasury <base58>\n' +
   '         [--protocol-bps <0-1000>] [--keeper <base58>] [--max-burn-sol <sol>]\n' +
-  '         [--min-action-interval <secs>] [--keeper-grace <secs>] [--program-id <base58>]\n' +
-  '         [--mainnet] [--yes]'
+  '         [--min-action-interval <secs>] [--keeper-grace <secs>] [--claim-delay <secs>]\n' +
+  '         [--program-id <base58>] [--mainnet] [--yes]'
 
 const VALUE_FLAGS = new Set([
   'rpc',
@@ -36,6 +43,7 @@ const VALUE_FLAGS = new Set([
   'max-burn-sol',
   'min-action-interval',
   'keeper-grace',
+  'claim-delay',
   'program-id',
 ])
 const BOOLEAN_FLAGS = new Set(['yes', 'mainnet', 'help'])
@@ -110,6 +118,12 @@ export function parseArgs(argv) {
       2 ** 40,
     ),
     keeperGrace: intArg('keeper-grace', raw['keeper-grace'] ?? '86400', 0, 2 ** 40),
+    claimDelay: intArg(
+      'claim-delay',
+      raw['claim-delay'] ?? String(DEFAULT_CLAIM_DELAY),
+      0,
+      MAX_CLAIM_DELAY,
+    ),
     programId: raw['program-id'] === undefined ? null : pubkeyArg('program-id', raw['program-id']),
     mainnet: !!raw.mainnet,
     yes: !!raw.yes,
@@ -217,7 +231,8 @@ async function main(argv) {
   protocol_bps         ${opts.protocolBps} (${(opts.protocolBps / 100).toFixed(2)}% of every pulse)
   max_burn_lamports    ${opts.maxBurnLamports} (${sol(opts.maxBurnLamports)} per burn / fusion)
   min_action_interval  ${opts.minActionInterval} s
-  keeper_grace         ${opts.keeperGrace} s`)
+  keeper_grace         ${opts.keeperGrace} s
+  claim_delay          ${opts.claimDelay} s (Entanglement claims open this long after a post; the authority can cancel_epoch until then)`)
   for (const p of problems) console.log(`  ! ${p}`)
 
   if (!opts.yes) {
@@ -242,6 +257,7 @@ async function main(argv) {
     maxBurnLamports: opts.maxBurnLamports,
     minActionInterval: opts.minActionInterval,
     keeperGrace: opts.keeperGrace,
+    claimDelay: opts.claimDelay,
     programId,
   })
   const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed')

@@ -12,9 +12,9 @@ import {
   createLookupTableLoader,
   isTransientRpcError,
   packGroups,
-  transferKeepsRentExempt,
 } from './txflow.js'
 import { explainError, friendlyWalletError } from './txerrors.js'
+import { chargedPlatformFee } from './amounts.js'
 
 export { explainError, friendlyWalletError, isTransientRpcError }
 
@@ -144,15 +144,30 @@ export function confirmSignature(signature, lastValidBlockHeight, options = {}) 
 
 // The treasury only ever receives, so once it is rent-exempt it stays that way.
 const fundedTreasuries = new Set()
-async function treasuryCanReceive(treasury, fee) {
-  if (fee >= RENT_EXEMPT_MINIMUM || fundedTreasuries.has(treasury)) return true
+
+/**
+ * The treasury's balance for the platform-fee rule: read from the chain until it is rent-exempt
+ * (then remembered, with no further reads), null when it cannot be read.
+ */
+export async function treasuryBalance(treasury) {
+  if (fundedTreasuries.has(treasury)) return RENT_EXEMPT_MINIMUM
   try {
     const balance = BigInt(await connection.getBalance(new PublicKey(treasury), 'confirmed'))
     if (balance >= RENT_EXEMPT_MINIMUM) fundedTreasuries.add(treasury)
-    return transferKeepsRentExempt(balance, fee)
+    return balance
   } catch {
-    return false
+    return null
   }
+}
+
+/**
+ * The platform fee a trade or dev buy of `lamports` will be charged (see chargedPlatformFee). A
+ * fee at or above the rent-exempt minimum needs no balance read.
+ */
+export async function platformFeeCharged(platform, lamports) {
+  const most = chargedPlatformFee(platform, lamports, RENT_EXEMPT_MINIMUM)
+  if (most === 0n || most >= RENT_EXEMPT_MINIMUM) return most
+  return chargedPlatformFee(platform, lamports, await treasuryBalance(platform.treasury))
 }
 
 /**
@@ -161,10 +176,8 @@ async function treasuryCanReceive(treasury, fee) {
  * that transfer would fail with InsufficientFundsForRent and take the whole trade down with it.
  */
 export async function platformFeeInstruction(from, platform, lamports) {
-  if (!platform?.treasury || !platform.feeBps || lamports <= 0n) return null
-  const fee = (lamports * BigInt(platform.feeBps)) / 10_000n
+  const fee = await platformFeeCharged(platform, lamports)
   if (fee <= 0n) return null
-  if (!(await treasuryCanReceive(platform.treasury, fee))) return null
   return SystemProgram.transfer({
     fromPubkey: new PublicKey(from),
     toPubkey: new PublicKey(platform.treasury),

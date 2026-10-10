@@ -1,8 +1,9 @@
 import { Link, useNavigate } from 'react-router-dom'
 import { CoinAvatar, CurveProgress } from './UI.jsx'
 import { usePlatform } from '../context/PlatformContext.jsx'
-import { ago, pct, price, sol, usd } from '../lib/format.js'
+import { ago, pct, sol, usd } from '../lib/format.js'
 import { lowerBound, PARTIAL_NOTE } from './figures.js'
+import Price from './Price.js'
 
 const partialTitle = (coin) => (coin.statsPartial ? PARTIAL_NOTE : undefined)
 const volume = (coin) =>
@@ -53,7 +54,11 @@ export function CoinCard({ coin }) {
           <dd className="num">{ago(coin.createdAt)}</dd>
         </div>
       </dl>
-      <CurveProgress progress={coin.progress} complete={coin.complete} />
+      <CurveProgress
+        progress={coin.progress}
+        complete={coin.complete}
+        migrated={!!coin.poolMissing}
+      />
       <div className="coin-card-badges">
         <Badges coin={coin} />
       </div>
@@ -96,7 +101,9 @@ export function CoinTable({ items }) {
                   <Badges coin={c} />
                 </Link>
               </td>
-              <td className="right num">{price(c.price)}</td>
+              <td className="right num">
+                <Price value={c.price} />
+              </td>
               <td
                 className={`right num ${c.change24h > 0 ? 'up' : c.change24h < 0 ? 'down' : 'faint'}`}
               >
@@ -114,7 +121,11 @@ export function CoinTable({ items }) {
                 {lowerBound(c.trades24h, String(c.trades24h || 0), c.statsPartial)}
               </td>
               <td style={{ minWidth: 120 }}>
-                <CurveProgress progress={c.progress} complete={c.complete} />
+                <CurveProgress
+                  progress={c.progress}
+                  complete={c.complete}
+                  migrated={!!c.poolMissing}
+                />
               </td>
               <td className="right num">{ago(c.createdAt)}</td>
             </tr>

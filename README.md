@@ -28,7 +28,8 @@ npm ci
 npm run dev
 ```
 
-The app runs at http://localhost:5173 with the API mounted. To check a production build locally, run
+The app runs at http://127.0.0.1:5173 with the API mounted. The dev server listens on this machine
+only, because it serves files from the repository root. To check a production build locally, run
 `npm run build`, then `npm run preview` or `npm start` (see the self-hosting notes in
 `docs/DEPLOY.md`). Unit tests:
 
@@ -48,12 +49,14 @@ Copy `.env.example` and see `docs/DEPLOY.md`. Production needs at least:
 
 - a provider RPC (`QUANTPAD_RPC_URL`)
 - Redis on serverless hosts
-- `QUANTPAD_PUBLIC_URL`
+- `QUANTPAD_PUBLIC_URL` (a full `https://` URL) or `PINATA_JWT`. A self-hosted server without
+  either refuses artwork uploads and metadata (503 `PUBLIC_URL_UNSET`), because metadata URIs are
+  never built from the request's `Host` header.
 - the lookup table (`QUANTPAD_LOOKUP_TABLE`), without which launches cannot include a dev buy
 
 Quantum launches also need the program deployed and configured, plus a funded keeper. Per-visitor
-rate limits, the upload budget (`QUANTPAD_MEDIA_CLIENT_MB`) and indexer tuning are described in
-`docs/DEPLOY.md` (section 7).
+rate limits, the upload and pin budgets (`QUANTPAD_MEDIA_CLIENT_MB`, `QUANTPAD_PIN_CLIENT_DAILY`,
+`QUANTPAD_PIN_DAILY`), CDN caching and indexer tuning are described in `docs/DEPLOY.md` (section 7).
 
 ## Trust and risk
 

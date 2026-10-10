@@ -83,6 +83,8 @@ const QUANTUM_MESSAGES = {
   TooSoon: 'Too soon since the last action. Try again in a little while.',
   EpochExpired: 'This Entanglement epoch has expired, so it can no longer be claimed.',
   EpochNotExpired: 'This Entanglement epoch has not expired yet.',
+  ClaimNotOpen:
+    'Claims for this Entanglement epoch are not open yet. Try again when the countdown ends.',
   AlreadyClaimed: 'You already claimed this reward.',
   InvalidProof: 'This claim’s proof is not valid for the epoch. Refresh and try again.',
 }

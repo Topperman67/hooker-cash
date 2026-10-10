@@ -184,7 +184,12 @@ async function quantumAccount(mint, launcher, splits, overrides = {}) {
     last_fusion_at: zeroBn,
     planned_cliff_secs: zeroBn,
     planned_duration_secs: zeroBn,
-    reserved: Array(48).fill(0),
+    last_epoch_at: zeroBn,
+    graduated_at: zeroBn,
+    split_owed: Array(4).fill(zeroBn),
+    launcher_owed: zeroBn,
+    protocol_owed: zeroBn,
+    reserved: Array(16).fill(0),
     ...overrides,
   })
 }
@@ -199,12 +204,17 @@ async function configAccount(treasury) {
     keeper_grace: zeroBn,
     paused: false,
     bump: 255,
-    reserved: Array(64).fill(0),
+    claim_delay: new BN(21_600),
+    version: zeroBn,
+    reserved: Array(48).fill(0),
   })
 }
+// Accounts listed without an owner are Quantum Hooks accounts (the client checks the owner).
+const withOwner = (info) => info && { owner: q.QUANTUM_PROGRAM_ID, lamports: 1, ...info }
 const fakeConnection = (accounts) => ({
-  getMultipleAccountsInfo: async (keys) => keys.map((k) => accounts.get(k.toBase58()) ?? null),
-  getAccountInfo: async (k) => accounts.get(k.toBase58()) ?? null,
+  getMultipleAccountsInfo: async (keys) =>
+    keys.map((k) => withOwner(accounts.get(k.toBase58())) ?? null),
+  getAccountInfo: async (k) => withOwner(accounts.get(k.toBase58())) ?? null,
 })
 
 test('buildPulseInstructions passes the payer as the writable rent_payer signer', async () => {
@@ -310,6 +320,7 @@ const epochAccount = (mint, index, payer, { leafCount = 10, claimed = [] } = {})
     claimed: new BN(1_000),
     leaf_count: leafCount,
     created_at: new BN(1_700_000_000),
+    claim_start: new BN(1_700_021_600),
     expires_at: new BN(1_700_604_800),
     payer,
     bump: 254,
@@ -541,6 +552,7 @@ test('init-config: argument parsing, defaults and validation', () => {
     maxBurnLamports: 1_000_000_000n,
     minActionInterval: 3600,
     keeperGrace: 86_400,
+    claimDelay: 21_600,
     programId: null,
     mainnet: false,
     yes: false,

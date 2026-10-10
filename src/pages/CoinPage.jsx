@@ -11,7 +11,8 @@ import { lowerBound, PARTIAL_NOTE } from '../components/figures.js'
 import { api, useResource } from '../lib/api.js'
 import { loadJob, registerOnce } from '../lib/launchPlan.js'
 import { usePlatform } from '../context/PlatformContext.jsx'
-import { ago, pct, price, safeLink, sol, usd } from '../lib/format.js'
+import Price from '../components/Price.js'
+import { ago, pct, safeLink, sol, usd } from '../lib/format.js'
 import { explorer, isAddress, pumpFunUrl } from '../../shared/network.mjs'
 
 const storage = () => {
@@ -71,7 +72,7 @@ export default function CoinPage() {
       .catch(() => {})
   }, [external, mint, refresh])
 
-  if (!isAddress(mint)) return <Empty title="That is not a Solana mint address" />
+  if (!isAddress(mint)) return <Empty level={1} title="That is not a Solana mint address" />
   const c = coin.data?.coin
   if (!c) {
     if (coin.code === 'NOT_TRACKED' || tracking === 'pending')
@@ -89,6 +90,7 @@ export default function CoinPage() {
       return (
         <div className="wrap">
           <Empty
+            level={1}
             title="This coin could not be opened"
             action={
               <Link to="/market" className="btn">
@@ -102,7 +104,9 @@ export default function CoinPage() {
       )
     return coin.error ? (
       <div className="wrap">
-        <Empty title="This coin could not be loaded">{coin.error}</Empty>
+        <Empty level={1} title="This coin could not be loaded">
+          {coin.error}
+        </Empty>
       </div>
     ) : (
       <Spinner block label="Loading coin" />
@@ -128,7 +132,9 @@ export default function CoinPage() {
           footer={
             <span>
               {c.complete
-                ? 'Graduated to PumpSwap'
+                ? c.poolMissing
+                  ? 'Migrated off pump.fun'
+                  : 'Graduated to PumpSwap'
                 : `Bonding curve ${Math.round(c.progress || 0)}%`}
             </span>
           }
@@ -147,7 +153,9 @@ export default function CoinPage() {
           </div>
           <dl className="coin-stats">
             <Stat label="Price">
-              <span className="num">{price(c.price)} SOL</span>
+              <span className="num">
+                <Price value={c.price} /> SOL
+              </span>
             </Stat>
             <Stat label="Market cap">
               <span className="num">
@@ -180,7 +188,7 @@ export default function CoinPage() {
         <aside className="coin-side">
           <TradeTicket coin={c} onTraded={coin.refresh} />
           <section className="panel">
-            <CurveProgress progress={c.progress} complete={c.complete} />
+            <CurveProgress progress={c.progress} complete={c.complete} migrated={!!c.poolMissing} />
             {!c.complete && (
               <p className="faint" style={{ marginTop: 10, fontSize: 'var(--t-xs)' }}>
                 When the curve sells out, the coin graduates to a PumpSwap pool and trading
@@ -190,7 +198,7 @@ export default function CoinPage() {
           </section>
           {c.quantum && <QuantumPanel coin={c} onLoaded={setHooks} />}
           <section className="panel about">
-            <h3>About</h3>
+            <h2 className="h3">About</h2>
             {c.meta?.description ? (
               <p className="muted">{c.meta.description}</p>
             ) : (

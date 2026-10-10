@@ -89,7 +89,8 @@ case "$cmd" in
     ls -l target/deploy
     ;;
   build-test)
-    # Test build: same program id, `short-expiry` feature (20 s epochs) for the local e2e tests.
+    # Test build: same program id, `short-expiry` feature (20 s epochs, one per 15 s) for the local
+    # e2e tests.
     # Needs no program keypair (the test validator loads the .so at the id from shared/idl).
     mkdir -p target/deploy-test
     cargo build-sbf --manifest-path programs/quantum_hooks/Cargo.toml --features short-expiry \

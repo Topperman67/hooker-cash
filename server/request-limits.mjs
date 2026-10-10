@@ -37,33 +37,78 @@ function ipv6Groups(address) {
   return [...left, ...zeros, ...right].map((group) => parseInt(group, 16))
 }
 
+const isMappedIpv4 = (groups) =>
+  groups.slice(0, 5).every((group) => group === 0) && groups[5] === 0xffff
+const prefixOf = (groups, bits) =>
+  `${groups
+    .slice(0, bits / 16)
+    .map((group) => group.toString(16))
+    .join(':')}::/${bits}`
+
 // Who a request counts as. An IPv6 subscriber is normally given a whole /64 and can rotate through
 // it freely, so IPv6 addresses count by their /64 prefix. IPv4 addresses, including IPv4-mapped
 // IPv6 ones (::ffff:203.0.113.9, as dual-stack sockets report them), count individually.
 export function clientSubject(ip) {
   if (isIP(ip) !== 6) return String(ip)
   const groups = ipv6Groups(ip)
-  if (groups.slice(0, 5).every((group) => group === 0) && groups[5] === 0xffff)
+  if (isMappedIpv4(groups))
     return [groups[6] >> 8, groups[6] & 255, groups[7] >> 8, groups[7] & 255].join('.')
-  return `${groups
-    .slice(0, 4)
-    .map((group) => group.toString(16))
-    .join(':')}::/64`
+  return prefixOf(groups, 64)
 }
+
+// The routed prefix an IPv6 address belongs to, or null for IPv4 (and IPv4-mapped) addresses.
+// A host with a routed /56 or /48 (a home connection, a free tunnel broker) holds 256 to 65 536
+// separate /64s, so every per-visitor budget is also charged to the /48 as a whole, with a higher
+// limit (PREFIX_FACTOR times the per-visitor one).
+export function clientPrefix(ip) {
+  if (isIP(ip) !== 6) return null
+  const groups = ipv6Groups(ip)
+  return isMappedIpv4(groups) ? null : prefixOf(groups, 48)
+}
+
+// How many /64 visitors' worth of budget one /48 gets together.
+export const PREFIX_FACTOR = 8
+
+const hashed = (subject) => createHash('sha256').update(subject).digest('hex').slice(0, 32)
 
 // Vercel's managed proxy overwrites X-Forwarded-For, so its first entry is the client. Behind
 // `trustProxy` reverse proxies, each proxy appends the address it received the request from, so the
 // client is the entry `trustProxy` places from the right; anything further left is client-supplied.
 // Otherwise the socket address is used and forwarding headers are ignored.
-export function clientKey(req, vercel, trustProxy = 0) {
+export function clientAddress(req, vercel, trustProxy = 0) {
   const entries = String(req.headers?.['x-forwarded-for'] || '')
     .split(',')
     .map(bareAddress)
   let forwarded = ''
   if (vercel) forwarded = entries[0]
   else if (trustProxy > 0 && entries.length >= trustProxy) forwarded = entries.at(-trustProxy)
-  const ip = isIP(forwarded) ? forwarded : req.socket?.remoteAddress || 'unknown'
-  return createHash('sha256').update(clientSubject(ip)).digest('hex').slice(0, 32)
+  return isIP(forwarded) ? forwarded : req.socket?.remoteAddress || 'unknown'
+}
+
+// Opaque per-visitor key (an IPv4 address or an IPv6 /64).
+export function clientKey(req, vercel, trustProxy = 0) {
+  return hashed(clientSubject(clientAddress(req, vercel, trustProxy)))
+}
+
+// Opaque key of the visitor's IPv6 /48, or null for IPv4 visitors. Charge it alongside clientKey,
+// with PREFIX_FACTOR times the per-visitor limit.
+export function clientPrefixKey(req, vercel, trustProxy = 0) {
+  const prefix = clientPrefix(clientAddress(req, vercel, trustProxy))
+  return prefix && hashed(prefix)
+}
+
+// Whether the visitor reached the site over https: a TLS socket, or (only behind trusted proxies,
+// QUANTPAD_TRUST_PROXY) X-Forwarded-Proto. Its first entry is the scheme the visitor used at the
+// outermost proxy. A forged "https" over plain http is harmless where this is used (HSTS), because
+// browsers ignore Strict-Transport-Security received over an insecure connection.
+export function requestIsHttps(req, trustProxy = trustedProxyHops()) {
+  if (req.socket?.encrypted) return true
+  if (!(trustProxy > 0)) return false
+  const proto = String(req.headers?.['x-forwarded-proto'] || '')
+    .split(',')[0]
+    .trim()
+    .toLowerCase()
+  return proto === 'https'
 }
 
 export function sameOrigin(req) {
@@ -76,6 +121,11 @@ export function sameOrigin(req) {
   return ['http:', 'https:'].includes(origin.protocol) && origin.host === req.headers.host
 }
 
+// limiter(req, { bucket, limit, cost }) charges `cost` to the visitor's bucket for this minute and
+// throws a 429 past `limit`. An IPv6 visitor is also charged to their /48, which may use
+// PREFIX_FACTOR times `limit` (or `prefixLimit`) in all, so rotating through the /64s of one routed
+// prefix does not multiply the budget. `shared: true` charges one bucket for everyone instead (a
+// deployment-wide budget).
 export function createLimiter({
   store,
   vercel = false,
@@ -83,19 +133,33 @@ export function createLimiter({
   now = Date.now,
 }) {
   const local = new Map()
-  return async (req, { bucket, limit, cost = 1 }) => {
-    const minute = Math.floor(now() / 60000)
-    const key = `rate:${bucket}:${clientKey(req, vercel, trustProxy)}:${minute}`
-    let count
+  async function charge(key, minute, cost) {
     if (store) {
-      count = await store.incrementExpiring(key, 120000)
-      if (cost > 1) count = await store.increment(key, cost - 1)
-    } else {
-      for (const [k, v] of local) if (v.minute !== minute) local.delete(k)
-      count = (local.get(key)?.count || 0) + cost
-      local.set(key, { minute, count })
+      const count = await store.incrementExpiring(key, 120000)
+      return cost > 1 ? store.increment(key, cost - 1) : count
     }
-    if (count > limit)
+    const count = (local.get(key)?.count || 0) + cost
+    local.set(key, { minute, count })
+    return count
+  }
+  return async (
+    req,
+    { bucket, limit, cost = 1, prefixLimit = limit * PREFIX_FACTOR, shared = false },
+  ) => {
+    const minute = Math.floor(now() / 60000)
+    if (!store) for (const [k, v] of local) if (v.minute !== minute) local.delete(k)
+    let count, prefixCount
+    if (shared) {
+      count = await charge(`rate:${bucket}:all:${minute}`, minute, cost)
+    } else {
+      const ip = clientAddress(req, vercel, trustProxy)
+      const prefix = clientPrefix(ip)
+      ;[count, prefixCount] = await Promise.all([
+        charge(`rate:${bucket}:${hashed(clientSubject(ip))}:${minute}`, minute, cost),
+        prefix ? charge(`rate:${bucket}:p48:${hashed(prefix)}:${minute}`, minute, cost) : 0,
+      ])
+    }
+    if (count > limit || prefixCount > prefixLimit)
       throw Object.assign(Error('Too many requests. Try again shortly.'), { status: 429 })
   }
 }

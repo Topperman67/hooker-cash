@@ -26,6 +26,7 @@ pub struct InitializeConfig<'info> {
     pub system_program: Program<'info, System>,
 }
 
+/// `update_config` and `set_paused`.
 #[derive(Accounts)]
 pub struct UpdateConfig<'info> {
     pub authority: Signer<'info>,
@@ -46,6 +47,7 @@ fn validate(
     max_burn_lamports: u64,
     min_action_interval: i64,
     keeper_grace: i64,
+    claim_delay: i64,
 ) -> Result<()> {
     require!(protocol_bps <= MAX_PROTOCOL_BPS, QuantumError::ProtocolBpsTooHigh);
     require!(*treasury != Pubkey::default(), QuantumError::InvalidConfig);
@@ -53,6 +55,10 @@ fn validate(
     require!(max_burn_lamports > 0, QuantumError::InvalidConfig);
     require!(min_action_interval >= 0, QuantumError::InvalidConfig);
     require!(keeper_grace >= 0, QuantumError::InvalidConfig);
+    require!(
+        (0..=MAX_CLAIM_DELAY).contains(&claim_delay),
+        QuantumError::InvalidConfig
+    );
     Ok(())
 }
 
@@ -66,9 +72,20 @@ fn emit_config(config: &Config) {
         min_action_interval: config.min_action_interval,
         keeper_grace: config.keeper_grace,
         paused: config.paused,
+        claim_delay: config.claim_delay,
+        version: config.version,
     });
 }
 
+fn bump_version(config: &mut Config) -> Result<()> {
+    config.version = config
+        .version
+        .checked_add(1)
+        .ok_or(QuantumError::MathOverflow)?;
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn initialize_config(
     ctx: Context<InitializeConfig>,
     treasury: Pubkey,
@@ -77,6 +94,7 @@ pub(crate) fn initialize_config(
     max_burn_lamports: u64,
     min_action_interval: i64,
     keeper_grace: i64,
+    claim_delay: i64,
 ) -> Result<()> {
     validate(
         &treasury,
@@ -85,6 +103,7 @@ pub(crate) fn initialize_config(
         max_burn_lamports,
         min_action_interval,
         keeper_grace,
+        claim_delay,
     )?;
     let config = &mut ctx.accounts.config;
     config.authority = ctx.accounts.authority.key();
@@ -96,23 +115,34 @@ pub(crate) fn initialize_config(
     config.keeper_grace = keeper_grace;
     config.paused = false;
     config.bump = ctx.bumps.config;
-    config.reserved = [0u8; 64];
+    config.claim_delay = claim_delay;
+    config.version = 0;
+    config.reserved = [0u8; 48];
     emit_config(config);
     Ok(())
 }
 
+/// Rewrites every field except `paused`, but only if the config is still at `expected_version`:
+/// an update prepared before another change (a pause, a keeper rotation) fails with
+/// `ConfigChanged` instead of silently undoing it.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn update_config(
     ctx: Context<UpdateConfig>,
+    expected_version: u64,
     treasury: Pubkey,
     keeper: Pubkey,
     protocol_bps: u16,
     max_burn_lamports: u64,
     min_action_interval: i64,
     keeper_grace: i64,
-    paused: bool,
+    claim_delay: i64,
     new_authority: Pubkey,
 ) -> Result<()> {
+    let config = &mut ctx.accounts.config;
+    require!(
+        config.version == expected_version,
+        QuantumError::ConfigChanged
+    );
     validate(
         &treasury,
         &keeper,
@@ -120,9 +150,9 @@ pub(crate) fn update_config(
         max_burn_lamports,
         min_action_interval,
         keeper_grace,
+        claim_delay,
     )?;
     require!(new_authority != Pubkey::default(), QuantumError::InvalidConfig);
-    let config = &mut ctx.accounts.config;
     config.authority = new_authority;
     config.treasury = treasury;
     config.keeper = keeper;
@@ -130,7 +160,17 @@ pub(crate) fn update_config(
     config.max_burn_lamports = max_burn_lamports;
     config.min_action_interval = min_action_interval;
     config.keeper_grace = keeper_grace;
+    config.claim_delay = claim_delay;
+    bump_version(config)?;
+    emit_config(config);
+    Ok(())
+}
+
+/// The only way to pause or unpause. Takes no expected version, so an emergency pause always lands.
+pub(crate) fn set_paused(ctx: Context<UpdateConfig>, paused: bool) -> Result<()> {
+    let config = &mut ctx.accounts.config;
     config.paused = paused;
+    bump_version(config)?;
     emit_config(config);
     Ok(())
 }

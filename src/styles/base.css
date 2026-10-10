@@ -194,7 +194,10 @@ h1 {
 h2 {
   font-size: clamp(var(--t-xl), 2.8vw, var(--t-2xl));
 }
-h3 {
+/* .h3: a heading whose level follows the page outline (an h2 panel title, an h1 empty state) but
+   which keeps the compact h3 look. */
+h3,
+.h3 {
   font-size: var(--t-lg);
   font-stretch: 104%;
   font-weight: 750;

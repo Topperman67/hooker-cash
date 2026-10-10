@@ -16,15 +16,37 @@ import {
   curveFor,
   isSolQuote,
 } from './solana.mjs'
-import { candlesFor, compareTrades, capSupply, marketCap } from './market-math.mjs'
+import {
+  candlesFor,
+  candleBuckets,
+  candlesFromBuckets,
+  compareTrades,
+  capSupply,
+  marketCap,
+} from './market-math.mjs'
 import { curveProgress, isAddress, isSignature } from '../shared/network.mjs'
 
 const MAX_TRADES = 4000
+const TRADE_CHUNK = 500 // trades per stored chunk (see the trade storage section)
+const MAX_CHUNKS = Math.ceil(MAX_TRADES / TRADE_CHUNK) + 1
+const CANDLE_BASE = 15 // seconds per stored candle bucket; every served interval is a multiple
 const PER_PASS = Number(process.env.QUANTPAD_INDEX_BATCH || 40)
 const MAX_EXTERNAL = 400
 // Defence in depth behind launch provenance: every summary lives in the one coins:list value.
+// Hidden mints do not count, and at the cap stale launches make room (see evictStale).
 const MAX_NATIVE = Number(process.env.QUANTPAD_MAX_LAUNCHES || 2000)
+// A launch is evictable once it is this old and has had no trade, or less than STALE_VOLUME_SOL
+// of volume, over the same span.
+const STALE_NATIVE_MS = 7 * 86400_000
+const STALE_VOLUME_SOL = 1
+// Native launches one wallet (the launcher) can add per UTC day; 0 turns the limit off.
+const LAUNCHES_PER_WALLET = Number(process.env.QUANTPAD_LAUNCHES_PER_WALLET || 10)
+const EVICT_BATCH = 10 // stale launches evicted at once when the cap is reached
+const CLAIM_TTL_MS = 30 * 86400_000 // an issued URI stays bound to its first coin this long
+const NOTICE_RETRY_MS = 60_000 // a failed onNativeLaunch call is retried by syncs after this
+const SYSTEM_PROGRAM = '11111111111111111111111111111111'
 const DAY = 86400
+const DAY_MS = DAY * 1000
 const INITIAL_SIGNATURES = 200 // a tracked coin's first read covers its newest signatures
 const SCAN_PAGES = 3 // signature pages per address per pass while paging back to a cursor
 const CREATE_PAGES = 5 // signature pages searched for a coin's create transaction
@@ -57,11 +79,51 @@ const rpc = (promise) =>
     throw rpcFailure(e)
   })
 
-// C2: /api/metadata records each URI it issues under this key.
-export const issuedUriKey = (uri) =>
-  'issued-uri:' + createHash('sha256').update(String(uri)).digest('hex').slice(0, 32)
+// C2: /api/metadata records each URI it issues under this key. A native registration consumes
+// it (K5), and binds the URI to that coin under issuedUriClaimKey, so one issued URI lists one
+// coin even when /api/metadata issues it again.
+const uriHash = (uri) => createHash('sha256').update(String(uri)).digest('hex').slice(0, 32)
+export const issuedUriKey = (uri) => 'issued-uri:' + uriHash(uri)
+export const issuedUriClaimKey = (uri) => 'issued-uri-mint:' + uriHash(uri)
 
-export function createIndexer({ connection, store, quantum, now = () => Date.now() }) {
+// Operator moderation list (QUANTPAD_HIDDEN_MINTS): a Set, an array, or a predicate.
+function hiddenTest(hidden) {
+  if (typeof hidden === 'function') return hidden
+  const set =
+    hidden instanceof Set
+      ? hidden
+      : new Set(
+          (Array.isArray(hidden)
+            ? hidden
+            : String(process.env.QUANTPAD_HIDDEN_MINTS || '').split(',')
+          ).map((s) => String(s).trim()),
+        )
+  return (mint) => set.has(mint)
+}
+
+// A record still carrying the placeholder identity track() stored before identity reads fell back
+// to Metaplex (legacy SPL Token coins) or when its identity read failed.
+const needsIdentity = (r) =>
+  r.identityPending === true ||
+  (r.identityPending === undefined && r.name === 'Unknown' && r.symbol === '???' && !r.uri)
+
+/**
+ * `onNativeLaunch({ mint, uri })` (K5) is awaited once after a coin becomes a native launch (a
+ * registration, or a tracked Quantum coin); a failed call is retried by later syncs, so it must be
+ * idempotent. `hidden` (default QUANTPAD_HIDDEN_MINTS) keeps hidden mints out of the native cap.
+ * `maxNative`, `staleVolume` (SOL) and `launchesPerWallet` override the native-cap settings.
+ */
+export function createIndexer({
+  connection,
+  store,
+  quantum,
+  now = () => Date.now(),
+  onNativeLaunch = null,
+  hidden,
+  maxNative = MAX_NATIVE,
+  staleVolume = STALE_VOLUME_SOL,
+  launchesPerWallet = LAUNCHES_PER_WALLET,
+}) {
   const keys = {
     list: 'coins:list',
     listLock: 'lock:coins:list',
@@ -70,9 +132,16 @@ export function createIndexer({ connection, store, quantum, now = () => Date.now
     // Not `sync:coin:<mint>`: server/application.mjs uses that as its manual-sync cooldown key.
     coinLease: (mint) => `lease:sync-coin:${mint}`,
     trades: (mint) => `trades:${mint}`,
+    tradeChunk: (mint, n) => `trades:${mint}:${n}`,
+    candles: (mint) => `trades:${mint}:candles`,
+    launcherDay: (launcher, day) => `launcher-day:${launcher}:${day}`,
     lease: 'sync:lease',
     cursor: 'sync:cursor',
   }
+  const isHidden = hiddenTest(hidden)
+  // Fields that start a native launch's onNativeLaunch notice (nothing to track without a callback).
+  const notice = (at = now()) =>
+    onNativeLaunch ? { nativeNotice: 'pending', nativeNoticeAt: at } : {}
 
   // A short exclusive section around a read-modify-write. A holder that died releases on its ttl.
   async function locked(name, fn, { ttl = 5000, wait = 8000 } = {}) {
@@ -147,16 +216,70 @@ export function createIndexer({ connection, store, quantum, now = () => Date.now
     if (q.quantum === null) return unknown
     if (q.quantum === false) return record.quantum === false ? {} : { quantum: false }
     const patch = { quantum: true }
-    if (record.external && (await canAddNative(record.mint)))
+    if (record.external && (await admitNative(record.mint, q.launcher)).ok)
       Object.assign(patch, {
         external: false,
         source: 'quantpad',
         provenance: 'quantum',
         launcher: q.launcher,
         createdAt: record.createdAt || q.createdAt,
+        ...notice(0), // the caller announces it right after saving
       })
     else if (!record.launcher && !record.external) patch.launcher = q.launcher
     return patch
+  }
+
+  // Applies a healQuantum patch to the record as stored now. The upgrade to a native launch applies
+  // only while that record is still external: a registration that won meanwhile keeps its fields.
+  const UPGRADE_FIELDS = ['external', 'source', 'provenance', 'launcher', 'createdAt']
+  function applyHeal(current, patch) {
+    if (patch.external !== false || current.external) return { ...current, ...patch }
+    const rest = { ...patch }
+    for (const field of [...UPGRADE_FIELDS, 'nativeNotice', 'nativeNoticeAt']) delete rest[field]
+    if (!current.launcher && patch.launcher) rest.launcher = patch.launcher
+    return { ...current, ...rest }
+  }
+
+  // Fields of `patch` that change `record`.
+  const changes = (record, patch) =>
+    Object.fromEntries(Object.entries(patch).filter(([field, value]) => record[field] !== value))
+
+  // Repairs a record's identity: re-read while it is a placeholder (legacy SPL Token coins were
+  // stored as 'Unknown $???' before identity reads fell back to Metaplex), and the zero key that
+  // legacy curves decoded as their creator. Returns the fields to change.
+  async function healIdentity(record) {
+    const patch = record.creator === SYSTEM_PROGRAM ? { creator: null } : {}
+    if (needsIdentity(record)) Object.assign(patch, await identityPatch(record.mint))
+    return changes(record, patch)
+  }
+
+  // A pending notice nobody is delivering: never attempted (a Quantum upgrade, or a coin whose uri
+  // was not known yet), or last attempted NOTICE_RETRY_MS ago (a failed call, or a registration
+  // that died before making it).
+  const noticeDue = (r) =>
+    !!onNativeLaunch &&
+    r?.nativeNotice === 'pending' &&
+    !r.external &&
+    now() - (r.nativeNoticeAt || 0) >= NOTICE_RETRY_MS
+
+  // K5: awaits onNativeLaunch for a native launch whose notice is pending, then marks it done. A
+  // failure is retried by a later sync (see noticeDue), and so is a coin whose uri could not be
+  // read yet. Resolves to the record.
+  async function announce(record) {
+    if (!onNativeLaunch || !record || record.external || record.nativeNotice !== 'pending')
+      return record
+    if (record.identityPending) return record
+    let ok = true
+    try {
+      await onNativeLaunch({ mint: record.mint, uri: record.uri })
+    } catch (e) {
+      ok = false
+      console.error('[indexer] onNativeLaunch', record.mint, e?.message || e)
+    }
+    const settle = ok ? { nativeNotice: 'done', nativeNoticeAt: now() } : { nativeNoticeAt: now() }
+    return writeCoin(record.mint, (c) =>
+      c && c.nativeNotice === 'pending' ? { ...c, ...settle } : c,
+    ).catch(() => record)
   }
 
   // ---- stored state -----------------------------------------------------------------------------
@@ -205,7 +328,7 @@ export function createIndexer({ connection, store, quantum, now = () => Date.now
       const record = await store.get(keys.coin(mint))
       if (record && !record.external) return
       await store.delete(keys.coin(mint))
-      await store.delete(keys.trades(mint))
+      await deleteTrades(mint)
     })
   }
 
@@ -215,12 +338,101 @@ export function createIndexer({ connection, store, quantum, now = () => Date.now
     return false
   }
 
-  async function canAddNative(mint) {
+  // The native cap (QP-SEC-9). Hidden mints are not counted. At the cap, launches that went stale
+  // are evicted to make room before a new one is refused.
+  const countedNative = (items) => items.filter((c) => !c.external && !isHidden(c.mint)).length
+  async function hasRoom(items) {
+    if (countedNative(items) < maxNative) return true
+    if (!(await evictStale(items))) return false
+    return countedNative(await list()) < maxNative
+  }
+
+  // Admits `mint` as a new native launch of `launcher`: room under the native cap (evicting stale
+  // launches), and a slot in the launcher's daily allowance. Resolves to { ok, refund } (refund
+  // returns the slot when the caller did not create the record after all), or { error }. Both
+  // refusals are 429 launch_cap: retrying now cannot help, and the coin can be registered later.
+  const NO_SLOT = { refund: async () => {} }
+  async function admitNative(mint, launcher) {
     const items = await list()
-    return (
-      items.some((c) => c.mint === mint && !c.external) ||
-      items.filter((c) => !c.external).length < MAX_NATIVE
-    )
+    if (items.some((c) => c.mint === mint && !c.external)) return { ok: true, ...NO_SLOT }
+    if (!(await hasRoom(items)))
+      return {
+        error: fail(429, 'Quant Pad is not accepting new launches right now.', 'launch_cap'),
+      }
+    const slot = await takeLaunchSlot(launcher)
+    if (!slot)
+      return {
+        error: fail(
+          429,
+          'This wallet has listed as many launches as Quant Pad takes in a day. Register this one again tomorrow.',
+          'launch_cap',
+        ),
+      }
+    return { ok: true, ...slot }
+  }
+
+  // The per-wallet daily allowance (QP-SEC-9). Wallets are free, so this only slows a script that
+  // lists junk from one wallet; staleness eviction is what keeps the cap from filling for good.
+  // Resolves to null when the launcher has none left today.
+  async function takeLaunchSlot(launcher) {
+    if (!launcher || !(launchesPerWallet > 0)) return NO_SLOT
+    const key = keys.launcherDay(launcher, Math.floor(now() / DAY_MS))
+    const change = (delta) =>
+      locked(`lock:${key}`, async () => {
+        const count = Number(await store.get(key)) || 0
+        if (delta > 0 && count >= launchesPerWallet) return false
+        await store.set(key, Math.max(0, count + delta), { ttl: 2 * DAY_MS })
+        return true
+      })
+    if (!(await change(1))) return null
+    return { refund: () => change(-1).catch(() => {}) }
+  }
+
+  // A native launch whose trading stopped: older than STALE_NATIVE_MS (from its on-chain create,
+  // so registering it again does not reset the clock) with no trade in the last STALE_NATIVE_MS,
+  // or less than `staleVolume` SOL traded over that span as of its last sync (dust trades do not
+  // keep junk listed). Quantum coins always stay (the keeper finds the coins it serves in this
+  // list), and so does a coin not yet known not to be one, or whose age or recent history is
+  // unknown (still being read). Works on summaries and on stored records.
+  function isStale(c, at = now()) {
+    if (!c || c.external || c.quantum !== false || c.behind) return false
+    const since = c.createdAt ? c.createdAt * 1000 : c.registeredAt || c.trackedAt || 0
+    if (!since || at - since < STALE_NATIVE_MS) return false
+    if (!c.lastTradeAt || at - c.lastTradeAt * 1000 >= STALE_NATIVE_MS) return true
+    return typeof c.volume7d === 'number' && c.volume7d < staleVolume
+  }
+
+  // Evicts up to EVICT_BATCH stale native launches, least recently traded first: each is re-checked
+  // and deleted (with its trades) under its own lock, then dropped from the list. Resolves to how
+  // many went.
+  async function evictStale(items) {
+    const at = now()
+    const candidates = items
+      .filter((c) => !isHidden(c.mint) && isStale(c, at))
+      .sort(
+        (a, b) =>
+          (a.lastTradeAt || 0) - (b.lastTradeAt || 0) || (a.createdAt || 0) - (b.createdAt || 0),
+      )
+      .slice(0, EVICT_BATCH)
+    const gone = new Set()
+    for (const { mint } of candidates) {
+      const evicted = await locked(keys.coinLock(mint), async () => {
+        const record = await store.get(keys.coin(mint))
+        if (record && !isStale(record, at)) return false
+        await store.delete(keys.coin(mint))
+        await deleteTrades(mint)
+        return true
+      }).catch(() => false)
+      if (evicted) gone.add(mint)
+    }
+    if (gone.size)
+      await locked(keys.listLock, async () =>
+        store.set(
+          keys.list,
+          (await list()).filter((c) => !gone.has(c.mint)),
+        ),
+      )
+    return gone.size
   }
 
   // Read-modify-write of one coin record under its lock. `change` gets the stored record (or null)
@@ -234,16 +446,162 @@ export function createIndexer({ connection, store, quantum, now = () => Date.now
     })
   }
 
+  // ---- trade storage (QP-SEC-4) ------------------------------------------------------------------
+  // A coin's trades (newest first, at most MAX_TRADES) are stored in chunks so a public page read
+  // touches only the chunks it returns. `trades:<mint>` holds the index
+  // { v: 2, total, next, chunks: [{ n, count, buys, sells }] }, newest chunk first; chunk n lives at
+  // `trades:<mint>:<n>`, newest trade first, and only its first `count` trades are live (the cap
+  // trims the oldest chunk without rewriting it). Chunks are full except the newest. A merge writes
+  // the chunks that change under new numbers (never reused), then the index, then deletes the
+  // chunks it replaced, so a reader holding an older index finds its chunks or none, and then reads
+  // the index again. Candles come from 15-second buckets kept at `trades:<mint>:candles`. A legacy
+  // value (the whole list as one array) is read as it is and rewritten by the coin's next sync.
+
+  // Every stored trade, newest first, with the chunks it came from. Call with the coin's lock held.
+  async function loadTrades(mint) {
+    const head = await store.get(keys.trades(mint))
+    if (!head) return { head: null, chunks: [], trades: [] }
+    if (Array.isArray(head)) return { head: null, legacy: true, chunks: [], trades: head }
+    const chunks = await Promise.all(
+      (head.chunks || []).map(async (c) => {
+        const rows = (await store.get(keys.tradeChunk(mint, c.n))) || []
+        return { n: c.n, items: rows.slice(0, c.count), damaged: rows.length < c.count }
+      }),
+    )
+    return { head, chunks, trades: chunks.flatMap((c) => c.items) }
+  }
+
+  // Stores `trades` (newest first, already capped) over what loadTrades read. Chunks whose trades
+  // are unchanged from the oldest end are kept (the one the cap trimmed only gets a smaller count);
+  // the rest are written again in full chunks, the newest partial.
+  async function saveTrades(mint, loaded, trades) {
+    const live = new Set(trades.map((t) => t.id))
+    const kept = [] // oldest first
+    let rest = trades.length // trades[0, rest) still need a chunk
+    for (const chunk of [...loaded.chunks].reverse()) {
+      if (chunk.damaged) break
+      let count = chunk.items.length
+      while (count && !live.has(chunk.items[count - 1].id)) count-- // cut by the cap
+      if (!count) continue
+      const start = rest - count
+      if (start < 0 || chunk.items.slice(0, count).some((t, i) => t.id !== trades[start + i].id))
+        break
+      kept.push({ n: chunk.n, items: chunk.items.slice(0, count) })
+      rest = start
+    }
+    // A partial newest chunk takes the newer trades: it is written again with them.
+    if (rest && kept.length && kept.at(-1).items.length < TRADE_CHUNK)
+      rest += kept.pop().items.length
+    let next = loaded.head?.next || 0
+    const written = []
+    for (let end = rest; end > 0; end -= TRADE_CHUNK)
+      written.push({ n: next++, items: trades.slice(Math.max(0, end - TRADE_CHUNK), end) })
+    await Promise.all(written.map((c) => store.set(keys.tradeChunk(mint, c.n), c.items)))
+    await store.set(keys.candles(mint), {
+      v: 1,
+      size: CANDLE_BASE,
+      buckets: candleBuckets(trades, CANDLE_BASE),
+    })
+    const chunks = [...kept, ...written].reverse().map(({ n, items }) => ({
+      n,
+      count: items.length,
+      buys: items.filter((t) => t.side === 'buy').length,
+      sells: items.filter((t) => t.side === 'sell').length,
+    }))
+    await store.set(keys.trades(mint), { v: 2, total: trades.length, next, chunks })
+    const current = new Set(chunks.map((c) => c.n))
+    await Promise.all(
+      loaded.chunks
+        .filter((c) => !current.has(c.n))
+        .map((c) => store.delete(keys.tradeChunk(mint, c.n)).catch(() => {})),
+    )
+  }
+
+  // Deletes a coin's stored trades, including chunks a merge that died wrote past its index.
+  async function deleteTrades(mint) {
+    const head = await store.get(keys.trades(mint))
+    const numbers = new Set()
+    if (head && !Array.isArray(head)) {
+      for (const c of head.chunks || []) numbers.add(c.n)
+      for (let n = head.next || 0; n < (head.next || 0) + MAX_CHUNKS; n++) numbers.add(n)
+    }
+    await Promise.all([...numbers].map((n) => store.delete(keys.tradeChunk(mint, n))))
+    await store.delete(keys.candles(mint))
+    await store.delete(keys.trades(mint))
+  }
+
   // Merges new trades into the stored ones (newest first) and tallies them into the record's 24h
   // activity. Call with the coin's lock held; returns the trades and the record's new `day`.
   async function mergeTrades(mint, record, fresh) {
-    const stored = (await store.get(keys.trades(mint))) || []
+    const loaded = await loadTrades(mint)
+    const stored = loaded.trades
     const ids = new Set(stored.map((t) => t.id))
     const added = fresh.filter((t) => !ids.has(t.id))
-    if (!added.length) return { trades: stored, day: record?.day ?? null }
+    if (!added.length) {
+      // A legacy or damaged value is rewritten in chunks even without new trades.
+      if (loaded.legacy || loaded.chunks.some((c) => c.damaged))
+        await saveTrades(mint, loaded, stored)
+      return { trades: stored, day: record?.day ?? null }
+    }
     const trades = [...added, ...stored].sort((a, b) => compareTrades(b, a)).slice(0, MAX_TRADES)
-    await store.set(keys.trades(mint), trades)
+    await saveTrades(mint, loaded, trades)
     return { trades, day: tally(record?.day, stored, added, now() / 1000) }
+  }
+
+  // One page of a coin's trades, newest first (`side` 'buy' or 'sell' filters), reading only the
+  // chunks the page covers.
+  async function tradePage(mint, { side, offset = 0, limit = 50 } = {}) {
+    offset = Math.max(0, Math.floor(Number(offset) || 0))
+    limit = Math.min(TRADE_CHUNK, Math.max(1, Math.floor(Number(limit) || 50)))
+    const page = (items, total) => ({
+      items,
+      total,
+      next: offset + limit < total ? offset + limit : null,
+    })
+    for (let attempt = 0; ; attempt++) {
+      const head = await store.get(keys.trades(mint))
+      if (!head || Array.isArray(head)) {
+        const rows = (head || []).filter((t) => !side || t.side === side)
+        return page(rows.slice(offset, offset + limit), rows.length)
+      }
+      const size = (c) =>
+        !side ? c.count : side === 'buy' ? c.buys : side === 'sell' ? c.sells : 0
+      const chunks = head.chunks || []
+      const total = chunks.reduce((sum, c) => sum + size(c), 0)
+      const items = []
+      let skip = offset
+      let missing = false
+      for (const c of chunks) {
+        if (items.length >= limit) break
+        if (skip >= size(c)) {
+          skip -= size(c)
+          continue
+        }
+        const rows = await store.get(keys.tradeChunk(mint, c.n))
+        if (!rows) {
+          missing = true // replaced by a merge since the index was read
+          break
+        }
+        const picked = rows.slice(0, c.count).filter((t) => !side || t.side === side)
+        items.push(...picked.slice(skip, skip + limit - items.length))
+        skip = 0
+      }
+      if (!missing || attempt >= 2) return page(items, total)
+    }
+  }
+
+  // Candles from the stored 15-second buckets; an interval that is not a multiple of those, or a
+  // coin whose trades are still in the legacy form, is computed from the trades.
+  async function candles(mint, interval = 60) {
+    interval = Number(interval) || 60
+    if (Number.isInteger(interval) && interval > 0 && interval % CANDLE_BASE === 0) {
+      const stored = await store.get(keys.candles(mint))
+      if (stored?.v === 1 && stored.size === CANDLE_BASE && Array.isArray(stored.buckets))
+        return candlesFromBuckets(stored.buckets, interval)
+    }
+    const head = await store.get(keys.trades(mint))
+    if (!head || Array.isArray(head)) return candlesFor(head || [], interval)
+    return candlesFor((await loadTrades(mint)).trades, interval)
   }
 
   // When the indexed history starts, in unix seconds: 0 when complete, null when unknown. Native
@@ -277,16 +635,24 @@ export function createIndexer({ connection, store, quantum, now = () => Date.now
       if (!live.curve.complete && live.curve.price) price = live.curve.price
     }
     if (record.complete && live?.pool?.price) price = live.pool.price
+    // A graduate with no PumpSwap pool trades elsewhere (legacy coins went to Raydium): its last
+    // curve trade is not its price.
+    if (record.complete && record.poolMissing) price = null
     if (record.complete) out.progress = 100
     const supply = capSupply(record)
+    const nowSecs = now() / 1000
+    const day = stats(trades, nowSecs, {
+      supply,
+      coveredFrom: coveredFrom(record),
+      behind: !!record.behind,
+      day: record.day,
+    })
     return {
       ...out,
-      ...stats(trades, now() / 1000, {
-        supply,
-        coveredFrom: coveredFrom(record),
-        behind: !!record.behind,
-        day: record.day,
-      }),
+      ...day,
+      // SOL traded over the last 7 days (a lower bound once the trade list is cut), which decides
+      // whether a launch is stale (QP-SEC-9).
+      volume7d: Math.max(weekVolume(trades, nowSecs), day.volume24h || 0),
       price,
       marketCap: marketCap(price, supply),
     }
@@ -340,23 +706,44 @@ export function createIndexer({ connection, store, quantum, now = () => Date.now
     if (!isSolQuote(base.quoteMint))
       throw fail(400, 'Quant Pad tracks SOL-quoted coins only.', 'not_sol_quote')
 
+    // Registering a coin again is idempotent (its issued URI was consumed the first time).
     const existing = await store.get(keys.coin(base.mint))
     if (existing && !existing.external) {
       const patch = await healQuantum(existing).catch(() => ({}))
       const changed = Object.keys(patch).length > 0
-      const record = changed ? await writeCoin(base.mint, (c) => c && { ...c, ...patch }) : existing
+      const record = changed
+        ? await writeCoin(base.mint, (c) => c && applyHeal(c, patch))
+        : existing
       if ((await ensureListed(record)) && changed) await saveSummary(record)
-      return record
+      return noticeDue(record) ? announce(record) : record
     }
 
     const q = await verifyQuantum(base.mint, base.creator, { minContextSlot: found.tx.slot })
-    const issued = q.quantum !== true && !!(await store.get(issuedUriKey(base.uri)))
+    // Issued by /api/metadata, or already bound to this coin by an earlier registration that a
+    // cap refused (the issued-uri record lasts a day; the binding lasts CLAIM_TTL_MS).
+    const claim = issuedUriClaimKey(base.uri)
+    let bound = (await store.get(claim)) === base.mint
+    const issued = bound || !!(await store.get(issuedUriKey(base.uri)))
     if (q.quantum !== true && !issued) {
       if (q.retry) throw notYet('Could not verify the launch yet. Try again in a moment.')
       throw fail(400, 'This coin was not launched on Quant Pad.', 'not_quantpad')
     }
-    if (!(await canAddNative(base.mint)))
-      throw fail(429, 'Quant Pad is not accepting new launches right now.', 'launch_cap')
+    // An issued URI lists one coin (QP-SEC-9): the first registration binds it to its mint
+    // atomically, and any other coin created with the same URI is refused. A verified Quantum
+    // coin does not need the URI, so it only takes it when it is still free.
+    if (issued && !bound) {
+      bound =
+        (await store.set(claim, base.mint, { nx: true, ttl: CLAIM_TTL_MS })) ||
+        (await store.get(claim)) === base.mint
+      if (!bound && q.quantum !== true)
+        throw fail(
+          400,
+          'That metadata was already used by another launch. Each launch needs its own.',
+          'not_quantpad',
+        )
+    }
+    const admitted = await admitNative(base.mint, q.launcher || base.launcher)
+    if (admitted.error) throw admitted.error
 
     // The dev buy usually shares the create transaction: index it now so the coin page has a price
     // immediately; the rest of the history is read by background syncs.
@@ -365,11 +752,14 @@ export function createIndexer({ connection, store, quantum, now = () => Date.now
       mint: base.mint,
       pool: null,
     }).filter((t) => !MARKERS.has(t.side))
-    const record = await writeCoin(base.mint, async (current) => {
+    let created = false
+    let record = await writeCoin(base.mint, async (current) => {
       if (current && !current.external) return current // registered concurrently
+      created = true // otherwise the launcher's slot taken above is returned
       const next = {
         ...current,
         ...base,
+        identityPending: false,
         quantum: q.quantum,
         launcher: q.launcher || base.launcher,
         external: false,
@@ -382,12 +772,20 @@ export function createIndexer({ connection, store, quantum, now = () => Date.now
         supply: current?.supply || null,
         behind: true, // the history after the create is read by the sync below
         registeredAt: now(),
+        ...notice(),
       }
       const { trades, day } = await mergeTrades(base.mint, current, initial)
       if (day) next.day = day
       return { ...next, ...derive(next, trades, null) }
+    }).catch(async (e) => {
+      await admitted.refund()
+      throw e
     })
+    if (!created) await admitted.refund()
+    // K5: the registration consumes the issued URI (the claim keeps it bound to this coin).
+    if (bound) await store.delete(issuedUriKey(base.uri)).catch(() => {})
     await saveSummary(record)
+    if (created) record = await announce(record)
     syncCoin(record.mint).catch(() => {})
     return record
   }
@@ -398,12 +796,16 @@ export function createIndexer({ connection, store, quantum, now = () => Date.now
     if (!isAddress(mint)) throw fail(400, 'Enter a valid Solana mint address.', 'invalid_mint')
     const existing = await store.get(keys.coin(mint))
     if (existing) {
-      const patch = await healQuantum(existing).catch(() => ({}))
+      const patch = {
+        ...(await healQuantum(existing).catch(() => ({}))),
+        ...(await healIdentity(existing)),
+      }
       const changed = Object.keys(patch).length > 0
-      const record = changed ? await writeCoin(mint, (c) => c && { ...c, ...patch }) : existing
+      let record = changed ? await writeCoin(mint, (c) => c && applyHeal(c, patch)) : existing
       // Re-list a coin that dropped out of the list, and sync one that never synced.
       const listed = await ensureListed(record)
       if (listed && changed) await saveSummary(record)
+      if (noticeDue(record)) record = await announce(record)
       if (!listed || !record.syncedAt) syncCoin(mint).catch(() => {})
       return record
     }
@@ -412,24 +814,35 @@ export function createIndexer({ connection, store, quantum, now = () => Date.now
     if (!curve) throw fail(404, 'That mint is not a pump.fun coin.', 'not_pump')
     if (!isSolQuote(curve.quoteMint))
       throw fail(400, 'Quant Pad tracks SOL-quoted coins only.', 'not_sol_quote')
-    const identity = (await readTokenIdentity(connection, mint)) || {}
+    // A failed identity read is not "no metadata": the record says so and syncs read it again.
+    const identity = await identityPatch(mint)
     const q = await verifyQuantum(mint, curve.creator)
-    const native = q.quantum === true && (await canAddNative(mint))
+    const admitted = q.quantum === true ? await admitNative(mint, q.launcher) : null
+    const native = !!admitted?.ok
     const draft = {
       mint,
-      name: identity.name || 'Unknown',
-      symbol: identity.symbol || '???',
-      uri: identity.uri || '',
+      name: 'Unknown',
+      symbol: '???',
+      uri: '',
+      ...identity,
       creator: curve.creator,
       bondingCurve: curveFor(mint),
       quantum: q.quantum,
       external: !native,
       source: native ? 'quantpad' : 'pump.fun',
-      ...(native ? { provenance: 'quantum', launcher: q.launcher } : {}),
+      // Without its uri yet, the launch is announced by the sync that reads it.
+      ...(native
+        ? {
+            provenance: 'quantum',
+            launcher: q.launcher,
+            ...notice(identity.identityPending ? 0 : now()),
+          }
+        : {}),
       mayhem: curve.mayhem,
       createdAt: native ? q.createdAt || null : null,
       complete: curve.complete,
-      pool: curve.complete ? poolFor(mint) : null,
+      poolMissing: market.poolMissing,
+      pool: curve.complete && !market.poolMissing ? poolFor(mint) : null,
       cursor: null,
       poolCursor: null,
       supply: market.supply,
@@ -444,11 +857,41 @@ export function createIndexer({ connection, store, quantum, now = () => Date.now
       registeredAt: now(),
     }
     draft.marketCap = marketCap(draft.price, capSupply(draft))
-    const record = await writeCoin(mint, (current) => current || draft)
+    let created = false
+    let record = await writeCoin(mint, (current) => {
+      if (current) return current
+      created = true
+      return draft
+    }).catch(async (e) => {
+      if (native) await admitted.refund()
+      throw e
+    })
+    if (native && !created) await admitted.refund()
     await saveSummary(record)
+    if (created) record = await announce(record)
     // Trade history fills in on background syncs.
     syncCoin(mint).catch(() => {})
     return record
+  }
+
+  // The coin's name, symbol, uri and token program as record fields, with identityPending true
+  // when they could not be read now (an RPC failure or a lagging node). A mint with no metadata at
+  // all settles with its placeholder.
+  async function identityPatch(mint) {
+    try {
+      const identity = await readTokenIdentity(connection, mint)
+      if (!identity) return { identityPending: false }
+      const { name, symbol, uri, tokenProgram } = identity
+      return {
+        name: name || 'Unknown',
+        symbol: symbol || '???',
+        uri: uri || '',
+        ...(tokenProgram ? { tokenProgram } : {}),
+        identityPending: false,
+      }
+    } catch {
+      return { identityPending: true }
+    }
   }
 
   // ---- syncing ------------------------------------------------------------------------------------
@@ -531,7 +974,8 @@ export function createIndexer({ connection, store, quantum, now = () => Date.now
     await collect(record.bondingCurve || curveFor(mint), 'cursor', null)
     if (fresh.some((t) => t.side === 'complete')) complete = true
     const pool = record.pool || poolFor(mint)
-    if (complete) await collect(pool, 'poolCursor', pool)
+    // A coin that left pump.fun before PumpSwap has no pool history to read.
+    if (complete && !record.poolMissing) await collect(pool, 'poolCursor', pool)
 
     const supplyStale = !record.supplyAt || now() - record.supplyAt > SUPPLY_TTL_MS
     let live = null
@@ -545,6 +989,7 @@ export function createIndexer({ connection, store, quantum, now = () => Date.now
       behind = true // the pool's history is read from the next pass
     }
     const healed = await healQuantum(record).catch(() => ({}))
+    const identity = Date.now() < deadline ? await healIdentity(record) : {}
     const created = fresh.find((t) => t.side === 'create')
     const priced = fresh.filter((t) => !MARKERS.has(t.side))
 
@@ -553,9 +998,9 @@ export function createIndexer({ connection, store, quantum, now = () => Date.now
     const saved = await writeCoin(mint, async (current) => {
       if (!current) return null // evicted meanwhile
       const { trades, day } = await mergeTrades(mint, current, priced)
+      const poolMissing = live ? !!live.poolMissing : !!current.poolMissing
       const next = {
-        ...current,
-        ...healed,
+        ...applyHeal(current, { ...healed, ...identity }),
         ...(day ? { day } : {}),
         cursor: state.cursor,
         poolCursor: state.poolCursor,
@@ -563,19 +1008,21 @@ export function createIndexer({ connection, store, quantum, now = () => Date.now
         historyFrom: state.historyFrom,
         seq: state.seq,
         complete: !!current.complete || complete,
-        pool: current.pool || (complete ? pool : null),
+        poolMissing,
+        pool: poolMissing ? null : current.pool || (complete ? pool : null),
         behind,
         syncedAt: now(),
       }
       if (!next.createdAt && created?.createdAt) next.createdAt = created.createdAt
       if (live?.supply) Object.assign(next, { supply: live.supply, supplyAt: now() })
       if (live?.curve) next.mayhem = live.curve.mayhem
+      if (!next.creator && live?.curve?.creator) next.creator = live.curve.creator
       return { ...next, ...derive(next, trades, live) }
     })
     if (!saved) return null
     await saveSummary(saved)
     if (error && !moved && !live) throw rpcFailure(error)
-    return saved
+    return noticeDue(saved) ? announce(saved) : saved
   }
 
   // One time-bounded pass: a lease keeps instances from double-indexing, and a shared rotation
@@ -616,6 +1063,23 @@ export function createIndexer({ connection, store, quantum, now = () => Date.now
     }
   }
 
+  // Listing filters and sorts. Unknown names (including inherited ones such as 'constructor') mean
+  // 'all' and 'newest', so external coins are only ever listed when 'tracked' is asked for
+  // (QP-SEC-7: the route allowlists both too).
+  const FILTERS = {
+    all: (c) => !c.external,
+    quantum: (c) => !!c.quantum && !c.external,
+    graduated: (c) => !!c.complete && !c.external,
+    tracked: (c) => !!c.external,
+  }
+  const SORTS = {
+    newest: (a, b) => (b.createdAt || 0) - (a.createdAt || 0),
+    volume: (a, b) => (b.volume24h || 0) - (a.volume24h || 0),
+    mcap: (a, b) => (b.marketCap || 0) - (a.marketCap || 0),
+    progress: (a, b) => (b.progress || 0) - (a.progress || 0),
+    trending: (a, b) =>
+      (b.trades24h || 0) - (a.trades24h || 0) || (b.volume24h || 0) - (a.volume24h || 0),
+  }
   async function market({
     q = '',
     sort = 'newest',
@@ -625,20 +1089,17 @@ export function createIndexer({ connection, store, quantum, now = () => Date.now
     offset = 0,
     limit = 24,
   } = {}) {
-    const needle = q.toLowerCase().trim()
+    const needle = String(q || '')
+      .toLowerCase()
+      .trim()
+    const shown = Object.hasOwn(FILTERS, filter) ? FILTERS[filter] : FILTERS.all
+    offset = Math.max(0, Math.floor(Number(offset) || 0))
+    limit = Math.max(1, Math.floor(Number(limit) || 24))
     let items = (await list()).filter(
       (c) =>
         !hidden.has(c.mint) &&
         (!launcher || c.launcher === launcher) &&
-        (filter === 'all'
-          ? !c.external
-          : filter === 'quantum'
-            ? c.quantum && !c.external
-            : filter === 'graduated'
-              ? c.complete && !c.external
-              : filter === 'tracked'
-                ? c.external
-                : true) &&
+        shown(c) &&
         (!needle ||
           [c.name, c.symbol, c.mint].some((s) =>
             String(s || '')
@@ -646,15 +1107,7 @@ export function createIndexer({ connection, store, quantum, now = () => Date.now
               .includes(needle),
           )),
     )
-    const by = {
-      newest: (a, b) => (b.createdAt || 0) - (a.createdAt || 0),
-      volume: (a, b) => (b.volume24h || 0) - (a.volume24h || 0),
-      mcap: (a, b) => (b.marketCap || 0) - (a.marketCap || 0),
-      progress: (a, b) => (b.progress || 0) - (a.progress || 0),
-      trending: (a, b) =>
-        (b.trades24h || 0) - (a.trades24h || 0) || (b.volume24h || 0) - (a.volume24h || 0),
-    }
-    items.sort(by[sort] || by.newest)
+    items.sort(Object.hasOwn(SORTS, sort) ? SORTS[sort] : SORTS.newest)
     return {
       items: items.slice(offset, offset + limit),
       total: items.length,
@@ -677,19 +1130,8 @@ export function createIndexer({ connection, store, quantum, now = () => Date.now
       return record
     },
     coin: (mint) => store.get(keys.coin(mint)),
-    async trades(mint, { side, offset = 0, limit = 50 } = {}) {
-      const rows = ((await store.get(keys.trades(mint))) || []).filter(
-        (t) => !side || t.side === side,
-      )
-      return {
-        items: rows.slice(offset, offset + limit),
-        total: rows.length,
-        next: offset + limit < rows.length ? offset + limit : null,
-      }
-    },
-    async candles(mint, interval) {
-      return candlesFor((await store.get(keys.trades(mint))) || [], interval)
-    },
+    trades: tradePage,
+    candles,
   }
 }
 
@@ -706,6 +1148,8 @@ export function summarize(r) {
     external: !!r.external,
     createdAt: r.createdAt ?? null,
     complete: !!r.complete,
+    // Graduated without a PumpSwap pool: migrated off pump.fun (or about to get its pool).
+    poolMissing: !!r.poolMissing,
     progress: r.progress ?? 0,
     price: r.price ?? null,
     marketCap: r.marketCap ?? null,
@@ -715,11 +1159,20 @@ export function summarize(r) {
     trades24h: r.trades24h ?? null,
     statsPartial: !!r.statsPartial || r.volume24h == null || r.trades24h == null,
     lastTradeAt: r.lastTradeAt ?? null,
+    volume7d: r.volume7d ?? null,
     image: r.image || null,
     trackedAt: r.registeredAt || null,
     syncedAt: r.syncedAt || null,
   }
 }
+
+// SOL traded in the 7 days before `nowSecs` by the trades given.
+export const weekVolume = (trades, nowSecs) =>
+  trades.reduce(
+    (sum, t) =>
+      t.price > 0 && t.timestamp >= nowSecs - 7 * DAY ? sum + (Number(t.solAmount) || 0) : sum,
+    0,
+  ) / 1e9
 
 const bucketOf = (secs) => Math.floor(secs / BUCKET) * BUCKET
 // The later of two [price, time] points.

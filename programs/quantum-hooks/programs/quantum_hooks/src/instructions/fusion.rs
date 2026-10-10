@@ -67,6 +67,9 @@ pub struct Fusion<'info> {
     pub quote_token_program: Program<'info, Token>,
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
+    /// CHECK: the Instructions sysvar (address checked); read when the caller is not the keeper.
+    #[account(address = anchor_lang::solana_program::sysvar::instructions::ID)]
+    pub instructions_sysvar: UncheckedAccount<'info>,
     /// CHECK: PumpSwap.
     #[account(executable, address = PUMP_AMM_PROGRAM_ID @ QuantumError::InvalidTargetProgram)]
     pub target_program: UncheckedAccount<'info>,
@@ -83,17 +86,24 @@ pub(crate) fn fusion<'info>(
     let now = Clock::get()?.unix_timestamp;
     let rent = Rent::get()?;
     let accounts = &mut ctx.accounts;
-    check_action_gate(
+    let is_keeper = accounts.caller.key() == accounts.config.keeper;
+    // Fusion needs the canonical pool, so the coin has graduated. If no pulse or burn has
+    // recorded that yet, it happens now, and the public gate below stays shut for a full grace.
+    let pool_live = pool_exists(&accounts.pool.to_account_info());
+    note_graduation(&mut accounts.quantum, pool_live, now);
+    let last_fusion_at = accounts.quantum.last_fusion_at;
+    let grace_from = last_fusion_at.max(accounts.quantum.graduated_at);
+    check_action_gate(&accounts.config, is_keeper, last_fusion_at, grace_from, now)?;
+    check_spend(
         &accounts.config,
-        &accounts.caller.key(),
-        accounts.quantum.last_fusion_at,
-        now,
+        is_keeper,
+        spend,
+        accounts.quantum.fusion_reserve,
     )?;
-    require!(spend > 0, QuantumError::ZeroAmount);
-    require!(
-        spend <= accounts.quantum.fusion_reserve && spend <= accounts.config.max_burn_lamports,
-        QuantumError::SpendTooHigh
-    );
+    if !is_keeper {
+        // The public fallback: a smaller cap (above) and no trading around it in its transaction.
+        check_public_transaction(&accounts.instructions_sysvar.to_account_info())?;
+    }
     check_discriminator(&buy_data, &PUMP_AMM_BUY_DISCRIMINATORS)?;
     check_discriminator(&deposit_data, &[PUMP_AMM_DEPOSIT_DISCRIMINATOR])?;
 

@@ -70,6 +70,7 @@ export default function PortfolioPage() {
     return (
       <div className="wrap">
         <Empty
+          level={1}
           title="Connect a wallet to see your portfolio"
           action={
             <button className="btn btn-primary" onClick={openDialog}>

@@ -710,7 +710,7 @@ test('media quota: per-network daily budget; pins only for metadata, once per bl
 })
 
 // A store with pending media (putMedia's `ttl`, promoteMedia) around the file store, recording
-// how the app uses it. `lost` names uploads whose pending copy expired before promotion.
+// how the app uses it. `lost` names uploads whose pending copy expired.
 function pendingMediaStore() {
   const files = createFileStore(mkdtempSync(join(tmpdir(), 'qp-pending-')))
   const calls = []
@@ -729,16 +729,21 @@ function pendingMediaStore() {
         calls.push(['promote', name, limit])
         return !lost.has(name)
       },
+      async getMedia(name) {
+        if (lost.has(name)) throw Object.assign(Error('Not found'), { code: 'ENOENT' })
+        return files.getMedia(name)
+      },
     },
   }
 }
 
-test('uploads stay pending until metadata references them, then the artwork is kept', async () => {
+test('uploads and metadata stay pending until a launch with that metadata registers (K5)', async () => {
   const pending = pendingMediaStore()
   const { app, close } = await boot({
     store: pending.store,
     pendingMediaMs: 3_600_000,
     mediaLimitBytes: 5_000_000,
+    publicUrl: 'http://qp.test',
   })
   const png = () =>
     'data:image/png;base64,' + Buffer.concat([PNG, randomBytes(16)]).toString('base64')
@@ -754,12 +759,24 @@ test('uploads stay pending until metadata references them, then the artwork is k
     })
     assert.equal(meta.status, 201)
     const id = meta.body.uri.split('/m/')[1]
-    assert.deepEqual(pending.calls.slice(1), [
-      ['promote', name, 5_000_000],
-      ['put', `meta-${id}.json`, 0],
-    ])
+    assert.deepEqual(
+      pending.calls.slice(1),
+      [
+        ['put', name, 3_600_000],
+        ['put', `meta-${id}.json`, 3_600_000],
+      ],
+      'the artwork stays pending for another period and the document is pending too',
+    )
     const doc = JSON.parse(String(await app.store.getMedia(`meta-${id}.json`)))
     assert.equal(doc.image, `http://qp.test/media/${name}`)
+
+    // The indexer registers a launch with this uri as native: both become permanent.
+    pending.calls.length = 0
+    await app.onNativeLaunch({ mint: MINTS[0], uri: meta.body.uri })
+    assert.deepEqual(pending.calls, [
+      ['promote', name, 5_000_000],
+      ['promote', `meta-${id}.json`, 5_000_000],
+    ])
 
     // The pending copy expired between the upload and the metadata request.
     const late = await direct(app, { path: '/api/media', body: { data: png() } })
@@ -775,8 +792,12 @@ test('uploads stay pending until metadata references them, then the artwork is k
   }
 })
 
-test('file store: an abandoned upload expires and frees the quota, referenced artwork stays', async () => {
-  const { app, close } = await boot({ pendingMediaMs: 200, mediaLimitBytes: 3000 })
+test('file store: an abandoned upload expires and frees the quota, launched artwork stays', async () => {
+  const { app, close } = await boot({
+    pendingMediaMs: 200,
+    mediaLimitBytes: 3000,
+    publicUrl: 'http://qp.test',
+  })
   const png = () =>
     'data:image/png;base64,' + Buffer.concat([PNG, randomBytes(1000)]).toString('base64')
   const upload = () => direct(app, { path: '/api/media', body: { data: png() } })
@@ -792,6 +813,7 @@ test('file store: an abandoned upload expires and frees the quota, referenced ar
       body: { name: 'Kept', symbol: 'KEPT', image: kept.body.url },
     })
     assert.equal(meta.status, 201)
+    await app.onNativeLaunch({ mint: MINTS[0], uri: meta.body.uri })
     const abandoned = await upload()
     assert.equal(abandoned.status, 201)
     const full = await upload()
@@ -801,7 +823,7 @@ test('file store: an abandoned upload expires and frees the quota, referenced ar
     await sleep(300)
     assert.equal((await upload()).status, 201, 'the expired upload gave its bytes back')
     assert.equal(await served(abandoned.body.url), false, 'the abandoned upload is gone')
-    assert.equal(await served(kept.body.url), true, 'artwork referenced by metadata is kept')
+    assert.equal(await served(kept.body.url), true, 'artwork of a launched coin is kept')
   } finally {
     await close()
   }
@@ -891,7 +913,8 @@ test('/api/rpc relays the upstream answer as received, keeping Retry-After on a 
 
 test('the index pass and the keeper share the serverless time budget', async () => {
   process.env.CRON_SECRET = 'budget-secret'
-  const { app, base, close } = await boot({ serverless: true })
+  // backgroundGapMs: 0, so the passes below run back to back (serverApp-r2 tests the gap).
+  const { app, base, close } = await boot({ serverless: true, backgroundGapMs: 0 })
   const calls = []
   const realNow = Date.now
   let offset = 0

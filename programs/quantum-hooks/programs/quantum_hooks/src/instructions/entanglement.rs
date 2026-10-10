@@ -4,7 +4,7 @@ use anchor_lang::solana_program::hash::hashv;
 
 use crate::constants::*;
 use crate::errors::QuantumError;
-use crate::events::{Claimed, EpochClosed, EpochPosted};
+use crate::events::{Claimed, EpochCancelled, EpochClosed, EpochPosted};
 use crate::state::{Config, Epoch, Quantum};
 use crate::utils::*;
 
@@ -64,6 +64,30 @@ pub struct CloseEpoch<'info> {
     pub payer: UncheckedAccount<'info>,
 }
 
+#[derive(Accounts)]
+#[instruction(index: u32)]
+pub struct CancelEpoch<'info> {
+    pub authority: Signer<'info>,
+    #[account(
+        seeds = [CONFIG_SEED],
+        bump = config.bump,
+        has_one = authority @ QuantumError::NotAuthority
+    )]
+    pub config: Box<Account<'info, Config>>,
+    #[account(mut, seeds = [QUANTUM_SEED, quantum.mint.as_ref()], bump = quantum.bump)]
+    pub quantum: Box<Account<'info, Quantum>>,
+    #[account(
+        mut,
+        seeds = [EPOCH_SEED, quantum.mint.as_ref(), &index.to_le_bytes()],
+        bump = epoch.bump,
+        close = keeper
+    )]
+    pub epoch: Box<Account<'info, Epoch>>,
+    /// CHECK: `config.keeper`, which pays epoch rent; receives the closed account's rent.
+    #[account(mut, address = config.keeper @ QuantumError::InvalidConfig)]
+    pub keeper: UncheckedAccount<'info>,
+}
+
 pub(crate) fn post_entanglement(
     ctx: Context<PostEntanglement>,
     root: [u8; 32],
@@ -76,13 +100,22 @@ pub(crate) fn post_entanglement(
     );
     require!(total > 0, QuantumError::ZeroAmount);
     let now = Clock::get()?.unix_timestamp;
+    let claim_delay = ctx.accounts.config.claim_delay;
     let quantum = &mut ctx.accounts.quantum;
     require!(
         total <= quantum.entangle_reserve,
         QuantumError::InsufficientEntangleReserve
     );
+    // One epoch per MIN_EPOCH_INTERVAL per coin, so even a leaked keeper key cannot post a
+    // second root right after a cancelled one.
+    let next_epoch_at = quantum
+        .last_epoch_at
+        .checked_add(MIN_EPOCH_INTERVAL)
+        .ok_or(QuantumError::MathOverflow)?;
+    require!(now >= next_epoch_at, QuantumError::EpochTooSoon);
 
     let index = quantum.epoch_count;
+    let claim_start = now.checked_add(claim_delay).ok_or(QuantumError::MathOverflow)?;
     let expires_at = now.checked_add(EPOCH_TTL).ok_or(QuantumError::MathOverflow)?;
     let epoch = &mut ctx.accounts.epoch;
     epoch.mint = quantum.mint;
@@ -92,6 +125,7 @@ pub(crate) fn post_entanglement(
     epoch.claimed = 0;
     epoch.leaf_count = leaf_count;
     epoch.created_at = now;
+    epoch.claim_start = claim_start;
     epoch.expires_at = expires_at;
     epoch.payer = ctx.accounts.keeper.key();
     epoch.bump = ctx.bumps.epoch;
@@ -100,6 +134,7 @@ pub(crate) fn post_entanglement(
     quantum.entangle_reserve = sub(quantum.entangle_reserve, total)?;
     quantum.entangle_owed = add(quantum.entangle_owed, total)?;
     quantum.epoch_count = index.checked_add(1).ok_or(QuantumError::MathOverflow)?;
+    quantum.last_epoch_at = now;
 
     emit!(EpochPosted {
         mint: quantum.mint,
@@ -107,6 +142,7 @@ pub(crate) fn post_entanglement(
         root,
         total,
         leaf_count,
+        claim_start,
         expires_at,
     });
     Ok(())
@@ -140,6 +176,7 @@ pub(crate) fn claim_entanglement(
     require!(proof.len() <= MAX_PROOF_LEN, QuantumError::ProofTooLong);
     let now = Clock::get()?.unix_timestamp;
     let epoch = &mut ctx.accounts.epoch;
+    require!(now >= epoch.claim_start, QuantumError::ClaimNotOpen);
     require!(now < epoch.expires_at, QuantumError::EpochExpired);
     require!(leaf_index < epoch.leaf_count, QuantumError::LeafOutOfRange);
     require!(!epoch.is_claimed(leaf_index), QuantumError::AlreadyClaimed);
@@ -203,6 +240,28 @@ pub(crate) fn close_epoch(ctx: Context<CloseEpoch>, index: u32) -> Result<()> {
         index,
         unclaimed,
         payer,
+    });
+    Ok(())
+}
+
+/// Authority only, before the epoch's claims open: the whole epoch total goes back to the
+/// Entanglement reserve and the account is closed. This is the veto on a root posted with a
+/// leaked keeper key; it does not reset the posting cadence (`last_epoch_at`).
+pub(crate) fn cancel_epoch(ctx: Context<CancelEpoch>, index: u32) -> Result<()> {
+    let now = Clock::get()?.unix_timestamp;
+    let epoch = &ctx.accounts.epoch;
+    require!(now < epoch.claim_start, QuantumError::CancelWindowClosed);
+    let returned = sub(epoch.total, epoch.claimed)?;
+
+    let quantum = &mut ctx.accounts.quantum;
+    quantum.entangle_owed = sub(quantum.entangle_owed, returned)?;
+    quantum.entangle_reserve = add(quantum.entangle_reserve, returned)?;
+
+    emit!(EpochCancelled {
+        mint: quantum.mint,
+        index,
+        returned,
+        rent_to: ctx.accounts.keeper.key(),
     });
     Ok(())
 }

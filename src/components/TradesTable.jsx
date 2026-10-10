@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { useResource } from '../lib/api.js'
 import { Segmented } from './UI.jsx'
-import { ago, formatUnits, price, short, sol, toSol } from '../lib/format.js'
+import { ago, formatUnits, short, sol, toSol } from '../lib/format.js'
 import { explorer } from '../../shared/network.mjs'
+import Price from './Price.js'
 
 export default function TradesTable({ mint, symbol, launcher }) {
   const [side, setSide] = useState('')
@@ -11,7 +12,9 @@ export default function TradesTable({ mint, symbol, launcher }) {
   return (
     <section className="instrument" aria-labelledby="trades-title" style={{ padding: 0 }}>
       <div className="panel-head" style={{ padding: '16px 16px 0' }}>
-        <h3 id="trades-title">Trades</h3>
+        <h2 id="trades-title" className="h3">
+          Trades
+        </h2>
         <Segmented
           label="Filter trades"
           value={side}
@@ -46,7 +49,9 @@ export default function TradesTable({ mint, symbol, launcher }) {
                   </td>
                   <td className="right num">{sol(toSol(t.solAmount), { unit: false })}</td>
                   <td className="right num">{formatUnits(t.tokenAmount, 6, 0)}</td>
-                  <td className="right num">{price(t.price)}</td>
+                  <td className="right num">
+                    <Price value={t.price} />
+                  </td>
                   <td>
                     <a
                       href={explorer.account(t.trader)}

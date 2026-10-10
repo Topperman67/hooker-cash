@@ -1,8 +1,20 @@
 import { Link } from 'react-router-dom'
 import { usePlatform } from '../context/PlatformContext.jsx'
 import { EXTRAS, MODULES } from '../lib/hooks.js'
-import { bps } from '../lib/format.js'
+import { bps, duration } from '../lib/format.js'
 import { explorer } from '../../shared/network.mjs'
+
+const CANCEL_NOTE =
+  'Until then Quant Pad can cancel the epoch, which returns its SOL to the holder reserve.'
+
+// When an epoch's claims open, from the config's claim delay (seconds) when the server reports it.
+function claimWindowText(seconds) {
+  const delay = Number(seconds)
+  if (seconds == null || !Number.isFinite(delay) || delay < 0)
+    return `An epoch’s claims open only after a delay set on-chain (6 hours by default). ${CANCEL_NOTE}`
+  if (delay === 0) return 'An epoch’s claims open as soon as it is posted.'
+  return `An epoch’s claims open ${duration(delay)} after it is posted. ${CANCEL_NOTE}`
+}
 
 const DETAIL = {
   creatorBps:
@@ -10,7 +22,7 @@ const DETAIL = {
   burnBps:
     'Accumulates in the coin’s burn reserve. The keeper spends it in capped buys (on the bonding curve before graduation, on PumpSwap after) and burns every token bought in the same transaction. If the keeper stalls, anyone can run the burn after a grace period.',
   entangleBps:
-    'Accumulates in the holder reserve. About once a day the keeper snapshots wallet balances, posts a merkle root for the epoch on-chain, and holders claim their SOL from the coin page within 30 days. Unclaimed SOL rolls into the next epoch.',
+    'Accumulates in the holder reserve. About once a day (never more often than every 20 hours) the keeper snapshots wallet balances and posts a merkle root for the epoch on-chain. Its claims open after a short delay, and holders then claim their SOL from the coin page until the epoch expires 30 days after posting. Unclaimed SOL rolls into the next epoch.',
   fusionBps:
     'Before graduation it simply accumulates. After graduation the reserve buys tokens and deposits both sides into the coin’s canonical PumpSwap pool. The LP tokens stay in the coin’s well; the program has no instruction to withdraw them.',
 }
@@ -92,12 +104,16 @@ export default function HooksPage() {
             hooks keep running even if Quant Pad’s keeper stops.
           </li>
           <li>
-            The keeper can post Entanglement epochs and run burns, but it has no instruction that
-            sends the well’s SOL anywhere else.
+            The keeper can post Entanglement epochs and run burns and Fusion, but it has no
+            instruction that sends the well’s SOL anywhere else.
           </li>
         </ul>
         <h2>What you should know</h2>
         <ul>
+          <li>
+            The keeper decides who each Entanglement epoch pays, and epochs are at least 20 hours
+            apart. {claimWindowText(quantum.claimDelay)}
+          </li>
           <li>
             pump.fun’s admins can reassign a coin’s creator (their community takeover feature). If
             that happens, future creator fees stop flowing into the well. Quant Pad cannot prevent

@@ -86,4 +86,15 @@ pub enum QuantumError {
     MathOverflow,
     #[msg("Well balance is below its rent minimum plus reserved ledgers")]
     WellInvariant,
+    // Appended (codes above are stable).
+    #[msg("The config changed since this update was prepared (expected_version does not match)")]
+    ConfigChanged,
+    #[msg("Claims for this Entanglement epoch are not open yet")]
+    ClaimNotOpen,
+    #[msg("This Entanglement epoch can no longer be cancelled: its claims have opened")]
+    CancelWindowClosed,
+    #[msg("The minimum interval between Entanglement epochs has not elapsed")]
+    EpochTooSoon,
+    #[msg("A public burn or fusion must be a top-level instruction and may share its transaction only with compute-budget, system, token, associated-token and Quantum Hooks instructions")]
+    PublicTransactionNotAllowed,
 }

@@ -6,6 +6,7 @@ import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { brotliCompress, gzip, constants as zlib } from 'node:zlib'
 import { createApplication } from './application.mjs'
+import { requestIsHttps, trustedProxyHops } from './request-limits.mjs'
 import securityHeaders from './security-headers.json' with { type: 'json' }
 
 const types = {
@@ -33,6 +34,24 @@ const compressors = {
     }),
   gzip: (data) => promisify(gzip)(data, { level: 9 }),
 }
+// API bodies are compressed per response, so they get cheaper settings than build files, which are
+// compressed once and cached.
+const dynamicCompressors = {
+  br: (data) =>
+    promisify(brotliCompress)(data, {
+      params: {
+        [zlib.BROTLI_PARAM_MODE]: zlib.BROTLI_MODE_TEXT,
+        [zlib.BROTLI_PARAM_QUALITY]: 5,
+        [zlib.BROTLI_PARAM_SIZE_HINT]: data.length,
+      },
+    }),
+  gzip: (data) => promisify(gzip)(data, { level: 6 }),
+}
+const COMPRESS_MIN_BYTES = 1024
+// Two years. Sent only to visitors who came over https (browsers ignore it over plain http anyway),
+// so local http checks are unaffected. includeSubDomains and preload are left to the operator's TLS
+// proxy, which knows whether every subdomain of the domain serves https.
+export const HSTS = 'max-age=63072000'
 // Vite content-hashes everything it emits under /assets/, so those files never change in place.
 const IMMUTABLE = 'public, max-age=31536000, immutable'
 const CACHE_LIMIT_BYTES = 64 * 1024 * 1024
@@ -48,6 +67,88 @@ export function pickEncoding(header) {
   for (const encoding of ['br', 'gzip'])
     if ((accepted.get(encoding) ?? accepted.get('*')) > 0) return encoding
   return null
+}
+
+// The production security headers (CSP and friends), plus HSTS when the visitor came over https:
+// a TLS socket, or X-Forwarded-Proto from a trusted proxy (QUANTPAD_TRUST_PROXY).
+export function applySecurityHeaders(req, res, { trustProxy = trustedProxyHops() } = {}) {
+  for (const [name, value] of Object.entries(securityHeaders)) res.setHeader(name, value)
+  if (requestIsHttps(req, trustProxy)) res.setHeader('Strict-Transport-Security', HSTS)
+}
+
+function addVary(res, field) {
+  const vary = String(res.getHeader('vary') || '')
+  if (!vary.split(',').some((v) => v.trim().toLowerCase() === field.toLowerCase()))
+    res.setHeader('Vary', vary ? `${vary}, ${field}` : field)
+}
+
+// Compresses a JSON response the API writes in one go (writeHead, then end with the body): brotli
+// or gzip when the client accepts it and the body is at least 1 KB, always with
+// Vary: Accept-Encoding. Headers stay unsent until end so the encoding can still be chosen;
+// streamed or already encoded responses pass through unchanged.
+export function compressJsonResponses(req, res, { minBytes = COMPRESS_MIN_BYTES } = {}) {
+  const encoding = req.method === 'HEAD' ? null : pickEncoding(req.headers['accept-encoding'])
+  const methods = ['writeHead', 'write', 'end']
+  const own = Object.fromEntries(
+    methods.filter((m) => Object.hasOwn(res, m)).map((m) => [m, res[m]]),
+  )
+  const restore = () => {
+    for (const m of methods)
+      if (m in own) res[m] = own[m]
+      else delete res[m]
+  }
+  res.writeHead = function (status, reason, headers) {
+    if (typeof reason !== 'string') [reason, headers] = [undefined, reason]
+    if (Array.isArray(headers)) {
+      restore()
+      return res.writeHead(...arguments)
+    }
+    res.statusCode = status
+    if (reason) res.statusMessage = reason
+    for (const [name, value] of Object.entries(headers || {}))
+      if (value !== undefined) res.setHeader(name, value)
+    return res
+  }
+  res.write = function (...args) {
+    restore()
+    return res.write(...args)
+  }
+  res.end = function (body, ...rest) {
+    restore()
+    const type = String(res.getHeader('content-type') || '')
+    const json =
+      /^application\/json\b/i.test(type) &&
+      !res.getHeader('content-encoding') &&
+      ![204, 304].includes(res.statusCode) &&
+      (typeof body === 'string' || body instanceof Uint8Array)
+    if (!json) return res.end(body, ...rest)
+    addVary(res, 'Accept-Encoding')
+    const bytes =
+      typeof body === 'string'
+        ? Buffer.from(body, typeof rest[0] === 'string' ? rest[0] : 'utf8')
+        : Buffer.from(body.buffer, body.byteOffset, body.byteLength)
+    if (!encoding || bytes.length < minBytes) return res.end(body, ...rest)
+    // Calls during compression (a second end, an error handler's reply) are dropped: this response
+    // is already decided.
+    res.writeHead = () => res
+    res.write = () => false
+    res.end = () => res
+    const done = rest.find((arg) => typeof arg === 'function')
+    dynamicCompressors[encoding](bytes).then(
+      (compressed) => {
+        restore()
+        res.setHeader('Content-Encoding', encoding)
+        res.setHeader('Content-Length', compressed.length)
+        res.end(compressed, done)
+      },
+      () => {
+        restore()
+        res.setHeader('Content-Length', bytes.length)
+        res.end(bytes, done)
+      },
+    )
+    return res
+  }
 }
 
 const notModified = (req, etag, mtime) => {
@@ -139,18 +240,28 @@ export function createStaticHandler({ dist = resolve('dist') } = {}) {
   }
 }
 
+// Every response gets the security headers; API responses (JSON written by the application) are
+// compressed here, since a self-hosted server has no edge to do it. Static files compress
+// themselves (and cache the result).
+export function createRequestHandler({ app, serveStatic, trustProxy = trustedProxyHops() }) {
+  return (req, res) => {
+    applySecurityHeaders(req, res, { trustProxy })
+    if (/^\/(?:api|m|media)\//.test(req.url || '')) compressJsonResponses(req, res)
+    app.middleware(req, res, () => serveStatic(req, res))
+  }
+}
+
 export async function startServer({
   port = Number(process.env.PORT || 5173),
   host = process.env.HOST || '127.0.0.1',
   dist = resolve('dist'),
 } = {}) {
   const app = await createApplication()
-  const serveStatic = createStaticHandler({ dist })
-  const server = createServer((req, res) => {
-    for (const [name, value] of Object.entries(securityHeaders)) res.setHeader(name, value)
-    app.middleware(req, res, () => serveStatic(req, res))
-  })
-  server.listen(port, host, () => console.log(`Quant Pad server listening on ${port}`))
+  const handler = createRequestHandler({ app, serveStatic: createStaticHandler({ dist }) })
+  const server = createServer(handler)
+  server.listen(port, host, () =>
+    console.log(`Quant Pad server listening on ${host}:${server.address().port}`),
+  )
   process.on('SIGTERM', () => {
     app.close()
     server.close()

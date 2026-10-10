@@ -50,6 +50,9 @@ pub struct QuantumBurn<'info> {
     pub quote_token_program: Option<Program<'info, Token>>,
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
+    /// CHECK: the Instructions sysvar (address checked); read when the caller is not the keeper.
+    #[account(address = anchor_lang::solana_program::sysvar::instructions::ID)]
+    pub instructions_sysvar: UncheckedAccount<'info>,
     /// CHECK: pump.fun or PumpSwap (checked in the handler).
     #[account(executable)]
     pub target_program: UncheckedAccount<'info>,
@@ -64,17 +67,19 @@ pub(crate) fn quantum_burn<'info>(
     let now = Clock::get()?.unix_timestamp;
     let rent = Rent::get()?;
     let accounts = &mut ctx.accounts;
-    check_action_gate(
+    let is_keeper = accounts.caller.key() == accounts.config.keeper;
+    let last_burn_at = accounts.quantum.last_burn_at;
+    check_action_gate(&accounts.config, is_keeper, last_burn_at, last_burn_at, now)?;
+    check_spend(
         &accounts.config,
-        &accounts.caller.key(),
-        accounts.quantum.last_burn_at,
-        now,
+        is_keeper,
+        spend,
+        accounts.quantum.burn_reserve,
     )?;
-    require!(spend > 0, QuantumError::ZeroAmount);
-    require!(
-        spend <= accounts.quantum.burn_reserve && spend <= accounts.config.max_burn_lamports,
-        QuantumError::SpendTooHigh
-    );
+    if !is_keeper {
+        // The public fallback: a smaller cap (above) and no trading around it in its transaction.
+        check_public_transaction(&accounts.instructions_sysvar.to_account_info())?;
+    }
 
     let target = accounts.target_program.key();
     let pool_route = if target == PUMP_PROGRAM_ID {
@@ -185,6 +190,8 @@ pub(crate) fn quantum_burn<'info>(
     quantum.total_burn_sol = add(quantum.total_burn_sol, spent)?;
     quantum.total_burned_tokens = add(quantum.total_burned_tokens, tokens_after)?;
     quantum.last_burn_at = now;
+    // A buy through the canonical pool proves the coin migrated.
+    note_graduation(quantum, pool_route, now);
     assert_well_invariant(&well, quantum, &rent)?;
 
     emit!(Burned {
