@@ -16,3 +16,7 @@ programs/quantum-hooks/node_modules
 programs/quantum-hooks/.anchor
 programs/quantum-hooks/test-ledger
 programs/quantum-hooks/tests/fixtures/*.so
+ad/node_modules
+ad/out
+ad/public/review
+ad/public/soundtrack.wav

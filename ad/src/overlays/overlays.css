@@ -1,0 +1,379 @@
+/* Type and materials from the app (src/styles/base.css, DESIGN.md). */
+:root {
+  --pearl: #e9ecf0;
+  --steel: #5f6876;
+  --ink: #15181d;
+  --on-graphite: #e9ecf0;
+  --on-graphite-2: #c4cad4;
+  --display: 'Hubot Sans Variable', system-ui, sans-serif;
+  --body: 'Mona Sans Variable', system-ui, sans-serif;
+  --mono: 'Martian Mono Variable', ui-monospace, monospace;
+  --chrome: linear-gradient(
+    180deg,
+    #ffffff 0%,
+    #f4f7fa 14%,
+    #bec6d1 34%,
+    #6e7785 45%,
+    #1b1f27 50%,
+    #2c333e 54%,
+    #7e8999 64%,
+    #d3d9e2 75%,
+    #a4aebc 80%,
+    #e8ecf2 90%,
+    #ffffff 100%
+  );
+  --silver-chrome: linear-gradient(180deg, #ffffff 0%, #e3e8ef 42%, #8c95a3 50%, #c8cfd9 62%, #f4f6fa 100%);
+  --cobalt-anodised: linear-gradient(180deg, #4a66ff 0%, #2e4bff 48%, #1b33e0 100%);
+  --lines-thin: linear-gradient(
+    115deg,
+    transparent 0 47%,
+    rgba(255, 62, 165, 0.95) 47% 47.5%,
+    transparent 47.5% 48.2%,
+    rgba(255, 194, 26, 1) 48.2% 48.7%,
+    transparent 48.7% 49.4%,
+    rgba(18, 194, 110, 0.95) 49.4% 49.9%,
+    transparent 49.9% 50.6%,
+    rgba(46, 75, 255, 1) 50.6% 51.1%,
+    transparent 51.1% 100%
+  );
+  --lines: linear-gradient(
+    115deg,
+    transparent 0 38%,
+    rgba(255, 62, 165, 0.9) 38% 39.6%,
+    transparent 39.6% 41.2%,
+    rgba(255, 194, 26, 0.95) 41.2% 42.8%,
+    transparent 42.8% 44.4%,
+    rgba(18, 194, 110, 0.9) 44.4% 46%,
+    transparent 46% 47.6%,
+    rgba(46, 75, 255, 0.95) 47.6% 49.2%,
+    transparent 49.2% 100%
+  );
+}
+
+.layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  font-family: var(--body);
+  -webkit-font-smoothing: antialiased;
+}
+
+.super {
+  position: absolute;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-family: var(--display);
+  font-weight: 620;
+  font-stretch: 112%;
+  font-size: 58px;
+  letter-spacing: -0.01em;
+  color: var(--on-graphite);
+  text-shadow: 0 2px 30px rgba(0, 0, 0, 0.6);
+}
+
+/* hook label chips, shot 3 */
+.chip {
+  position: absolute;
+  left: 120px;
+  bottom: 120px;
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  column-gap: 22px;
+  row-gap: 6px;
+  padding: 26px 40px 28px 30px;
+  border-radius: 30px;
+  background: linear-gradient(180deg, rgba(43, 49, 59, 0.82), rgba(23, 26, 32, 0.86));
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    0 30px 60px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(14px);
+}
+.chip-index {
+  grid-row: span 2;
+  font-family: var(--mono);
+  font-size: 22px;
+  color: var(--on-graphite-2);
+  align-self: start;
+  padding-top: 12px;
+}
+.chip-name {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  font-family: var(--display);
+  font-weight: 760;
+  font-stretch: 115%;
+  font-size: 54px;
+  color: #fff;
+  letter-spacing: -0.01em;
+}
+.chip-dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--c);
+  box-shadow:
+    0 0 14px var(--c),
+    0 0 34px var(--c);
+}
+.chip-short {
+  font-size: 30px;
+  font-weight: 500;
+  color: var(--on-graphite-2);
+}
+
+/* holographic launch card, shot 4 (after src/styles/pages.css .holo) */
+.card-stage {
+  position: absolute;
+  right: 150px;
+  top: 150px;
+  width: 470px;
+  perspective: 1400px;
+}
+.holo {
+  position: relative;
+  border-radius: 30px;
+  padding: 1.5px;
+  background: linear-gradient(180deg, #5b6371, #1b1f27 40%, #3d4451);
+  box-shadow: 0 50px 90px rgba(0, 0, 0, 0.55);
+  overflow: hidden;
+  isolation: isolate;
+  transform-style: preserve-3d;
+}
+.holo-inner {
+  position: relative;
+  z-index: 1;
+  border-radius: 29px;
+  background:
+    radial-gradient(120% 70% at 50% 0%, rgba(255, 255, 255, 0.08), transparent 60%),
+    linear-gradient(180deg, #2b313b 0%, #1d2128 100%);
+  color: var(--on-graphite);
+  padding: 26px 30px 30px;
+  display: grid;
+  gap: 14px;
+  justify-items: center;
+  text-align: center;
+}
+.holo-head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 20px;
+  font-weight: 650;
+  color: var(--on-graphite-2);
+}
+.holo-head img {
+  width: 32px;
+  height: 32px;
+}
+.holo-art {
+  padding: 8px;
+  border-radius: 28px;
+  background: var(--chrome);
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.4);
+}
+.art {
+  position: relative;
+  width: 168px;
+  height: 168px;
+  border-radius: 21px;
+  overflow: hidden;
+  background: radial-gradient(70% 70% at 50% 40%, #323844, #12151a 75%);
+}
+.art-orb {
+  position: absolute;
+  left: 34px;
+  top: 30px;
+  width: 100px;
+  height: 100px;
+  border-radius: 50%;
+  background:
+    radial-gradient(40% 35% at 35% 30%, #ffffff, transparent 70%),
+    radial-gradient(70% 70% at 50% 55%, #c8cfd9 0%, #6e7785 45%, #1b1f27 70%, #8c95a3 92%);
+  box-shadow: 0 16px 30px rgba(0, 0, 0, 0.6);
+}
+.art-lines {
+  position: absolute;
+  inset: -40%;
+  background: var(--lines);
+  background-size: 100% 100%;
+  opacity: 0.9;
+  mix-blend-mode: screen;
+}
+.holo-symbol {
+  font-family: var(--display);
+  font-size: 56px;
+  font-stretch: 125%;
+  font-weight: 900;
+  line-height: 1;
+  background: var(--silver-chrome);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  margin-top: 4px;
+}
+.holo-name {
+  font-size: 22px;
+  color: var(--on-graphite-2);
+  margin-top: -8px;
+}
+.holo-hooks {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  width: 100%;
+  display: grid;
+  gap: 11px;
+  font-size: 19px;
+  text-align: left;
+}
+.holo-hooks li {
+  display: grid;
+  grid-template-columns: 158px minmax(0, 1fr) 62px;
+  align-items: center;
+  gap: 14px;
+  color: var(--on-graphite-2);
+}
+.holo-bar {
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+.holo-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 4px;
+  background: var(--c);
+  box-shadow: 0 0 14px var(--c);
+}
+.holo-hooks .num {
+  font-family: var(--mono);
+  text-align: right;
+  color: #fff;
+}
+.holo-foot {
+  width: 100%;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-top: 12px;
+  font-size: 17px;
+  color: var(--on-graphite-2);
+}
+.holo-sheen {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  border-radius: 30px;
+  background: var(--lines-thin);
+  background-size: 220% 220%;
+  mix-blend-mode: screen;
+  opacity: 0.8;
+  -webkit-mask-image: radial-gradient(62% 52% at 50% 62%, rgba(0, 0, 0, 0.12) 45%, #000 100%);
+  mask-image: radial-gradient(62% 52% at 50% 62%, rgba(0, 0, 0, 0.12) 45%, #000 100%);
+}
+
+.rules {
+  position: absolute;
+  left: 100px;
+  bottom: 88px;
+  font-family: var(--display);
+  font-weight: 700;
+  font-stretch: 114%;
+  font-size: 50px;
+  line-height: 1.1;
+  color: #fff;
+  letter-spacing: -0.012em;
+  text-shadow: 0 4px 40px rgba(0, 0, 0, 0.7);
+}
+
+/* kinetic titles, shot 5 */
+.title {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-family: var(--display);
+  font-weight: 800;
+  font-stretch: 116%;
+  font-size: 124px;
+  letter-spacing: -0.015em;
+  color: #fff;
+  text-shadow: 0 6px 60px rgba(0, 0, 0, 0.75);
+  white-space: nowrap;
+}
+.title::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: radial-gradient(48% 34% at 50% 50%, rgba(0, 0, 0, 0.62), transparent 100%);
+}
+.title-chrome {
+  font-stretch: 125%;
+  font-weight: 900;
+  font-size: 160px;
+  text-shadow: none;
+}
+.title-chrome span {
+  background: var(--lines-thin), var(--chrome);
+  background-size:
+    300% 100%,
+    100% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 10px 40px rgba(0, 0, 0, 0.8));
+}
+
+/* end card */
+.cta {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 720px;
+  display: grid;
+  justify-items: center;
+  gap: 22px;
+}
+.cta-button {
+  position: relative;
+  overflow: hidden;
+  padding: 24px 54px 26px;
+  border-radius: 999px;
+  background: var(--cobalt-anodised);
+  color: #fff;
+  font-family: var(--body);
+  font-weight: 650;
+  font-size: 36px;
+  letter-spacing: 0.005em;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.45),
+    0 18px 40px rgba(46, 75, 255, 0.35);
+}
+.cta-sheen {
+  position: absolute;
+  inset: 0;
+  background: var(--lines);
+  background-size: 300% 100%;
+  mix-blend-mode: screen;
+  opacity: 0.8;
+}
+.cta-url {
+  font-family: var(--mono);
+  font-size: 26px;
+  color: var(--ink);
+}
+.fine {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 52px;
+  text-align: center;
+  font-size: 21px;
+  font-weight: 500;
+  color: var(--steel);
+}

@@ -1,0 +1,30 @@
+{
+  "name": "quantpad-ad",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "audio": "node scripts/make-audio.mjs",
+    "logo": "node scripts/extract-logo.mjs",
+    "studio": "remotion studio src/index.js --port 3000",
+    "review": "node scripts/review.mjs",
+    "render": "npm run audio && node scripts/render.mjs"
+  },
+  "dependencies": {
+    "@fontsource-variable/hubot-sans": "5.3.0",
+    "@fontsource-variable/martian-mono": "5.3.0",
+    "@fontsource-variable/mona-sans": "5.3.0",
+    "@react-three/drei": "10.7.9",
+    "@react-three/fiber": "9.8.2",
+    "@remotion/bundler": "4.0.535",
+    "@remotion/cli": "4.0.535",
+    "@remotion/renderer": "4.0.535",
+    "@remotion/three": "4.0.535",
+    "polygon-clipping": "0.15.7",
+    "postprocessing": "6.39.5",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "remotion": "4.0.535",
+    "three": "0.186.1"
+  }
+}
