@@ -114,7 +114,9 @@ export default function LaunchPage() {
   const quantumBlocked = wantsQuantum && !quantum.available
   const quantumPaused = quantumBlocked && !!quantum.paused
   const set = (patch) => setDraft((d) => ({ ...d, ...patch }))
-  const tier = launchTiers.find((t) => t.feeBps === Number(draft.tax)) || launchTiers[0]
+  // Standard launches have a fixed 1% tax (the first tier); Quantum launches pick theirs.
+  const tier =
+    (wantsQuantum && launchTiers.find((t) => t.feeBps === Number(draft.tax))) || launchTiers[0]
   useEffect(() => {
     try {
       localStorage.setItem(DRAFT_KEY, JSON.stringify(draft))
@@ -507,35 +509,33 @@ export default function LaunchPage() {
             <h2 id="hooks-step">
               <span className="step-index">2</span> Quantum Hooks
             </h2>
-            <Segmented
-              label="Launch type"
-              value={wantsQuantum ? 'quantum' : 'standard'}
-              onChange={(mode) => set({ mode })}
-              options={[
-                ['quantum', 'Quantum launch'],
-                ['standard', 'Standard Meteora'],
-              ]}
-            />
-            <div className="tax-picker" style={{ marginTop: 16 }}>
+            <div className="launch-type">
               <Segmented
-                label="Trading tax"
-                value={tier.feeBps}
-                onChange={(tax) => set({ tax })}
-                options={launchTiers.map((t) => [t.feeBps, `${t.feeBps / 100}% tax`])}
+                label="Launch type"
+                value={wantsQuantum ? 'quantum' : 'standard'}
+                onChange={(mode) => set({ mode })}
+                options={[
+                  ['quantum', 'Quantum launch'],
+                  ['standard', 'Standard Meteora'],
+                ]}
               />
+            </div>
+            <div className="tax-picker" style={{ marginTop: 16 }}>
+              {wantsQuantum && (
+                <Segmented
+                  label="Trading tax"
+                  value={tier.feeBps}
+                  onChange={(tax) => set({ tax })}
+                  options={launchTiers.map((t) => [t.feeBps, `${t.feeBps / 100}% tax`])}
+                />
+              )}
               <p className="faint" style={{ margin: '8px 0 0', fontSize: 'var(--t-xs)' }}>
+                {wantsQuantum ? '' : 'Standard Meteora launches have a fixed 1% trading tax. '}
                 Every buy and sell pays {tier.feeBps / 100}% to the coin’s creator (less Meteora’s
                 protocol share), before and after graduation. For the first 2 minutes it starts at
                 25% and falls to {tier.feeBps / 100}%, to stop snipers.
               </p>
             </div>
-            {quantumBlocked && (
-              <p className="notice notice-warn" style={{ marginTop: 14 }}>
-                {quantumPaused
-                  ? 'Quantum launches are paused right now. You can design your hooks now; to launch today, switch to a standard Meteora launch.'
-                  : 'Quantum Hooks are not live on mainnet yet. You can design your hooks now; to launch today, switch to a standard Meteora launch.'}
-              </p>
-            )}
             {wantsQuantum ? (
               <>
                 <p className="muted" style={{ margin: '14px 0' }}>
