@@ -52,4 +52,4 @@ Quantum Hooks can take a protocol share of each fee pulse before it is split. Th
   </tbody>
 </table>
 
-<a href="https://quantpad.vercel.app/launch" class="button primary" data-icon="rocket">Launch with Quantum Hooks</a>
+<a href="https://quant-pad.vercel.app/launch" class="button primary" data-icon="rocket">Launch with Quantum Hooks</a>
