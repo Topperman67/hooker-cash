@@ -1,0 +1,32 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<!-- The link-preview image (public/og.png, og:image in index.html). plate.png is the earlier og.png
+     with the first three headline lines removed: the lockup, chrome Q, "Quantum Hooks." and the
+     sub-line stay baked in, and the lines above them are set here in the same Hubot Sans settings.
+     Render: node social/render.mjs social/og/og.html 1200 630 public/og.png -->
+<style>
+  @font-face { font-family: 'Hubot Sans'; src: url('../../node_modules/@fontsource-variable/hubot-sans/files/hubot-sans-latin-wdth-normal.woff2') format('woff2'); font-weight: 200 900; font-stretch: 75% 125%; }
+  html, body { margin: 0; width: 1200px; height: 630px; overflow: hidden; background: #e9ecf0; }
+  .plate { position: absolute; inset: 0; width: 1200px; height: 630px; }
+  h1 {
+    position: absolute; left: 71px; top: 170px; margin: 0;
+    font-family: 'Hubot Sans'; font-weight: 900; font-stretch: 112%; font-size: 62px;
+    line-height: 62px; letter-spacing: -0.02em; color: #15181d; white-space: nowrap;
+  }
+  h1 span { display: block; }
+  /* The symbol's ink fills about 0.15–0.85 of its box across and the cap height down: pull it
+     left onto the text edge and keep a word-space gap to the M. */
+  h1 img { width: 0.9em; height: 0.9em; vertical-align: -0.08em; margin: 0 0.1em 0 -0.09em; }
+</style>
+</head>
+<body>
+<img class="plate" src="plate.png" alt="">
+<h1>
+  <span>Launch on</span>
+  <span><img src="../../public/partners/meteora/symbol.svg" alt="">Meteora. Route</span>
+  <span>every fee through</span>
+</h1>
+</body>
+</html>
