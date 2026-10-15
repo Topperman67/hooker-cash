@@ -8,3 +8,5 @@ playwright-report/
 .quantpad-data/
 .hookbrew-data/
 ad/
+# Keypairs of created DBC configs (scripts/create-dbc-config.mjs)
+dbc-config-*.json

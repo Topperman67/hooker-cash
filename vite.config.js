@@ -119,6 +119,8 @@ export default defineConfig(({ mode }) => ({
         '**/.git/**',
         '**/target/**',
         '**/*keypair*.json',
+        // Keypairs of created DBC configs (scripts/create-dbc-config.mjs writes them to the repo root).
+        '**/dbc-config-*.json',
         '**/.quantpad-data/**',
         '**/programs/**',
         '**/scripts/**',
