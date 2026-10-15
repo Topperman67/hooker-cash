@@ -1,7 +1,7 @@
 [package]
 name = "quantum_hooks"
 version = "0.1.0"
-description = "Quant Pad Quantum Hooks: creator-fee routing for pump.fun coins"
+description = "Quant Pad Quantum Hooks: creator-fee routing for Meteora coins"
 edition = "2021"
 # Solana platform-tools v1.43 ships rustc/cargo 1.79: lock dependencies to versions that build with it
 # (`scripts/anchor-docker.* lock` resolves with CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback).

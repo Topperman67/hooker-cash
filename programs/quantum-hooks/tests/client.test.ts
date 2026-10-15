@@ -1,88 +1,72 @@
-// Offline checks of shared/quantum.mjs and of the program's CPI allow-list against the pump.fun
-// IDLs vendored in @pump-fun/pump-sdk 4.0.0.
+// Offline checks of shared/quantum.mjs, shared/meteora.mjs and of the program's Meteora
+// interface (src/meteora.rs) against the pinned IDLs in shared/idl.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { Keypair, PublicKey } from '@solana/web3.js'
+import { NATIVE_MINT } from '@solana/spl-token'
 import * as q from '../../../shared/quantum.mjs'
+import * as m from '../../../shared/meteora.mjs'
 
-const sdkIdl = (file: string) =>
-  JSON.parse(
-    readFileSync(
-      new URL(`../../../node_modules/@pump-fun/pump-sdk/src/idl/${file}`, import.meta.url),
-      'utf8',
-    ),
-  )
-const pumpIdl = sdkIdl('pump.json')
-const ammIdl = sdkIdl('pump_amm.json')
-const constants = readFileSync(
-  new URL('../programs/quantum_hooks/src/constants.rs', import.meta.url),
+const idlFile = (file: string) =>
+  JSON.parse(readFileSync(new URL(`../../../shared/idl/${file}`, import.meta.url), 'utf8'))
+const dbcIdl = idlFile('meteora_dbc.json')
+const dammIdl = idlFile('meteora_damm_v2.json')
+const meteoraRs = readFileSync(
+  new URL('../programs/quantum_hooks/src/meteora.rs', import.meta.url),
   'utf8',
 )
-
-const disc = (name: string) => [
-  ...createHash('sha256').update(`global:${name}`).digest().subarray(0, 8),
-]
-function rustArray(name: string) {
-  const block = constants.slice(constants.indexOf(`pub const ${name}`))
-  const start = block.indexOf('= [')
-  const body = block.slice(start, block.indexOf('];', start) + 1)
-  return [...body.matchAll(/\[([\d,\s]+)\]/g)].map((m) =>
-    m[1]
-      .split(',')
-      .map((x) => Number(x.trim()))
-      .filter((x) => !Number.isNaN(x)),
-  )
+const rustConst = (name: string) => {
+  const found = meteoraRs.match(new RegExp(String.raw`pub const ${name}: \[u8; 8\] = \[([\d,\s]+)\]`))
+  assert.ok(found, `${name} in meteora.rs`)
+  return found![1].split(',').map((x) => Number(x.trim()))
+}
+const rustKey = (name: string) => {
+  const found = meteoraRs.match(new RegExp(String.raw`pub const ${name}: Pubkey = pubkey!\("([1-9A-HJ-NP-Za-km-z]+)"\)`))
+  assert.ok(found, `${name} in meteora.rs`)
+  return found![1]
 }
 
-test('pump.fun buy allow-list matches the SDK IDL and sha256("global:<name>")', () => {
-  const names = [
-    'buy',
-    'buy_exact_sol_in',
-    'buy_v2',
-    'buy_exact_quote_in_v2',
-    'buy_v3',
-    'buy_exact_quote_in_v3',
-  ]
-  const list = rustArray('PUMP_BUY_DISCRIMINATORS')
-  assert.equal(list.length, names.length)
-  names.forEach((name, i) => {
-    const ix = pumpIdl.instructions.find((x: any) => x.name === name)
-    assert.ok(ix, `pump IDL has ${name}`)
-    assert.deepEqual(ix.discriminator, disc(name))
-    assert.deepEqual(list[i], ix.discriminator, name)
-  })
-  for (const sell of ['sell', 'sell_v2', 'sell_v3']) {
-    const ix = pumpIdl.instructions.find((x: any) => x.name === sell)
-    assert.ok(
-      !list.some((d) => d.join() === ix.discriminator.join()),
-      `${sell} must not be allowed`,
-    )
-  }
+test('the program calls exactly the Meteora instructions in the pinned IDLs', () => {
+  const ix = (idl: any, name: string) => idl.instructions.find((x: any) => x.name === name).discriminator
+  assert.deepEqual(rustConst('IX_SWAP2'), ix(dbcIdl, 'swap2'))
+  assert.deepEqual(rustConst('IX_SWAP2'), ix(dammIdl, 'swap2'))
+  assert.deepEqual(rustConst('IX_CLAIM_CREATOR_TRADING_FEE'), ix(dbcIdl, 'claim_creator_trading_fee'))
+  assert.deepEqual(rustConst('IX_CREATOR_WITHDRAW_SURPLUS'), ix(dbcIdl, 'creator_withdraw_surplus'))
+  assert.deepEqual(rustConst('IX_WITHDRAW_MIGRATION_FEE'), ix(dbcIdl, 'withdraw_migration_fee'))
+  assert.deepEqual(rustConst('IX_CLAIM_POSITION_FEE'), ix(dammIdl, 'claim_position_fee'))
+  assert.deepEqual(rustConst('IX_ADD_LIQUIDITY'), ix(dammIdl, 'add_liquidity'))
+  assert.deepEqual(rustConst('IX_PERMANENT_LOCK_POSITION'), ix(dammIdl, 'permanent_lock_position'))
+  const acct = (idl: any, name: string) => idl.accounts.find((x: any) => x.name === name).discriminator
+  assert.deepEqual(rustConst('DBC_VIRTUAL_POOL_DISC'), acct(dbcIdl, 'VirtualPool'))
+  assert.deepEqual(rustConst('DBC_POOL_CONFIG_DISC'), acct(dbcIdl, 'PoolConfig'))
+  assert.deepEqual(rustConst('DAMM_POOL_DISC'), acct(dammIdl, 'Pool'))
+  assert.deepEqual(rustConst('DAMM_POSITION_DISC'), acct(dammIdl, 'Position'))
+  assert.deepEqual(rustConst('DAMM_CONFIG_DISC'), acct(dammIdl, 'Config'))
+  // Never a sell, a withdrawal or anything that moves the creator role.
+  for (const name of ['remove_liquidity', 'remove_all_liquidity', 'transfer_pool_creator'])
+    for (const idl of [dbcIdl, dammIdl]) {
+      const found = idl.instructions.find((x: any) => x.name === name)
+      if (found) assert.ok(!meteoraRs.includes(`[${found.discriminator.join(', ')}]`), `${name} is not called`)
+    }
 })
 
-test('PumpSwap buy/deposit allow-list matches the SDK IDL', () => {
-  const names = ['buy', 'buy_exact_quote_in', 'buy_v2', 'buy_exact_quote_in_v2']
-  const list = rustArray('PUMP_AMM_BUY_DISCRIMINATORS')
-  names.forEach((name, i) => {
-    const ix = ammIdl.instructions.find((x: any) => x.name === name)
-    assert.ok(ix, `pump_amm IDL has ${name}`)
-    assert.deepEqual(list[i], ix.discriminator, name)
-  })
-  const deposit = ammIdl.instructions.find((x: any) => x.name === 'deposit')
-  const m = constants.match(/PUMP_AMM_DEPOSIT_DISCRIMINATOR: \[u8; 8\] = \[([\d,\s]+)\]/)
-  assert.deepEqual(
-    m![1].split(',').map((x) => Number(x.trim())),
-    deposit.discriminator,
+test('program ids, authorities and pool PDAs agree between the program and the client', () => {
+  assert.equal(rustKey('DBC_PROGRAM_ID'), dbcIdl.address)
+  assert.equal(rustKey('DAMM_V2_PROGRAM_ID'), dammIdl.address)
+  assert.equal(rustKey('DBC_POOL_AUTHORITY'), m.DBC_POOL_AUTHORITY.toBase58())
+  assert.equal(rustKey('DAMM_POOL_AUTHORITY'), m.DAMM_POOL_AUTHORITY.toBase58())
+  assert.equal(rustKey('DBC_EVENT_AUTHORITY'), m.DBC_EVENT_AUTHORITY.toBase58())
+  assert.equal(rustKey('DAMM_EVENT_AUTHORITY'), m.DAMM_EVENT_AUTHORITY.toBase58())
+  const config = Keypair.generate().publicKey
+  const mint = Keypair.generate().publicKey
+  const [hi, lo] = Buffer.compare(mint.toBuffer(), NATIVE_MINT.toBuffer()) > 0 ? [mint, NATIVE_MINT] : [NATIVE_MINT, mint]
+  assert.ok(
+    m.dbcPoolPda(config, mint).equals(
+      PublicKey.findProgramAddressSync([Buffer.from('pool'), config.toBuffer(), hi.toBuffer(), lo.toBuffer()], m.DBC_PROGRAM_ID)[0],
+    ),
   )
-  for (const forbidden of ['sell', 'sell_v2', 'withdraw']) {
-    const ix = ammIdl.instructions.find((x: any) => x.name === forbidden)
-    assert.ok(
-      !list.some((d) => d.join() === ix.discriminator.join()),
-      `${forbidden} must not be allowed`,
-    )
-  }
 })
 
 test('PDAs are derived from the documented seeds', () => {
@@ -179,6 +163,7 @@ test('IDL exposes every instruction, account and event of the spec', () => {
     'claim_entanglement',
     'close_epoch',
     'fusion',
+    'harvest',
     'initialize_config',
     'lock',
     'post_entanglement',
@@ -186,7 +171,9 @@ test('IDL exposes every instruction, account and event of the spec', () => {
     'quantum_burn',
     'register',
     'release',
+    'set_launch_configs',
     'set_paused',
+    'sync',
     'update_config',
   ])
   assert.deepEqual(idl.accounts.map((a: any) => a.name).sort(), ['Config', 'Epoch', 'Quantum'])
@@ -202,6 +189,9 @@ test('IDL exposes every instruction, account and event of the spec', () => {
     'EpochClosed',
     'EpochCancelled',
     'Fused',
+    'Synced',
+    'Harvested',
+    'LaunchConfigsSet',
   ])
     assert.ok(
       idl.events.some((x: any) => x.name === e),

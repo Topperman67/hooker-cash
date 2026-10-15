@@ -5,7 +5,8 @@ use crate::constants::*;
 use crate::errors::QuantumError;
 use crate::events::Registered;
 use crate::state::{Config, Quantum, Split};
-use crate::utils::is_reserved_account_key;
+use crate::meteora::{dbc_pool_address, is_dbc_config, DAMM_V2_PROGRAM_ID, DBC_PROGRAM_ID};
+use crate::utils::{is_reserved_account_key, NATIVE_MINT};
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug)]
 pub struct LockTerms {
@@ -28,8 +29,9 @@ pub struct RegisterParams {
 pub struct Register<'info> {
     #[account(mut)]
     pub launcher: Signer<'info>,
-    /// The fresh mint keypair pump.fun `create_v2` initialises right after this instruction.
-    /// Its signature binds the hooks to whoever creates the coin.
+    /// The fresh mint keypair Meteora's DBC initialises right after this instruction (DBC's
+    /// `base_mint` must sign too, so nobody else can create the coin's pool). Its signature binds
+    /// the hooks to whoever creates the coin.
     #[account(constraint = mint.lamports() == 0 && mint.data_is_empty() @ QuantumError::MintNotFresh)]
     pub mint: Signer<'info>,
     #[account(seeds = [CONFIG_SEED], bump = config.bump)]
@@ -44,6 +46,8 @@ pub struct Register<'info> {
     pub quantum: Box<Account<'info, Quantum>>,
     #[account(mut, seeds = [WELL_SEED, mint.key().as_ref()], bump)]
     pub well: SystemAccount<'info>,
+    /// CHECK: a Meteora DBC config on `config.launch_configs` (checked in the handler).
+    pub dbc_config: UncheckedAccount<'info>,
     pub system_program: Program<'info, System>,
 }
 
@@ -60,19 +64,25 @@ pub fn validate_lock_terms(cliff_secs: i64, duration_secs: i64) -> Result<()> {
 
 /// A Superposition wallet must be able to receive lamports in `pulse`, which needs it writable. The
 /// runtime always demotes reserved keys (sysvars, builtin and loader programs) to read-only, and
-/// programs (this one, pump.fun, PumpSwap) are executable and can never be paid.
+/// programs (this one, Meteora's DBC and DAMM v2) are executable and can never be paid.
 pub fn valid_split_wallet(wallet: &Pubkey, well: &Pubkey, quantum: &Pubkey) -> bool {
     *wallet != Pubkey::default()
         && wallet != well
         && wallet != quantum
         && *wallet != crate::ID
-        && *wallet != PUMP_PROGRAM_ID
-        && *wallet != PUMP_AMM_PROGRAM_ID
+        && *wallet != DBC_PROGRAM_ID
+        && *wallet != DAMM_V2_PROGRAM_ID
         && !is_reserved_account_key(wallet)
 }
 
 pub(crate) fn register(ctx: Context<Register>, params: RegisterParams) -> Result<()> {
     require!(!ctx.accounts.config.paused, QuantumError::Paused);
+    let dbc_config = ctx.accounts.dbc_config.key();
+    require!(
+        ctx.accounts.config.allows_launch_config(&dbc_config)
+            && is_dbc_config(&ctx.accounts.dbc_config.to_account_info()),
+        QuantumError::LaunchConfigNotAllowed
+    );
 
     let total_bps = params.creator_bps as u32
         + params.burn_bps as u32
@@ -145,6 +155,9 @@ pub(crate) fn register(ctx: Context<Register>, params: RegisterParams) -> Result
     quantum.last_fusion_at = now;
     quantum.planned_cliff_secs = planned_cliff_secs;
     quantum.planned_duration_secs = planned_duration_secs;
+    // The only pool this coin can have under that config (DBC pools are PDAs of config + mints).
+    quantum.dbc_config = dbc_config;
+    quantum.dbc_pool = dbc_pool_address(&dbc_config, &quantum.mint, &NATIVE_MINT);
 
     emit!(Registered {
         mint: quantum.mint,
@@ -158,6 +171,7 @@ pub(crate) fn register(ctx: Context<Register>, params: RegisterParams) -> Result
         lock_cliff_secs: planned_cliff_secs,
         lock_duration_secs: planned_duration_secs,
         well_funded,
+        dbc_pool: quantum.dbc_pool,
     });
     Ok(())
 }
@@ -176,8 +190,8 @@ mod tests {
             well,
             quantum,
             crate::ID,
-            PUMP_PROGRAM_ID,
-            PUMP_AMM_PROGRAM_ID,
+            DBC_PROGRAM_ID,
+            DAMM_V2_PROGRAM_ID,
             sp::sysvar::rent::ID,
             sp::sysvar::clock::ID,
             sp::vote::program::ID,

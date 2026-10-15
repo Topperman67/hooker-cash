@@ -17,10 +17,21 @@ pub struct Config {
     /// Seconds between posting an Entanglement epoch and its first claim: the authority's window
     /// to `cancel_epoch` a bad root (0..=MAX_CLAIM_DELAY).
     pub claim_delay: i64,
-    /// Incremented by every config change (`update_config`, `set_paused`). `update_config` names
-    /// the version it was prepared against, so a stale update cannot undo a later change.
+    /// Incremented by every config change (`update_config`, `set_paused`, `set_launch_configs`).
+    /// `update_config` names the version it was prepared against, so a stale update cannot undo a
+    /// later change.
     pub version: u64,
+    /// Quant Pad's Meteora DBC configs: `register` only binds hooks to a pool launched under one
+    /// of these (DBC configs are immutable, so the address pins every curve and fee setting).
+    pub launch_configs: [Pubkey; 4], // MAX_LAUNCH_CONFIGS
+    pub launch_config_count: u8,
     pub reserved: [u8; 48],
+}
+
+impl Config {
+    pub fn allows_launch_config(&self, config: &Pubkey) -> bool {
+        self.launch_configs[..self.launch_config_count as usize].contains(config)
+    }
 }
 
 #[derive(AnchorSerialize, AnchorDeserialize, Clone, Copy, Debug, Default, PartialEq, Eq, InitSpace)]
@@ -70,14 +81,35 @@ pub struct Quantum {
     pub planned_duration_secs: i64,
     /// When the newest Entanglement epoch was posted (0 = never); paces `post_entanglement`.
     pub last_epoch_at: i64,
-    /// When `pulse`, `quantum_burn` or `fusion` first saw the coin graduated (0 = not yet). The
-    /// public Fusion grace counts from here.
+    /// When the coin's bonding curve filled (DBC `finish_curve_timestamp`, recorded by `sync`;
+    /// 0 = not yet).
     pub graduated_at: i64,
     /// Shares `pulse` owes but could not pay yet (the recipient would stay below its rent-exempt
     /// minimum). Held in the well and paid first once the recipient can receive.
     pub split_owed: [u64; 4], // MAX_SPLITS, same order as `splits`
     pub launcher_owed: u64,
     pub protocol_owed: u64,
+    // Meteora venue.
+    /// The DBC config the coin launches under (allow-listed at `register`) and the virtual pool
+    /// that config derives for the mint.
+    pub dbc_config: Pubkey,
+    pub dbc_pool: Pubkey,
+    /// The DAMM v2 pool the curve migrated into, the well's position in it and the account holding
+    /// that position's NFT, recorded and verified by `sync` (default until the coin migrates).
+    pub damm_pool: Pubkey,
+    pub damm_position: Pubkey,
+    pub damm_nft_account: Pubkey,
+    /// When `sync` first saw the well as the DBC pool's creator (0 = not bound yet).
+    pub bound_at: i64,
+    /// The well became the creator before the pool's first trade, so the launcher never held a
+    /// creator fee (`sync` reads DBC's `has_swap`).
+    pub birth_bound: bool,
+    /// When `sync` recorded the DAMM v2 pool. The public Fusion grace counts from here.
+    pub migrated_at: i64,
+    /// Quote lamports `harvest` has claimed into the well (rent refunds excluded).
+    pub total_harvested: u64,
+    /// DAMM v2 liquidity Fusion has added to the well's position and locked.
+    pub total_fused_liquidity: u128,
     pub reserved: [u8; 16],
 }
 
@@ -152,8 +184,8 @@ mod tests {
 
     #[test]
     fn layouts_match_the_space_the_program_allocates() {
-        // init-config.mjs budgets the config rent for 8 + 188 bytes.
-        assert_eq!(Config::INIT_SPACE, 188);
+        // init-config.mjs budgets the config rent for 8 + 317 bytes.
+        assert_eq!(Config::INIT_SPACE, 317);
         let epoch = Epoch {
             mint: Pubkey::default(),
             index: 0,
@@ -213,6 +245,16 @@ mod tests {
             split_owed: [16, 32, 64, 128],
             launcher_owed: 256,
             protocol_owed: 512,
+            dbc_config: Pubkey::default(),
+            dbc_pool: Pubkey::default(),
+            damm_pool: Pubkey::default(),
+            damm_position: Pubkey::default(),
+            damm_nft_account: Pubkey::default(),
+            bound_at: 0,
+            birth_bound: false,
+            migrated_at: 0,
+            total_harvested: 0,
+            total_fused_liquidity: 0,
             reserved: [0; 16],
         };
         assert_eq!(quantum.owed_lamports().unwrap(), 1008);

@@ -3,13 +3,17 @@ pub mod config;
 pub mod dilation;
 pub mod entanglement;
 pub mod fusion;
+pub mod harvest;
 pub mod pulse;
 pub mod register;
+pub mod sync;
 
 pub use burn::*;
 pub use config::*;
 pub use dilation::*;
 pub use entanglement::*;
 pub use fusion::*;
+pub use harvest::*;
 pub use pulse::*;
 pub use register::*;
+pub use sync::*;

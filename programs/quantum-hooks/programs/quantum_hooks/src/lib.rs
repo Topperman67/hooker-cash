@@ -1,8 +1,10 @@
-//! Quantum Hooks: per-coin routing of a pump.fun coin's creator-fee stream.
+//! Quantum Hooks: per-coin routing of a Meteora coin's creator-fee stream.
 //!
-//! At launch the coin's pump.fun `creator` is the coin's well, a system-owned PDA of this
-//! program. Fees collected into the well are split by immutable per-coin rules (creator share,
-//! Superposition splits, Quantum Burn, Entanglement, Fusion) and the launcher's dev buy can be
+//! At launch the coin's Meteora Dynamic Bonding Curve pool is handed to the coin's well, a
+//! system-owned PDA of this program, as its creator; after the curve fills, DBC migrates the coin
+//! to a DAMM v2 pool and gives the well the creator's locked LP position. The well claims every
+//! creator-side fee (`harvest`), and those fees are split by immutable per-coin rules (creator
+//! share, Superposition splits, Quantum Burn, Entanglement, Fusion). The launcher's dev buy can be
 //! locked with a cliff and linear vesting (Time Dilation). See docs/QUANTUM_HOOKS_SPEC.md.
 #![allow(unexpected_cfgs)]
 
@@ -12,6 +14,7 @@ pub mod constants;
 pub mod errors;
 pub mod events;
 pub mod instructions;
+pub mod meteora;
 pub mod state;
 pub mod utils;
 
@@ -77,6 +80,14 @@ pub mod quantum_hooks {
         instructions::config::set_paused(ctx, paused)
     }
 
+    pub fn set_launch_configs(
+        ctx: Context<UpdateConfig>,
+        expected_version: u64,
+        configs: Vec<Pubkey>,
+    ) -> Result<()> {
+        instructions::config::set_launch_configs(ctx, expected_version, configs)
+    }
+
     pub fn register(ctx: Context<Register>, params: RegisterParams) -> Result<()> {
         instructions::register::register(ctx, params)
     }
@@ -89,16 +100,20 @@ pub mod quantum_hooks {
         instructions::dilation::release(ctx)
     }
 
+    pub fn sync(ctx: Context<SyncVenue>) -> Result<()> {
+        instructions::sync::sync(ctx)
+    }
+
+    pub fn harvest(ctx: Context<Harvest>, legs: u8) -> Result<()> {
+        instructions::harvest::harvest(ctx, legs)
+    }
+
     pub fn pulse<'info>(ctx: Context<'_, '_, 'info, 'info, Pulse<'info>>) -> Result<()> {
         instructions::pulse::pulse(ctx)
     }
 
-    pub fn quantum_burn<'info>(
-        ctx: Context<'_, '_, 'info, 'info, QuantumBurn<'info>>,
-        spend: u64,
-        cpi_data: Vec<u8>,
-    ) -> Result<()> {
-        instructions::burn::quantum_burn(ctx, spend, cpi_data)
+    pub fn quantum_burn(ctx: Context<QuantumBurn>, spend: u64, min_out: u64) -> Result<()> {
+        instructions::burn::quantum_burn(ctx, spend, min_out)
     }
 
     pub fn post_entanglement(
@@ -128,13 +143,13 @@ pub mod quantum_hooks {
         instructions::entanglement::cancel_epoch(ctx, index)
     }
 
-    pub fn fusion<'info>(
-        ctx: Context<'_, '_, 'info, 'info, Fusion<'info>>,
+    pub fn fusion(
+        ctx: Context<Fusion>,
         spend: u64,
-        buy_data: Vec<u8>,
-        buy_account_count: u8,
-        deposit_data: Vec<u8>,
+        swap_in: u64,
+        min_base_out: u64,
+        liquidity_delta: u128,
     ) -> Result<()> {
-        instructions::fusion::fusion(ctx, spend, buy_data, buy_account_count, deposit_data)
+        instructions::fusion::fusion(ctx, spend, swap_in, min_base_out, liquidity_delta)
     }
 }

@@ -38,8 +38,6 @@ pub enum QuantumError {
     NothingToPulse,
     #[msg("Remaining accounts must be the stored Superposition wallets, writable, in order")]
     SplitAccountsMismatch,
-    #[msg("The SPL Token program is required to unwrap the well's WSOL account")]
-    MissingTokenProgram,
     #[msg("Only the keeper may act until the keeper grace period has passed")]
     KeeperOnly,
     #[msg("The minimum interval between actions has not elapsed")]
@@ -48,22 +46,12 @@ pub enum QuantumError {
     SpendTooHigh,
     #[msg("The CPI spent more lamports than authorised")]
     Overspent,
-    #[msg("Target program must be pump.fun or PumpSwap")]
-    InvalidTargetProgram,
-    #[msg("CPI instruction is not on the discriminator allow-list")]
-    DisallowedInstruction,
-    #[msg("CPI accounts must include the coin's mint")]
-    MintNotInCpi,
-    #[msg("CPI accounts must include the well")]
-    WellNotInCpi,
-    #[msg("PumpSwap CPIs must target the coin's canonical pool")]
+    #[msg("Venue accounts must be this coin's Meteora pool and its program's accounts")]
     NotCanonicalPool,
     #[msg("The buy delivered no tokens to the well")]
     NothingBought,
-    #[msg("The deposit minted no LP tokens to the well")]
-    NoLiquidityAdded,
-    #[msg("Invalid buy account count for fusion")]
-    InvalidBuyAccountCount,
+    #[msg("Fusion added a different amount of liquidity than requested")]
+    LiquidityMismatch,
     #[msg("Entanglement leaf count must be 1..=16384")]
     InvalidLeafCount,
     #[msg("Epoch total exceeds the Entanglement reserve")]
@@ -97,4 +85,20 @@ pub enum QuantumError {
     EpochTooSoon,
     #[msg("A public burn or fusion must be a top-level instruction and may share its transaction only with compute-budget, system, token, associated-token and Quantum Hooks instructions")]
     PublicTransactionNotAllowed,
+    #[msg("This DBC config is not one of Quant Pad's launch configs")]
+    LaunchConfigNotAllowed,
+    #[msg("At most 4 distinct, non-default launch configs")]
+    InvalidLaunchConfigs,
+    #[msg("The well is not this coin's DBC pool creator")]
+    NotBound,
+    #[msg("The venue cannot trade right now (curve complete but not migrated, or pool disabled)")]
+    VenueUnavailable,
+    #[msg("Not the DAMM v2 pool DBC migrated this coin into")]
+    NotCanonicalDammPool,
+    #[msg("The DAMM v2 position is not the well's")]
+    PositionNotWells,
+    #[msg("A Meteora account has an unexpected owner, discriminator or size")]
+    InvalidVenueAccount,
+    #[msg("The coin has not migrated to DAMM v2 yet")]
+    NotMigrated,
 }

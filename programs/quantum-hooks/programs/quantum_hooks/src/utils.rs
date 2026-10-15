@@ -1,8 +1,5 @@
 use anchor_lang::prelude::*;
-use anchor_lang::solana_program::instruction::{
-    get_stack_height, AccountMeta, Instruction, TRANSACTION_LEVEL_STACK_HEIGHT,
-};
-use anchor_lang::solana_program::program::invoke_signed;
+use anchor_lang::solana_program::instruction::{get_stack_height, TRANSACTION_LEVEL_STACK_HEIGHT};
 use anchor_lang::solana_program::sysvar::instructions::{
     load_current_index_checked, load_instruction_at_checked,
 };
@@ -34,27 +31,6 @@ pub fn sub(a: u64, b: u64) -> Result<u64> {
 
 pub fn well_wsol_address(well: &Pubkey) -> Pubkey {
     get_associated_token_address(well, &NATIVE_MINT)
-}
-
-/// The canonical PumpSwap pool pump.fun migrates `mint` into (index 0, quoted in WSOL).
-pub fn canonical_pool(mint: &Pubkey) -> Pubkey {
-    let (pool_authority, _) =
-        Pubkey::find_program_address(&[b"pool-authority", mint.as_ref()], &PUMP_PROGRAM_ID);
-    let (pool, _) = Pubkey::find_program_address(
-        &[
-            b"pool",
-            &0u16.to_le_bytes(),
-            pool_authority.as_ref(),
-            mint.as_ref(),
-            NATIVE_MINT.as_ref(),
-        ],
-        &PUMP_AMM_PROGRAM_ID,
-    );
-    pool
-}
-
-pub fn lp_mint_address(pool: &Pubkey) -> Pubkey {
-    Pubkey::find_program_address(&[b"pool_lp_mint", pool.as_ref()], &PUMP_AMM_PROGRAM_ID).0
 }
 
 /// Whether crediting `amount` lamports leaves `account` able to exist (rent exempt, not executable).
@@ -161,15 +137,10 @@ pub fn check_spend(config: &Config, is_keeper: bool, spend: u64, reserve: u64) -
 }
 
 /// A top-level instruction that may share a transaction with a public burn or fusion: this
-/// program, compute budget, system, token and associated-token instructions, and pump.fun /
-/// PumpSwap only to create a volume accumulator. Nothing that can trade.
-pub fn public_companion_ok(program_id: &Pubkey, data: &[u8]) -> bool {
-    if *program_id == crate::ID || PUBLIC_COMPANION_PROGRAMS.contains(program_id) {
-        return true;
-    }
-    (*program_id == PUMP_PROGRAM_ID || *program_id == PUMP_AMM_PROGRAM_ID)
-        && data.len() >= 8
-        && data[..8] == INIT_USER_VOLUME_ACCUMULATOR_DISCRIMINATOR
+/// program, compute budget, system, token and associated-token instructions. Nothing that can
+/// trade (no Meteora instruction at all).
+pub fn public_companion_ok(program_id: &Pubkey) -> bool {
+    *program_id == crate::ID || PUBLIC_COMPANION_PROGRAMS.contains(program_id)
 }
 
 /// For a public (non-keeper) burn or fusion: the instruction must be invoked at the top level (no
@@ -192,86 +163,15 @@ pub fn check_public_transaction(instructions_sysvar: &AccountInfo) -> Result<()>
         }
         let ix = load_instruction_at_checked(index, instructions_sysvar)?;
         require!(
-            public_companion_ok(&ix.program_id, &ix.data),
+            public_companion_ok(&ix.program_id),
             QuantumError::PublicTransactionNotAllowed
         );
     }
     Ok(())
 }
 
-/// The coin's pump.fun bonding curve.
-pub fn bonding_curve_address(mint: &Pubkey) -> Pubkey {
-    Pubkey::find_program_address(&[b"bonding-curve", mint.as_ref()], &PUMP_PROGRAM_ID).0
-}
-
-/// Whether `curve` (an account at `bonding_curve_address`) is a completed pump.fun curve.
-pub fn curve_complete(curve: &AccountInfo) -> bool {
-    curve.owner == &PUMP_PROGRAM_ID
-        && curve
-            .try_borrow_data()
-            .map(|d| d.len() > CURVE_COMPLETE_OFFSET && d[CURVE_COMPLETE_OFFSET] == 1)
-            .unwrap_or(false)
-}
-
-/// Whether `pool` (an account at `canonical_pool`) exists, i.e. the coin migrated to PumpSwap.
-pub fn pool_exists(pool: &AccountInfo) -> bool {
-    pool.owner == &PUMP_AMM_PROGRAM_ID && !pool.data_is_empty()
-}
-
-/// Records the first time the coin is seen graduated (`graduated_at` stays at that time).
-pub fn note_graduation(quantum: &mut Quantum, graduated: bool, now: i64) {
-    if graduated && quantum.graduated_at == 0 {
-        quantum.graduated_at = now;
-    }
-}
-
-pub fn check_discriminator(data: &[u8], allowed: &[[u8; 8]]) -> Result<()> {
-    require!(data.len() >= 8, QuantumError::DisallowedInstruction);
-    let mut disc = [0u8; 8];
-    disc.copy_from_slice(&data[..8]);
-    require!(allowed.contains(&disc), QuantumError::DisallowedInstruction);
-    Ok(())
-}
-
 pub fn is_token_account(info: &AccountInfo) -> bool {
     info.owner == &token::ID && !info.data_is_empty()
-}
-
-/// Invokes `program` with `accounts` (passed through from remaining accounts) and `data`, with
-/// the well as the only PDA signer. Every other signer flag is dropped.
-pub fn invoke_as_well<'info>(
-    program: &AccountInfo<'info>,
-    accounts: &[AccountInfo<'info>],
-    data: Vec<u8>,
-    well: &Pubkey,
-    mint: &Pubkey,
-    signer: &[&[&[u8]]],
-) -> Result<()> {
-    let mut metas = Vec::with_capacity(accounts.len());
-    let mut has_mint = false;
-    let mut has_well = false;
-    for account in accounts {
-        let is_well = account.key == well;
-        has_well |= is_well;
-        has_mint |= account.key == mint;
-        metas.push(AccountMeta {
-            pubkey: *account.key,
-            is_signer: is_well,
-            is_writable: account.is_writable,
-        });
-    }
-    require!(has_mint, QuantumError::MintNotInCpi);
-    require!(has_well, QuantumError::WellNotInCpi);
-    let instruction = Instruction {
-        program_id: *program.key,
-        accounts: metas,
-        data,
-    };
-    let mut infos = Vec::with_capacity(accounts.len() + 1);
-    infos.extend_from_slice(accounts);
-    infos.push(program.clone());
-    invoke_signed(&instruction, &infos, signer)?;
-    Ok(())
 }
 
 /// Funds the well's WSOL ATA with `amount` lamports (creating it, well-paid, when missing) and
@@ -381,7 +281,8 @@ mod tests {
         assert!(split_account_ok(&rent_sysvar, &rent_sysvar, false, false));
         let vote = anchor_lang::solana_program::vote::program::ID;
         assert!(split_account_ok(&vote, &vote, false, true));
-        assert!(split_account_ok(&PUMP_PROGRAM_ID, &PUMP_PROGRAM_ID, false, true));
+        let dbc = crate::meteora::DBC_PROGRAM_ID;
+        assert!(split_account_ok(&dbc, &dbc, false, true));
         assert!(!split_account_ok(&rent_sysvar, &wallet, false, false));
         assert!(is_reserved_account_key(&rent_sysvar));
         assert!(!is_reserved_account_key(&wallet));
@@ -400,6 +301,8 @@ mod tests {
             bump: 255,
             claim_delay: 21_600,
             version: 0,
+            launch_configs: [Pubkey::default(); 4],
+            launch_config_count: 0,
             reserved: [0; 48],
         }
     }
@@ -440,47 +343,12 @@ mod tests {
     #[test]
     fn public_runs_share_a_transaction_only_with_non_trading_programs() {
         use anchor_lang::solana_program as sp;
-        let volume = INIT_USER_VOLUME_ACCUMULATOR_DISCRIMINATOR.to_vec();
         for ok in [crate::ID, PUBLIC_COMPANION_PROGRAMS[0], sp::system_program::ID] {
-            assert!(public_companion_ok(&ok, &[]));
+            assert!(public_companion_ok(&ok));
         }
-        assert!(public_companion_ok(&PUMP_PROGRAM_ID, &volume));
-        assert!(public_companion_ok(&PUMP_AMM_PROGRAM_ID, &volume));
-        for buy in PUMP_BUY_DISCRIMINATORS {
-            assert!(!public_companion_ok(&PUMP_PROGRAM_ID, &buy));
+        for venue in [crate::meteora::DBC_PROGRAM_ID, crate::meteora::DAMM_V2_PROGRAM_ID] {
+            assert!(!public_companion_ok(&venue));
         }
-        assert!(!public_companion_ok(&PUMP_AMM_PROGRAM_ID, &PUMP_AMM_DEPOSIT_DISCRIMINATOR));
-        assert!(!public_companion_ok(&PUMP_PROGRAM_ID, &volume[..7]));
-        let fees = sp::pubkey!("pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ");
-        assert!(!public_companion_ok(&fees, &volume));
-        assert!(!public_companion_ok(&Pubkey::new_unique(), &[]));
-    }
-
-    #[test]
-    fn graduation_is_seen_from_a_complete_curve_or_an_existing_pool() {
-        let key = Pubkey::new_unique();
-        static PUMP: Pubkey = PUMP_PROGRAM_ID;
-        static AMM: Pubkey = PUMP_AMM_PROGRAM_ID;
-        let leak = |len: usize, complete: bool| {
-            let mut d = vec![0u8; len];
-            if complete && len > CURVE_COMPLETE_OFFSET {
-                d[CURVE_COMPLETE_OFFSET] = 1;
-            }
-            (Box::leak(d.into_boxed_slice()), Box::leak(Box::new(1_000_000u64)))
-        };
-        let (d, l) = leak(150, true);
-        assert!(curve_complete(&AccountInfo::new(&key, false, false, l, d, &PUMP, false, 0)));
-        let (d, l) = leak(150, false);
-        assert!(!curve_complete(&AccountInfo::new(&key, false, false, l, d, &PUMP, false, 0)));
-        let (d, l) = leak(150, true);
-        assert!(!curve_complete(&AccountInfo::new(&key, false, false, l, d, &AMM, false, 0)));
-        let (d, l) = leak(10, true);
-        assert!(!curve_complete(&AccountInfo::new(&key, false, false, l, d, &PUMP, false, 0)));
-        let (d, l) = leak(300, false);
-        assert!(pool_exists(&AccountInfo::new(&key, false, false, l, d, &AMM, false, 0)));
-        let (d, l) = leak(0, false);
-        assert!(!pool_exists(&AccountInfo::new(&key, false, false, l, d, &AMM, false, 0)));
-        let (d, l) = leak(300, false);
-        assert!(!pool_exists(&AccountInfo::new(&key, false, false, l, d, &PUMP, false, 0)));
+        assert!(!public_companion_ok(&Pubkey::new_unique()));
     }
 }

@@ -2,7 +2,7 @@ use anchor_lang::prelude::*;
 
 use crate::constants::*;
 use crate::errors::QuantumError;
-use crate::events::ConfigUpdated;
+use crate::events::{ConfigUpdated, LaunchConfigsSet};
 use crate::program::QuantumHooks;
 use crate::state::Config;
 
@@ -117,6 +117,8 @@ pub(crate) fn initialize_config(
     config.bump = ctx.bumps.config;
     config.claim_delay = claim_delay;
     config.version = 0;
+    config.launch_configs = [Pubkey::default(); MAX_LAUNCH_CONFIGS];
+    config.launch_config_count = 0;
     config.reserved = [0u8; 48];
     emit_config(config);
     Ok(())
@@ -172,5 +174,37 @@ pub(crate) fn set_paused(ctx: Context<UpdateConfig>, paused: bool) -> Result<()>
     config.paused = paused;
     bump_version(config)?;
     emit_config(config);
+    Ok(())
+}
+
+/// Replaces the DBC configs new coins may launch under (at most 4, distinct, non-default). Coins
+/// already registered keep the config they launched with. Versioned like `update_config`.
+pub(crate) fn set_launch_configs(
+    ctx: Context<UpdateConfig>,
+    expected_version: u64,
+    configs: Vec<Pubkey>,
+) -> Result<()> {
+    let config = &mut ctx.accounts.config;
+    require!(
+        config.version == expected_version,
+        QuantumError::ConfigChanged
+    );
+    require!(
+        configs.len() <= MAX_LAUNCH_CONFIGS
+            && configs
+                .iter()
+                .enumerate()
+                .all(|(i, c)| *c != Pubkey::default() && !configs[..i].contains(c)),
+        QuantumError::InvalidLaunchConfigs
+    );
+    let mut list = [Pubkey::default(); MAX_LAUNCH_CONFIGS];
+    list[..configs.len()].copy_from_slice(&configs);
+    config.launch_configs = list;
+    config.launch_config_count = configs.len() as u8;
+    bump_version(config)?;
+    emit!(LaunchConfigsSet {
+        configs,
+        version: config.version,
+    });
     Ok(())
 }

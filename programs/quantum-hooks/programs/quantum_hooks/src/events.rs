@@ -28,6 +28,8 @@ pub struct Registered {
     pub lock_cliff_secs: i64,
     pub lock_duration_secs: i64,
     pub well_funded: u64,
+    /// The DBC virtual pool the coin's hooks are bound to.
+    pub dbc_pool: Pubkey,
 }
 
 #[event]
@@ -49,11 +51,43 @@ pub struct Released {
 }
 
 #[event]
+pub struct LaunchConfigsSet {
+    pub configs: Vec<Pubkey>,
+    /// The config version after this change.
+    pub version: u64,
+}
+
+/// `sync` recorded something new about the coin's Meteora venue.
+#[event]
+pub struct Synced {
+    pub mint: Pubkey,
+    pub bound_at: i64,
+    pub birth_bound: bool,
+    pub graduated_at: i64,
+    pub damm_pool: Pubkey,
+    pub damm_position: Pubkey,
+    /// DAMM v2 `collect_fee_mode` of the recorded pool (1 = quote only); 0 before migration.
+    pub collect_fee_mode: u8,
+}
+
+/// `harvest` claimed the creator side's fees into the well.
+#[event]
+pub struct Harvested {
+    pub mint: Pubkey,
+    pub caller: Pubkey,
+    /// Bitmask of the legs that ran (1 trading fee, 2 surplus, 4 migration fee, 8 LP fee).
+    pub legs: u8,
+    /// Quote (SOL) claimed into the well, without the WSOL account's rent.
+    pub claimed: u64,
+    /// Coin tokens received (only if a fee mode ever pays base) and burned.
+    pub tokens_burned: u64,
+    /// Rent of the WSOL account returned to `caller`.
+    pub rent_refunded: u64,
+}
+
+#[event]
 pub struct Pulsed {
     pub mint: Pubkey,
-    /// WSOL (creator fees) unwrapped from the well's WSOL account before allocation, without the
-    /// account's rent (see `rent_refunded`).
-    pub unwrapped: u64,
     /// Unallocated lamports this pulse distributed (`available`; 0 when below the 0.001 SOL floor
     /// and the pulse only paid owed amounts).
     pub collected: u64,
@@ -71,15 +105,13 @@ pub struct Pulsed {
     pub deferred: u64,
     /// Owed amounts from earlier pulses paid by this one.
     pub owed_paid: u64,
-    /// Rent of the closed WSOL account, returned to the pulse's `rent_payer` (not fees).
-    pub rent_refunded: u64,
 }
 
 #[event]
 pub struct Burned {
     pub mint: Pubkey,
     pub caller: Pubkey,
-    /// 0 = bonding curve (pump.fun), 1 = PumpSwap pool.
+    /// 0 = Meteora DBC bonding curve, 1 = DAMM v2 pool.
     pub venue: u8,
     pub spent: u64,
     pub tokens_burned: u64,
@@ -129,6 +161,7 @@ pub struct Fused {
     pub mint: Pubkey,
     pub caller: Pubkey,
     pub spent: u64,
-    pub lp_received: u64,
+    /// Liquidity added to the well's DAMM v2 position and permanently locked.
+    pub liquidity_added: u128,
     pub tokens_burned: u64,
 }

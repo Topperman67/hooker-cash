@@ -1,6 +1,6 @@
 // Quantum Hooks client, shared by the browser bundle (Vite) and the Node keeper. No Node-only
 // imports. Amounts cross this API as bigint (lamports / raw token units); timestamps as numbers.
-// The browser needs a global `Buffer` (pump.fun's SDK uses it without importing it).
+// Coins launch on Meteora's Dynamic Bonding Curve and migrate to DAMM v2 (see ./meteora.mjs).
 import { Buffer } from 'buffer'
 import BN from 'bn.js'
 import { AnchorProvider, BorshCoder, EventParser, Program } from '@coral-xyz/anchor'
@@ -12,34 +12,37 @@ import {
   TOKEN_PROGRAM_ID,
   getAssociatedTokenAddressSync,
   unpackAccount,
-  unpackMint,
 } from '@solana/spl-token'
 import {
-  OnlinePumpSdk,
-  PUMP_SDK,
-  bondingCurvePda,
-  creatorVaultPda,
-  getBuyTokenAmountFromSolAmount,
-  getFeeRecipient,
-  getPumpProgram,
-  userVolumeAccumulatorPda,
-} from '#pump-sdk'
-import {
-  OnlinePumpAmmSdk,
-  PUMP_AMM_SDK,
-  buyQuoteInput,
-  canonicalPumpPoolPda,
-  coinCreatorVaultAtaPda,
-  coinCreatorVaultAuthorityPda,
-  lpMintPda,
-  userVolumeAccumulatorPda as ammUserVolumeAccumulatorPda,
-} from '#pump-swap-sdk'
+  DAMM_EVENT_AUTHORITY,
+  DAMM_MIGRATION_CONFIGS,
+  DAMM_POOL_AUTHORITY,
+  DAMM_V2_PROGRAM_ID,
+  DBC_EVENT_AUTHORITY,
+  DBC_POOL_AUTHORITY,
+  DBC_PROGRAM_ID,
+  PROGRESS,
+  SWAP_MODE,
+  dammQuote,
+  dbcCreatePoolInstruction,
+  dbcPoolPda,
+  dbcQuote,
+  dbcSwapInstructions,
+  dbcTransferCreatorInstruction,
+  decodeDammPool,
+  decodeDbcConfig,
+  decodeDbcPool,
+  decodePosition,
+  fetchMeteoraVenue,
+  migratedPoolFor,
+  pendingPositionFees,
+  positionPda,
+} from './meteora.mjs'
 import idl from './idl/quantum_hooks.json' with { type: 'json' }
 
 export const QUANTUM_IDL = idl
 export const QUANTUM_PROGRAM_ID = new PublicKey(idl.address)
-export const PUMP_PROGRAM_ID = new PublicKey('6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P')
-export const PUMP_AMM_PROGRAM_ID = new PublicKey('pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA')
+export { DBC_PROGRAM_ID, DAMM_V2_PROGRAM_ID }
 const BPF_UPGRADEABLE_LOADER = new PublicKey('BPFLoaderUpgradeab1e11111111111111111111111')
 
 export const BPS = 10_000
@@ -55,11 +58,13 @@ export const MAX_CLAIM_DELAY = 7 * 86_400
 export const MIN_EPOCH_INTERVAL = 20 * 3_600
 // A burn or fusion run by anyone but the keeper may spend at most max_burn_lamports / 10.
 export const PUBLIC_SPEND_DIVISOR = 10n
-// Rent-exempt minimum of a 0-byte account (the well, pump.fun's creator vault).
+// Rent-exempt minimum of a 0-byte account (the well).
 export const RENT_EXEMPT_EMPTY = 890_880n
-// Rent-exempt minimum of a 165-byte SPL Token account (the well's WSOL ATA). `pulse` refunds it to
-// the transaction payer when it closes that ATA; it is never creator fees.
+// Rent-exempt minimum of a 165-byte SPL Token account (the well's WSOL ATA). `harvest` refunds it
+// to its caller when it closes that ATA; it is never creator fees.
 export const RENT_EXEMPT_TOKEN_ACCOUNT = 2_039_280n
+// `harvest` legs (bitmask): DBC trading fee, DBC surplus, DBC migration fee, DAMM v2 LP fee.
+export const HARVEST = Object.freeze({ TRADING_FEE: 1, SURPLUS: 2, MIGRATION_FEE: 4, LP_FEE: 8, ALL: 15 })
 
 // Keys the runtime never lets a transaction write-lock (sysvars, builtin and loader programs). A
 // split at one of them could never be paid, so `register` rejects them. Same list as
@@ -145,15 +150,15 @@ export const wellPda = (mint, programId) =>
   find([Buffer.from('well'), pk(mint).toBuffer()], programId)
 export const epochPda = (mint, index, programId) =>
   find([Buffer.from('epoch'), pk(mint).toBuffer(), u32le(Number(index))], programId)
+// Quant Pad coins are SPL Token mints (the DBC launch config's token type).
 export const lockAta = (mint, programId) =>
-  getAssociatedTokenAddressSync(pk(mint), quantumPda(mint, programId), true, TOKEN_2022_PROGRAM_ID)
-export const wellTokenAta = (mint, programId, tokenProgram = TOKEN_2022_PROGRAM_ID) =>
+  getAssociatedTokenAddressSync(pk(mint), quantumPda(mint, programId), true, TOKEN_PROGRAM_ID)
+export const wellTokenAta = (mint, programId, tokenProgram = TOKEN_PROGRAM_ID) =>
   getAssociatedTokenAddressSync(pk(mint), wellPda(mint, programId), true, pk(tokenProgram))
 export const wellWsolAta = (mint, programId) =>
   getAssociatedTokenAddressSync(NATIVE_MINT, wellPda(mint, programId), true, TOKEN_PROGRAM_ID)
 export const programDataPda = (programId) =>
   PublicKey.findProgramAddressSync([pid(programId).toBuffer()], BPF_UPGRADEABLE_LOADER)[0]
-export const canonicalPool = (mint) => canonicalPumpPoolPda(pk(mint))
 
 // ---------------------------------------------------------------------------------------------
 // Account reads
@@ -209,6 +214,10 @@ export function decodeConfig(data) {
     claimDelay: num(field(raw, 'claim_delay')),
     // Bumped by every config change; update_config must name the version it was built on.
     version: num(field(raw, 'version')),
+    // Meteora DBC configs new coins may launch under.
+    launchConfigs: field(raw, 'launch_configs')
+      .slice(0, num(field(raw, 'launch_config_count')))
+      .map(b58),
   }
 }
 
@@ -263,7 +272,7 @@ export function decodeQuantum(data) {
     // Unix seconds of the newest Entanglement epoch (0 = none); the next may be posted at
     // lastEpochAt + MIN_EPOCH_INTERVAL.
     lastEpochAt: i64('last_epoch_at'),
-    // When a pulse, burn or fusion first saw the coin graduated (0 = not yet).
+    // When the coin's bonding curve filled (DBC finish_curve_timestamp; 0 = not yet).
     graduatedAt: i64('graduated_at'),
     // Shares a pulse could not pay yet (the recipient would stay below its rent minimum), held in
     // the well and paid first once the recipient can receive. splitOwed follows `splits`.
@@ -271,8 +280,24 @@ export function decodeQuantum(data) {
     launcherOwed,
     protocolOwed,
     owedTotal: splitOwed.reduce((a, b) => a + b, launcherOwed + protocolOwed),
+    // Meteora venue (see `sync`): the DBC config and pool from `register`; the DAMM v2 pool, the
+    // well's position and its NFT account once the coin has migrated (null before).
+    dbcConfig: b58(field(raw, 'dbc_config')),
+    dbcPool: b58(field(raw, 'dbc_pool')),
+    dammPool: optionalKey(field(raw, 'damm_pool')),
+    dammPosition: optionalKey(field(raw, 'damm_position')),
+    dammNftAccount: optionalKey(field(raw, 'damm_nft_account')),
+    // When `sync` saw the well become the DBC pool's creator (0 = not yet), and whether that was
+    // before the first trade (the launcher never held a creator fee).
+    boundAt: i64('bound_at'),
+    birthBound: !!field(raw, 'birth_bound'),
+    migratedAt: i64('migrated_at'),
+    totalHarvested: u64('total_harvested'),
+    totalFusedLiquidity: big(field(raw, 'total_fused_liquidity')),
   }
 }
+
+const optionalKey = (key) => (pk(key).equals(PublicKey.default) ? null : b58(key))
 
 /** Epoch fields, or null when `data` is not an Epoch account. */
 export function decodeEpoch(data) {
@@ -361,7 +386,7 @@ function tokenAmount(address, info, programId) {
   }
 }
 
-/** Lamports of the well's WSOL ATA that `pulse` counts as fees (everything above its rent). */
+/** Lamports of the well's WSOL ATA that `harvest` counts as fees (everything above its rent). */
 export function wsolFeeLamports(wsolInfo) {
   if (!wsolInfo || !wsolInfo.owner.equals(TOKEN_PROGRAM_ID)) return 0n
   const fees = BigInt(wsolInfo.lamports) - RENT_EXEMPT_TOKEN_ACCOUNT
@@ -369,60 +394,54 @@ export function wsolFeeLamports(wsolInfo) {
 }
 
 /**
- * Lamports a pulse would allocate right now: pump.fun creator vault (curve, above rent) and the
- * unswept curve bucket, the PumpSwap coin-creator vault and unswept pool bucket, WSOL already in
- * the well's WSOL ATA (not its rent, which `pulse` refunds), and unallocated lamports in the well.
+ * Lamports a harvest + pulse would allocate right now: the DBC creator trading fee (and, once
+ * claimable, the creator surplus is not estimated), the unclaimed LP fee of the well's DAMM v2
+ * position, WSOL already in the well's WSOL ATA (not its rent), and unallocated lamports in the
+ * well.
  */
 export async function pendingCreatorFees(connection, mint, programId) {
   mint = pk(mint)
   const well = wellPda(mint, programId)
-  const pool = canonicalPumpPoolPda(mint)
-  const ammVaultAta = coinCreatorVaultAtaPda(
-    coinCreatorVaultAuthorityPda(well),
-    NATIVE_MINT,
-    TOKEN_PROGRAM_ID,
-  )
-  const wsolAta = wellWsolAta(mint, programId)
-  const [wellInfo, quantumInfo, curveInfo, vaultInfo, poolInfo, ammVaultInfo, wsolInfo] =
-    await connection.getMultipleAccountsInfo([
-      well,
-      quantumPda(mint, programId),
-      bondingCurvePda(mint),
-      creatorVaultPda(well),
-      pool,
-      ammVaultAta,
-      wsolAta,
-    ])
-  let total = 0n
-  if (vaultInfo && BigInt(vaultInfo.lamports) > RENT_EXEMPT_EMPTY)
-    total += BigInt(vaultInfo.lamports) - RENT_EXEMPT_EMPTY
-  if (curveInfo) {
-    const curve = PUMP_SDK.decodeBondingCurve(curveInfo)
-    if (curve.creator.equals(well)) total += big(curve.creatorFee)
-  }
-  if (poolInfo) {
-    const decoded = PUMP_AMM_SDK.decodePool(poolInfo)
-    if (decoded.coinCreator.equals(well)) total += big(decoded.creatorFees)
-  }
-  total += tokenAmount(ammVaultAta, ammVaultInfo, TOKEN_PROGRAM_ID)
-  total += wsolFeeLamports(wsolInfo)
-  total += wellLedger(wellInfo, quantumInfo, programId).unallocated
+  const [wellInfo, quantumInfo, wsolInfo] = await connection.getMultipleAccountsInfo([
+    well,
+    quantumPda(mint, programId),
+    wellWsolAta(mint, programId),
+  ])
+  let total = wsolFeeLamports(wsolInfo) + wellLedger(wellInfo, quantumInfo, programId).unallocated
+  if (!isQuantumAccount(quantumInfo, 'Quantum', programId)) return total
+  const quantum = decodeQuantum(quantumInfo.data)
+  const keys = [pk(quantum.dbcPool)]
+  if (quantum.dammPool) keys.push(pk(quantum.dammPool), pk(quantum.dammPosition))
+  const [poolInfo, dammInfo, positionInfo] = await connection.getMultipleAccountsInfo(keys)
+  const pool = decodeDbcPool(poolInfo?.data)
+  if (pool && pool.creator === well.toBase58()) total += pool.creatorQuoteFee
+  const damm = decodeDammPool(dammInfo?.data)
+  const position = decodePosition(positionInfo?.data)
+  if (damm && position) total += pendingPositionFees(damm, position).b
   return total
 }
 
-/** Whether `mint` is registered and its pump.fun curve pays the well (the binding clients check). */
+/**
+ * The binding clients check: `mint` is registered, its DBC pool exists and pays the well (the well
+ * is the pool's creator), and whether that happened before the first trade (`birthBound`, recorded
+ * by `sync`). `complete` is true once the curve has filled.
+ */
 export async function verifyQuantumCoin(connection, mint, programId) {
   mint = pk(mint)
-  const [quantumInfo, curveInfo] = await connection.getMultipleAccountsInfo([
-    quantumPda(mint, programId),
-    bondingCurvePda(mint),
-  ])
-  const curve = curveInfo ? PUMP_SDK.decodeBondingCurve(curveInfo) : null
+  const quantumInfo = await connection.getAccountInfo(quantumPda(mint, programId))
+  if (!isQuantumAccount(quantumInfo, 'Quantum', programId))
+    return { registered: false, poolExists: false, creatorIsWell: false, complete: false, birthBound: false }
+  const quantum = decodeQuantum(quantumInfo.data)
+  const poolInfo = await connection.getAccountInfo(pk(quantum.dbcPool))
+  const pool = decodeDbcPool(poolInfo?.data)
   return {
-    registered: isQuantumAccount(quantumInfo, 'Quantum', programId),
-    curveExists: !!curve,
-    creatorIsWell: !!curve && curve.creator.equals(wellPda(mint, programId)),
-    complete: !!curve?.complete,
+    registered: true,
+    poolExists: !!pool,
+    creatorIsWell: !!pool && pool.creator === wellPda(mint, programId).toBase58(),
+    complete: !!pool && pool.migrationProgress > PROGRESS.PRE,
+    migrated: !!pool?.isMigrated,
+    bound: quantum.boundAt > 0,
+    birthBound: quantum.birthBound,
   }
 }
 
@@ -485,15 +504,15 @@ export function decodeQuantumEvents(logMessages, programId) {
 
 /**
  * Split wallets `register` refuses: sysvars, builtin and loader programs (the runtime never lets
- * them be written, so they could never be paid), this program, pump.fun and PumpSwap, and, when
- * `mint` is known, the coin's well and Quantum account.
+ * them be written, so they could never be paid), this program, Meteora's DBC and DAMM v2, and,
+ * when `mint` is known, the coin's well and Quantum account.
  */
 function unpayableSplitWallets({ mint, programId } = {}) {
   const out = new Set([
     ...RESERVED_ACCOUNT_KEYS,
     pid(programId).toBase58(),
-    PUMP_PROGRAM_ID.toBase58(),
-    PUMP_AMM_PROGRAM_ID.toBase58(),
+    DBC_PROGRAM_ID.toBase58(),
+    DAMM_V2_PROGRAM_ID.toBase58(),
   ])
   if (mint) {
     out.add(wellPda(mint, programId).toBase58())
@@ -544,65 +563,71 @@ export function validateHooks(hooks, { mint, programId } = {}) {
   return { creatorBps, burnBps, entangleBps, fusionBps, splits, lock }
 }
 
-// pump.fun create_v2 (Token-2022, SOL quote) plus an optional buy_v2 by `user`. buy_v2 buys an exact
-// token amount for at most solLamports × (1 + slippage), so the tokens received are known up front.
-async function pumpCreateInstructions({
-  connection,
-  creator,
-  user,
+/** The DBC launch config (decoded; throws if `address` is not a DBC config). */
+export async function fetchLaunchConfig(connection, address) {
+  const info = await connection.getAccountInfo(pk(address))
+  const config = decodeDbcConfig(info?.data)
+  if (!config || !info.owner.equals(DBC_PROGRAM_ID))
+    throw new Error(`${b58(address)} is not a Meteora DBC config`)
+  return config
+}
+
+/**
+ * Tokens a dev buy of `solLamports` gets as the new pool's first trade (DBC charges its minimum fee
+ * on a buy in the create's transaction), and the most SOL that buy may take.
+ */
+export function devBuyQuote(config, solLamports, slippagePct = 1) {
+  const lamports = BigInt(solLamports)
+  const { out } = dbcQuote({ pool: null, config, side: 'buy', amountIn: lamports, firstSwap: true })
+  const maxIn = lamports + (lamports * BigInt(Math.round(Number(slippagePct) * 100))) / 10_000n
+  return { tokens: out, maxIn }
+}
+
+// DBC create (launcher as creator and payer) plus an optional dev buy. The dev buy is an exact-out
+// first swap for the quoted tokens, so the amount received is known before signing.
+async function meteoraCreateInstructions({
+  config,
+  configAddress,
+  launcher,
   mint,
   name,
   symbol,
   uri,
   devBuy,
 }) {
-  if (!devBuy || BigInt(devBuy.solLamports) <= 0n) {
-    const create = await PUMP_SDK.createV2Instruction({
-      mint,
-      name,
-      symbol,
-      uri,
-      creator,
-      user,
-      mayhemMode: false,
-    })
-    return { instructions: [create], devBuyTokens: 0n }
-  }
-  const online = new OnlinePumpSdk(connection)
-  const [global, feeConfig] = await Promise.all([
-    online.fetchGlobal(),
-    online.fetchFeeConfig().catch(() => null),
-  ])
-  const quoteAmount = bn(devBuy.solLamports)
-  const amount = getBuyTokenAmountFromSolAmount({
-    global,
-    feeConfig,
-    mintSupply: null,
-    bondingCurve: null,
-    amount: quoteAmount,
-    quoteMint: NATIVE_MINT,
-  })
-  if (amount.lten(0)) throw new Error('Dev buy is too small to buy any tokens')
-  const instructions = await PUMP_SDK.createV2AndBuyV2Instructions({
-    global,
+  const create = await dbcCreatePoolInstruction({
+    config: configAddress,
     mint,
+    creator: launcher,
+    payer: launcher,
     name,
     symbol,
     uri,
-    creator,
-    user,
-    amount,
-    quoteAmount,
-    mayhemMode: false,
-    slippage: Number(devBuy.slippagePct ?? 1),
   })
-  return { instructions, devBuyTokens: big(amount) }
+  if (!devBuy || BigInt(devBuy.solLamports) <= 0n) return { create, buy: [], devBuyTokens: 0n }
+  const { tokens, maxIn } = devBuyQuote(config, devBuy.solLamports, devBuy.slippagePct ?? 1)
+  if (tokens <= 0n) throw new Error('Dev buy is too small to buy any tokens')
+  const buy = await dbcSwapInstructions({
+    config: configAddress,
+    mint,
+    user: launcher,
+    side: 'buy',
+    amountIn: maxIn,
+    minOut: tokens,
+    mode: SWAP_MODE.EXACT_OUT,
+    firstSwap: true,
+  })
+  return { create, buy, devBuyTokens: tokens }
 }
 
 /**
- * A Quant Pad launch. Returned in three stages that must be sent as three transactions, in order:
- * `register` (launcher + mint keypair sign), `launch` (pump.fun create_v2 with creator = well and
- * the optional dev buy; launcher + mint sign), `lock` (optional; launcher signs).
+ * A Quant Pad launch on Meteora. Returned in three stages that must be sent as three
+ * transactions, in order:
+ *   `register` — launcher + mint keypair sign; binds the hooks to the mint and the DBC config;
+ *   `launch`   — DBC create (launcher = creator), transfer_pool_creator → well, `sync` (records
+ *                the binding before any trade), then the optional dev buy; launcher + mint sign;
+ *                needs the lookup table to fit;
+ *   `lock`     — optional; launcher signs.
  * `instructions` is all three concatenated. The caller adds compute-budget instructions.
  */
 export async function buildQuantumLaunchInstructions({
@@ -614,18 +639,21 @@ export async function buildQuantumLaunchInstructions({
   uri,
   hooks,
   devBuy = null,
+  dbcConfig,
   programId,
 }) {
   launcher = pk(launcher)
   mint = pk(mint)
+  if (!dbcConfig) throw new Error('dbcConfig (the Meteora launch config) is required')
   const valid = validateHooks(hooks, { mint, programId })
   const program = quantumProgram(connection, programId)
   const well = wellPda(mint, programId)
+  const config = await fetchLaunchConfig(connection, dbcConfig)
 
-  const { instructions: launch, devBuyTokens } = await pumpCreateInstructions({
-    connection,
-    creator: well,
-    user: launcher,
+  const { create, buy, devBuyTokens } = await meteoraCreateInstructions({
+    config,
+    configAddress: dbcConfig,
+    launcher,
     mint,
     name,
     symbol,
@@ -653,43 +681,49 @@ export async function buildQuantumLaunchInstructions({
       config: configPda(programId),
       quantum: quantumPda(mint, programId),
       well,
+      dbcConfig: pk(dbcConfig),
       systemProgram: SystemProgram.programId,
     })
     .instruction()
+  const transfer = await dbcTransferCreatorInstruction({
+    config: dbcConfig,
+    mint,
+    creator: launcher,
+    newCreator: well,
+  })
+  const sync = await buildSyncInstruction({
+    connection,
+    mint,
+    programId,
+    dbcPool: dbcPoolPda(dbcConfig, mint),
+    damm: null,
+  })
 
   const lock = lockTerms
     ? [
-        await program.methods
-          .lock(bn(lockAmount), bn(lockTerms.cliffSecs), bn(lockTerms.durationSecs))
-          .accountsStrict({
-            launcher,
-            quantum: quantumPda(mint, programId),
-            mint,
-            launcherToken: getAssociatedTokenAddressSync(
-              mint,
-              launcher,
-              true,
-              TOKEN_2022_PROGRAM_ID,
-            ),
-            lockAta: lockAta(mint, programId),
-            tokenProgram: TOKEN_2022_PROGRAM_ID,
-            associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
-            systemProgram: SystemProgram.programId,
-          })
-          .instruction(),
+        await buildLockInstruction({
+          connection,
+          launcher,
+          mint,
+          amount: lockAmount,
+          cliffSecs: lockTerms.cliffSecs,
+          durationSecs: lockTerms.durationSecs,
+          programId,
+        }),
       ]
     : []
 
-  const stages = { register: [register], launch, lock }
+  const stages = { register: [register], launch: [create, transfer, sync, ...buy], lock }
   return {
     instructions: [...stages.register, ...stages.launch, ...stages.lock],
     stages,
     devBuyTokens,
     lockAmount,
+    dbcPool: dbcPoolPda(dbcConfig, mint),
   }
 }
 
-/** A plain pump.fun launch (creator = launcher); no Quantum Hooks. */
+/** A plain Meteora launch (creator = launcher; no Quantum Hooks). */
 export async function buildStandardLaunchInstructions({
   connection,
   launcher,
@@ -698,24 +732,29 @@ export async function buildStandardLaunchInstructions({
   symbol,
   uri,
   devBuy = null,
+  dbcConfig,
 }) {
   launcher = pk(launcher)
   mint = pk(mint)
-  const { instructions, devBuyTokens } = await pumpCreateInstructions({
-    connection,
-    creator: launcher,
-    user: launcher,
+  if (!dbcConfig) throw new Error('dbcConfig (the Meteora launch config) is required')
+  const config = await fetchLaunchConfig(connection, dbcConfig)
+  const { create, buy, devBuyTokens } = await meteoraCreateInstructions({
+    config,
+    configAddress: dbcConfig,
+    launcher,
     mint,
     name,
     symbol,
     uri,
     devBuy,
   })
+  const instructions = [create, ...buy]
   return {
     instructions,
     stages: { register: [], launch: instructions, lock: [] },
     devBuyTokens,
     lockAmount: 0n,
+    dbcPool: dbcPoolPda(dbcConfig, mint),
   }
 }
 
@@ -723,234 +762,216 @@ export async function buildStandardLaunchInstructions({
 // Keeper actions
 // ---------------------------------------------------------------------------------------------
 
-/**
- * The coin mint's token program, read from the mint account's owner: Token-2022 for `create_v2`
- * coins, SPL Token for coins made with pump.fun's legacy `create`.
- */
+/** The coin mint's token program, read from the mint account's owner. */
 export function mintTokenProgram(mintInfo) {
   if (mintInfo?.owner?.equals(TOKEN_2022_PROGRAM_ID)) return TOKEN_2022_PROGRAM_ID
   if (mintInfo?.owner?.equals(TOKEN_PROGRAM_ID)) return TOKEN_PROGRAM_ID
   throw new Error(mintInfo ? 'Mint is not an SPL Token mint' : 'Mint account not found')
 }
 
-/** Where the coin trades now: the bonding curve until it completes, then the canonical pool. */
-export async function fetchVenue(connection, mint) {
-  mint = pk(mint)
-  const pool = canonicalPumpPoolPda(mint)
-  const [curveInfo, poolInfo] = await connection.getMultipleAccountsInfo([
-    bondingCurvePda(mint),
-    pool,
-  ])
-  const curve = curveInfo ? PUMP_SDK.decodeBondingCurve(curveInfo) : null
-  if (curve && !curve.complete) return { kind: 'curve', curve, curveInfo, pool, poolInfo }
-  if (poolInfo) return { kind: 'pool', curve, curveInfo, pool, poolInfo }
-  return { kind: curve ? 'completed' : 'none', curve, curveInfo, pool, poolInfo }
+async function loadQuantum(connection, mint, programId) {
+  const quantum = await fetchQuantum(connection, mint, programId)
+  if (!quantum) throw new Error(`${b58(mint)} is not a Quantum coin`)
+  return quantum
 }
 
 /**
- * pump.fun / PumpSwap sweep + collect into the well, then `pulse`. Legs are included only when
- * they have something to move, which keeps the transaction small.
+ * Where the coin trades now (see meteora.mjs fetchMeteoraVenue): 'curve' (DBC), 'migrating'
+ * (curve full, not migrated yet), 'pool' (DAMM v2) or 'none'.
+ */
+export async function fetchVenue(connection, mint, programId) {
+  const quantum = await fetchQuantum(connection, mint, programId)
+  return fetchMeteoraVenue(connection, mint, quantum ? { dbcPool: quantum.dbcPool } : {})
+}
+
+/**
+ * The well's DAMM v2 position after migration: the Token-2022 NFT account the well owns whose
+ * position is in `dammPool`. Returns { position, nftAccount, nftMint } or null.
+ */
+export async function findWellPosition(connection, well, dammPool) {
+  const { value } = await connection.getTokenAccountsByOwner(pk(well), {
+    programId: TOKEN_2022_PROGRAM_ID,
+  })
+  for (const { pubkey, account } of value) {
+    const parsed = unpackAccount(pubkey, account, TOKEN_2022_PROGRAM_ID)
+    if (parsed.amount !== 1n) continue
+    const position = positionPda(parsed.mint)
+    const decoded = decodePosition((await connection.getAccountInfo(position))?.data)
+    if (decoded && decoded.pool === b58(dammPool))
+      return { position, nftAccount: pubkey, nftMint: parsed.mint }
+  }
+  return null
+}
+
+/** The migrated pool and the well's position, or null while the coin has not migrated. */
+async function findMigration(connection, mint, programId, dbcPool) {
+  const venue = await fetchMeteoraVenue(connection, mint, { dbcPool })
+  if (venue.kind !== 'pool') return null
+  const found = await findWellPosition(connection, wellPda(mint, programId), venue.dammPool)
+  if (!found) return null
+  return {
+    config: DAMM_MIGRATION_CONFIGS[venue.config.migrationFeeOption],
+    pool: venue.dammPool,
+    position: found.position,
+    nftAccount: found.nftAccount,
+  }
+}
+
+/**
+ * `sync` (permissionless): records the well's binding as the DBC pool's creator, the curve's
+ * finish time, and, once migrated, the DAMM v2 pool and the well's position (looked up on-chain
+ * when `damm` is undefined; pass null to skip). The program verifies everything it records.
+ */
+export async function buildSyncInstruction({ connection, mint, programId, dbcPool, damm = undefined }) {
+  mint = pk(mint)
+  if (!dbcPool || damm === undefined) {
+    const quantum = await loadQuantum(connection, mint, programId)
+    dbcPool ??= quantum.dbcPool
+    if (damm === undefined)
+      damm = quantum.dammPool ? null : await findMigration(connection, mint, programId, dbcPool)
+  }
+  const dammAccounts = damm
+    ? {
+        dammConfig: pk(damm.config),
+        dammPool: pk(damm.pool),
+        dammPosition: pk(damm.position),
+        dammNftAccount: pk(damm.nftAccount),
+      }
+    : { dammConfig: null, dammPool: null, dammPosition: null, dammNftAccount: null }
+  return quantumProgram(connection, programId)
+    .methods.sync()
+    .accountsStrict({
+      quantum: quantumPda(mint, programId),
+      well: wellPda(mint, programId),
+      dbcPool: pk(dbcPool),
+      ...dammAccounts,
+    })
+    .instruction()
+}
+
+/** `harvest(legs)`: the well claims its creator fees into itself. */
+export async function buildHarvestInstruction({
+  connection,
+  caller,
+  mint,
+  legs = HARVEST.ALL,
+  programId,
+  quantum,
+  pool,
+}) {
+  caller = pk(caller)
+  mint = pk(mint)
+  quantum ??= await loadQuantum(connection, mint, programId)
+  pool ??= decodeDbcPool((await connection.getAccountInfo(pk(quantum.dbcPool)))?.data)
+  if (!pool) throw new Error('The coin has no Meteora DBC pool')
+  let damm = {
+    dammProgram: null,
+    dammPoolAuthority: null,
+    dammEventAuthority: null,
+    dammPool: null,
+    dammPosition: null,
+    dammNftAccount: null,
+    dammVaultA: null,
+    dammVaultB: null,
+  }
+  if (quantum.dammPool) {
+    const state = decodeDammPool((await connection.getAccountInfo(pk(quantum.dammPool)))?.data)
+    if (!state) throw new Error('The recorded DAMM v2 pool is missing')
+    damm = {
+      dammProgram: DAMM_V2_PROGRAM_ID,
+      dammPoolAuthority: DAMM_POOL_AUTHORITY,
+      dammEventAuthority: DAMM_EVENT_AUTHORITY,
+      dammPool: pk(quantum.dammPool),
+      dammPosition: pk(quantum.dammPosition),
+      dammNftAccount: pk(quantum.dammNftAccount),
+      dammVaultA: pk(state.tokenAVault),
+      dammVaultB: pk(state.tokenBVault),
+    }
+  } else legs &= ~HARVEST.LP_FEE
+  return quantumProgram(connection, programId)
+    .methods.harvest(legs)
+    .accountsStrict({
+      caller,
+      quantum: quantumPda(mint, programId),
+      well: wellPda(mint, programId),
+      mint,
+      wellTokenAta: wellTokenAta(mint, programId),
+      wellWsolAta: wellWsolAta(mint, programId),
+      wsolMint: NATIVE_MINT,
+      tokenProgram: TOKEN_PROGRAM_ID,
+      associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+      systemProgram: SystemProgram.programId,
+      dbcProgram: DBC_PROGRAM_ID,
+      dbcPoolAuthority: DBC_POOL_AUTHORITY,
+      dbcEventAuthority: DBC_EVENT_AUTHORITY,
+      dbcConfig: pk(quantum.dbcConfig),
+      dbcPool: pk(quantum.dbcPool),
+      dbcBaseVault: pk(pool.baseVault),
+      dbcQuoteVault: pk(pool.quoteVault),
+      ...damm,
+    })
+    .instruction()
+}
+
+/**
+ * Harvest + pulse: `sync` first when the binding or a completed migration is not recorded yet,
+ * then `harvest` (every leg), then `pulse`. Returns the instructions to send; a caller may split
+ * them over transactions in this order.
  */
 export async function buildPulseInstructions({ connection, payer, mint, programId }) {
   payer = pk(payer)
   mint = pk(mint)
-  const program = quantumProgram(connection, programId)
-  const well = wellPda(mint, programId)
-  const pool = canonicalPumpPoolPda(mint)
-  const ammVaultAuthority = coinCreatorVaultAuthorityPda(well)
-  const ammVaultAta = coinCreatorVaultAtaPda(ammVaultAuthority, NATIVE_MINT, TOKEN_PROGRAM_ID)
-  const wsolAta = wellWsolAta(mint, programId)
-  const [quantumInfo, configInfo, curveInfo, vaultInfo, poolInfo, ammVaultInfo, wsolInfo] =
-    await connection.getMultipleAccountsInfo([
-      quantumPda(mint, programId),
-      configPda(programId),
-      bondingCurvePda(mint),
-      creatorVaultPda(well),
-      pool,
-      ammVaultAta,
-      wsolAta,
-    ])
-  if (!isQuantumAccount(quantumInfo, 'Quantum', programId))
-    throw new Error(`${mint.toBase58()} is not a Quantum coin`)
-  if (!isQuantumAccount(configInfo, 'Config', programId))
-    throw new Error('Quantum config is not initialized')
-  const quantum = decodeQuantum(quantumInfo.data)
-  const config = decodeConfig(configInfo.data)
-
-  const curve = curveInfo ? PUMP_SDK.decodeBondingCurve(curveInfo) : null
-  const curveLeg = []
-  let curveSweep = false
-  if (curve) {
-    let collect = vaultInfo && BigInt(vaultInfo.lamports) > RENT_EXEMPT_EMPTY
-    if (curve.creator.equals(well) && curve.creatorFee.gtn(0)) {
-      curveLeg.push(
-        await PUMP_SDK.sweepCreatorFeeInstruction({
-          payer,
-          mint,
-          creator: well,
-          quoteMint: curve.quoteMint,
-        }),
-      )
-      curveSweep = true
-      collect = true
+  let quantum = await loadQuantum(connection, mint, programId)
+  const config = await fetchConfig(connection, programId)
+  if (!config) throw new Error('Quantum config is not initialized')
+  const pool = decodeDbcPool((await connection.getAccountInfo(pk(quantum.dbcPool)))?.data)
+  if (!pool) throw new Error('The coin has no Meteora DBC pool')
+  const pre = []
+  const bound = pool.creator === wellPda(mint, programId).toBase58()
+  if (bound) {
+    const damm = !quantum.dammPool && pool.isMigrated
+      ? await findMigration(connection, mint, programId, quantum.dbcPool)
+      : null
+    if (quantum.boundAt === 0 || damm) {
+      pre.push(await buildSyncInstruction({ connection, mint, programId, dbcPool: quantum.dbcPool, damm }))
+      if (damm)
+        quantum = {
+          ...quantum,
+          dammPool: b58(damm.pool),
+          dammPosition: b58(damm.position),
+          dammNftAccount: b58(damm.nftAccount),
+        }
     }
-    if (collect) {
-      curveLeg.push(
-        await getPumpProgram(connection)
-          .methods.collectCreatorFee()
-          .accountsPartial({ creator: well })
-          .instruction(),
-      )
-    }
+    pre.push(await buildHarvestInstruction({ connection, caller: payer, mint, programId, quantum, pool }))
   }
-  const poolLeg = []
-  if (poolInfo) {
-    const decoded = PUMP_AMM_SDK.decodePool(poolInfo)
-    if (decoded.coinCreator.equals(well)) {
-      let collect = tokenAmount(ammVaultAta, ammVaultInfo, TOKEN_PROGRAM_ID) > 0n
-      if (decoded.creatorFees.gtn(0)) {
-        poolLeg.push(
-          await PUMP_SDK.sweepPoolCreatorFeeInstruction({
-            payer,
-            mint,
-            coinCreator: well,
-            quoteMint: NATIVE_MINT,
-          }),
-        )
-        collect = true
-      }
-      if (collect) {
-        // Creates the vault ATA and the well's WSOL ATA when missing (payer pays); `pulse` closes
-        // the WSOL ATA into the well and refunds its rent to the payer (`rent_payer`).
-        poolLeg.push(
-          ...(await PUMP_AMM_SDK.collectCoinCreatorFee(
-            {
-              coinCreator: well,
-              quoteMint: NATIVE_MINT,
-              quoteTokenProgram: TOKEN_PROGRAM_ID,
-              coinCreatorVaultAuthority: ammVaultAuthority,
-              coinCreatorVaultAta: ammVaultAta,
-              coinCreatorTokenAccount: wsolAta,
-              coinCreatorVaultAtaAccountInfo: ammVaultInfo,
-              coinCreatorTokenAccountInfo: wsolInfo,
-            },
-            payer,
-          )),
-        )
-      }
-    }
-  }
-  // A curve sweep plus the PumpSwap leg overflow 1232 bytes without a lookup table: take the
-  // curve this time; the next pulse picks up the pool fees.
-  const instructions = curveSweep && poolLeg.length ? curveLeg : [...curveLeg, ...poolLeg]
-  const unwrap =
-    (!!wsolInfo && wsolInfo.owner.equals(TOKEN_PROGRAM_ID)) ||
-    instructions.some((ix) => poolLeg.includes(ix))
-  // Until the program has recorded the coin's graduation, show it the evidence (the canonical pool,
-  // or the completed curve before migration): the public Fusion grace counts from that moment.
-  const poolLive =
-    !!poolInfo && poolInfo.owner.equals(PUMP_AMM_PROGRAM_ID) && poolInfo.data.length > 0
-  const recordGraduation = quantum.graduatedAt === 0
-  const graduationPool = recordGraduation && poolLive ? pool : null
-  const graduationCurve =
-    recordGraduation && !poolLive && curve?.complete ? bondingCurvePda(mint) : null
-
-  instructions.push(
-    await program.methods
-      .pulse()
-      .accountsStrict({
-        rentPayer: payer,
-        config: configPda(programId),
-        quantum: quantumPda(mint, programId),
-        well,
-        treasury: pk(config.treasury),
-        launcher: pk(quantum.launcher),
-        wellWsolAta: unwrap ? wsolAta : null,
-        tokenProgram: unwrap ? TOKEN_PROGRAM_ID : null,
-        bondingCurve: graduationCurve,
-        pool: graduationPool,
-        systemProgram: SystemProgram.programId,
-      })
-      .remainingAccounts(
-        // A reserved key is always read-only on-chain (the program defers its share).
-        quantum.splits.map((s) => ({
-          pubkey: pk(s.wallet),
-          isWritable: !isReservedAccountKey(s.wallet),
-          isSigner: false,
-        })),
-      )
-      .instruction(),
-  )
-  return instructions
+  const splits = quantum.splits.map((s) => ({ pubkey: pk(s.wallet), isSigner: false, isWritable: true }))
+  const pulse = await quantumProgram(connection, programId)
+    .methods.pulse()
+    .accountsStrict({
+      config: configPda(programId),
+      quantum: quantumPda(mint, programId),
+      well: wellPda(mint, programId),
+      treasury: pk(config.treasury),
+      launcher: pk(quantum.launcher),
+      systemProgram: SystemProgram.programId,
+    })
+    .remainingAccounts(splits)
+    .instruction()
+  return [...pre, pulse]
 }
 
-const lessPct = (value, pct) => (value * BigInt(Math.round((100 - Number(pct)) * 100))) / 10_000n
-const asRemaining = (ix) =>
-  ix.keys.map((k) => ({ pubkey: k.pubkey, isWritable: k.isWritable, isSigner: false }))
-// sha256("global:<name>")[..8] of the PumpSwap instructions picked out of the SDK's output.
-const PUMP_AMM_DISCRIMINATORS = {
-  buy_exact_quote_in_v2: [194, 171, 28, 70, 104, 77, 91, 47],
-  deposit: [242, 35, 198, 137, 82, 225, 242, 182],
-}
-const pickInstruction = (instructions, programId, name) => {
-  const disc = Buffer.from(PUMP_AMM_DISCRIMINATORS[name])
-  const found = instructions.find(
-    (ix) => ix.programId.equals(programId) && Buffer.from(ix.data.subarray(0, 8)).equals(disc),
-  )
-  if (!found) throw new Error(`pump SDK did not produce a ${name} instruction`)
-  return found
-}
+const slip = (amount, pct) => (amount * BigInt(10_000 - Math.round(Number(pct) * 100))) / 10_000n
 
-async function ensureVolumeAccumulators(connection, payer, user, { curve = false, pool = false }) {
-  const keys = []
-  if (curve) keys.push(['curve', userVolumeAccumulatorPda(user)])
-  if (pool) keys.push(['pool', ammUserVolumeAccumulatorPda(user)])
-  if (!keys.length) return []
-  const infos = await connection.getMultipleAccountsInfo(keys.map(([, k]) => k))
-  const out = []
-  for (let i = 0; i < keys.length; i++) {
-    if (infos[i]) continue
-    out.push(
-      keys[i][0] === 'curve'
-        ? await PUMP_SDK.initUserVolumeAccumulator({ payer, user })
-        : await PUMP_AMM_SDK.initUserVolumeAccumulator({ payer, user }),
-    )
-  }
-  return out
-}
-
-async function wellPoolBuy({ connection, well, pool, spend, slippagePct }) {
-  const state = await new OnlinePumpAmmSdk(connection).swapSolanaState(pool, well)
-  const { base } = buyQuoteInput({
-    quote: bn(spend),
-    slippage: Number(slippagePct),
-    baseReserve: state.poolBaseAmount,
-    quoteReserve: state.poolQuoteAmount,
-    virtualQuoteReserves: state.pool.virtualQuoteReserves,
-    globalConfig: state.globalConfig,
-    baseMintAccount: state.baseMintAccount,
-    baseMint: state.baseMint,
-    coinCreator: state.pool.coinCreator,
-    creator: state.pool.creator,
-    feeConfig: state.feeConfig,
-    quoteMint: state.pool.quoteMint,
-    isMayhemMode: state.pool.isMayhemMode,
-    creatorFeeBps: state.pool.creatorFeeBps,
-  })
-  const minBase = lessPct(big(base), slippagePct)
-  if (minBase <= 0n) throw new Error('Spend is too small to buy any tokens')
-  const built = await PUMP_AMM_SDK.buyExactQuoteInV2Instructions(state, bn(spend), bn(minBase))
-  return {
-    state,
-    minBase,
-    ix: pickInstruction(built, PUMP_AMM_PROGRAM_ID, 'buy_exact_quote_in_v2'),
-    extra: built,
-  }
+async function chainTime(connection) {
+  const slot = await connection.getSlot()
+  const time = await connection.getBlockTime(slot).catch(() => null)
+  return { slot: BigInt(slot), now: BigInt(time ?? Math.floor(Date.now() / 1000)) }
 }
 
 /**
- * Quantum Burn: the well buys with `spendLamports` from the burn reserve (curve or canonical
- * PumpSwap pool) and the program burns everything bought. Returns the instructions to send.
+ * Quantum Burn: the well buys its coin with `spendLamports` from the burn reserve on its current
+ * venue (the DBC curve, or the DAMM v2 pool once migrated and synced) and burns everything it
+ * holds. `slippagePct` sets the minimum tokens out. Returns the instructions to send.
  */
 export async function buildBurnInstructions({
   connection,
@@ -964,79 +985,73 @@ export async function buildBurnInstructions({
   mint = pk(mint)
   const spend = BigInt(spendLamports)
   if (spend <= 0n) throw new Error('spendLamports must be positive')
-  const program = quantumProgram(connection, programId)
-  const well = wellPda(mint, programId)
-  const [venue, mintInfo] = await Promise.all([
-    fetchVenue(connection, mint),
-    connection.getAccountInfo(mint),
-  ])
-  const tokenProgram = mintTokenProgram(mintInfo)
-  const pre = []
-  let buy
-  if (venue.kind === 'curve') {
-    pre.push(...(await ensureVolumeAccumulators(connection, caller, well, { curve: true })))
-    const online = new OnlinePumpSdk(connection)
-    const [global, feeConfig] = await Promise.all([
-      online.fetchGlobal(),
-      online.fetchFeeConfig().catch(() => null),
-    ])
-    const supply = unpackMint(mint, mintInfo, tokenProgram).supply
-    const amount = getBuyTokenAmountFromSolAmount({
-      global,
-      feeConfig,
-      mintSupply: bn(supply),
-      bondingCurve: venue.curve,
-      amount: bn(lessPct(spend, slippagePct)),
-      quoteMint: venue.curve.quoteMint,
-    })
-    if (amount.lten(0)) throw new Error('Spend is too small to buy any tokens')
-    // Legacy `buy` (exact tokens, max cost = spend): the smallest account list, so the keeper's
-    // transaction fits without a lookup table.
-    buy = await PUMP_SDK.getBuyInstructionRaw({
-      user: well,
-      mint,
-      creator: venue.curve.creator,
-      amount,
-      solAmount: bn(spend),
-      feeRecipient: getFeeRecipient(global, venue.curve.isMayhemMode),
-      tokenProgram,
-    })
-  } else if (venue.kind === 'pool') {
-    pre.push(...(await ensureVolumeAccumulators(connection, caller, well, { pool: true })))
-    buy = (await wellPoolBuy({ connection, well, pool: venue.pool, spend, slippagePct })).ix
+  const quantum = await loadQuantum(connection, mint, programId)
+  const { slot, now } = await chainTime(connection)
+  let venue
+  let minOut
+  if (quantum.dammPool) {
+    const damm = decodeDammPool((await connection.getAccountInfo(pk(quantum.dammPool)))?.data)
+    if (!damm) throw new Error('The recorded DAMM v2 pool is missing')
+    minOut = slip(dammQuote({ damm, side: 'buy', amountIn: spend, currentPoint: now }).out, slippagePct)
+    venue = {
+      venueProgram: DAMM_V2_PROGRAM_ID,
+      venuePoolAuthority: DAMM_POOL_AUTHORITY,
+      venueEventAuthority: DAMM_EVENT_AUTHORITY,
+      venuePool: pk(quantum.dammPool),
+      venueBaseVault: pk(damm.tokenAVault),
+      venueQuoteVault: pk(damm.tokenBVault),
+      dbcConfig: null,
+    }
   } else {
-    throw new Error(`No pump.fun market to burn on (${venue.kind})`)
+    const [poolInfo, configInfo] = await connection.getMultipleAccountsInfo([
+      pk(quantum.dbcPool),
+      pk(quantum.dbcConfig),
+    ])
+    const pool = decodeDbcPool(poolInfo?.data)
+    const config = decodeDbcConfig(configInfo?.data)
+    if (!pool || !config) throw new Error('The coin has no Meteora DBC pool')
+    if (pool.migrationProgress !== PROGRESS.PRE)
+      throw new Error('The curve is full: burns resume on DAMM v2 after migration and sync')
+    const point = config.activationType === 0 ? slot : now
+    minOut = slip(dbcQuote({ pool, config, side: 'buy', amountIn: spend, currentPoint: point }).out, slippagePct)
+    venue = {
+      venueProgram: DBC_PROGRAM_ID,
+      venuePoolAuthority: DBC_POOL_AUTHORITY,
+      venueEventAuthority: DBC_EVENT_AUTHORITY,
+      venuePool: pk(quantum.dbcPool),
+      venueBaseVault: pk(pool.baseVault),
+      venueQuoteVault: pk(pool.quoteVault),
+      dbcConfig: pk(quantum.dbcConfig),
+    }
   }
-  const poolRoute = venue.kind === 'pool'
-  const ix = await program.methods
-    .quantumBurn(bn(spend), Buffer.from(buy.data))
+  const ix = await quantumProgram(connection, programId)
+    .methods.quantumBurn(bn(spend), bn(minOut))
     .accountsStrict({
       caller,
       config: configPda(programId),
       quantum: quantumPda(mint, programId),
-      well,
+      well: wellPda(mint, programId),
       mint,
-      wellTokenAta: wellTokenAta(mint, programId, tokenProgram),
-      wellWsolAta: poolRoute ? wellWsolAta(mint, programId) : null,
-      wsolMint: poolRoute ? NATIVE_MINT : null,
-      tokenProgram,
-      quoteTokenProgram: poolRoute ? TOKEN_PROGRAM_ID : null,
+      wellTokenAta: wellTokenAta(mint, programId),
+      wellWsolAta: wellWsolAta(mint, programId),
+      wsolMint: NATIVE_MINT,
+      tokenProgram: TOKEN_PROGRAM_ID,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
-      // Read when the caller is not the keeper: a public burn may not share its transaction with
-      // pump.fun / PumpSwap trades (or any program but compute budget, system, token, ATA and
-      // Quantum Hooks), and spends at most max_burn_lamports / 10.
+      // Read when the caller is not the keeper: a public burn may share its transaction only with
+      // compute budget, system, token, ATA and Quantum Hooks instructions, and spends at most
+      // max_burn_lamports / 10.
       instructionsSysvar: SYSVAR_INSTRUCTIONS_PUBKEY,
-      targetProgram: buy.programId,
+      ...venue,
     })
-    .remainingAccounts(asRemaining(buy))
     .instruction()
-  return [...pre, ix]
+  return [ix]
 }
 
 /**
- * Fusion (post-graduation): ~45% of `spendLamports` buys base on the canonical pool, the rest
- * deposits both sides; LP stays in the well forever, leftovers are burned / unwrapped.
+ * Fusion (after migration): ~45% of `spendLamports` buys the coin on the DAMM v2 pool, then both
+ * sides are added to the well's own position and that liquidity is permanently locked. Leftovers
+ * are burned / unwrapped by the program.
  */
 export async function buildFusionInstructions({
   connection,
@@ -1049,80 +1064,61 @@ export async function buildFusionInstructions({
   caller = pk(caller)
   mint = pk(mint)
   const spend = BigInt(spendLamports)
-  const program = quantumProgram(connection, programId)
-  const well = wellPda(mint, programId)
-  const [venue, mintInfo] = await Promise.all([
-    fetchVenue(connection, mint),
-    connection.getAccountInfo(mint),
+  const quantum = await loadQuantum(connection, mint, programId)
+  if (!quantum.dammPool) throw new Error('Fusion needs a migrated coin whose DAMM v2 pool is synced')
+  const [poolInfo, positionInfo] = await connection.getMultipleAccountsInfo([
+    pk(quantum.dammPool),
+    pk(quantum.dammPosition),
   ])
-  if (venue.kind !== 'pool') throw new Error('Fusion needs a graduated coin with a PumpSwap pool')
-  const tokenProgram = mintTokenProgram(mintInfo)
-  const pre = await ensureVolumeAccumulators(connection, caller, well, { pool: true })
-
-  const buySpend = (spend * 45n) / 100n
-  const {
-    state,
-    minBase,
-    ix: buy,
-  } = await wellPoolBuy({ connection, well, pool: venue.pool, spend: buySpend, slippagePct })
-
-  // Reserves after the buy, bounded so the deposit never needs more than we hold.
-  const liquidity = await new OnlinePumpAmmSdk(connection).liquiditySolanaState(venue.pool, well)
-  const lpSupply = big(liquidity.pool.lpSupply)
-  const poolBase = big(state.poolBaseAmount)
-  const realQuote =
-    big(liquidity.poolQuoteTokenAccount.amount) -
-    big(liquidity.pool.protocolFees) -
-    big(liquidity.pool.creatorFees)
-  const baseAfter = poolBase - minBase
-  const quoteLeft = spend - buySpend
-  let lp = (minBase * lpSupply) / baseAfter
-  lp = (lp * 99n) / 100n
-  const quoteBound = ((realQuote + buySpend) * lp) / lpSupply + 2n
-  if (quoteBound > quoteLeft) lp = (lp * quoteLeft) / quoteBound
-  if (lp <= 0n) throw new Error('Fusion spend is too small to mint LP tokens')
-  const built = await PUMP_AMM_SDK.depositInstructionsInternal(
-    liquidity,
-    bn(lp),
-    bn(minBase),
-    bn(quoteLeft),
-  )
-  const deposit = pickInstruction(built, PUMP_AMM_PROGRAM_ID, 'deposit')
-
-  const buyAccounts = asRemaining(buy)
-  const ix = await program.methods
-    .fusion(bn(spend), Buffer.from(buy.data), buyAccounts.length, Buffer.from(deposit.data))
+  const damm = decodeDammPool(poolInfo?.data)
+  if (!damm || !decodePosition(positionInfo?.data))
+    throw new Error('The recorded DAMM v2 pool or position is missing')
+  const { now } = await chainTime(connection)
+  const swapIn = (spend * 45n) / 100n
+  const quote = dammQuote({ damm, side: 'buy', amountIn: swapIn, currentPoint: now })
+  const minBaseOut = slip(quote.out, slippagePct)
+  // Liquidity the bought coin and the remaining SOL can fund at the post-swap price, with margin.
+  const liquidityDelta = (fullRangeLiquidity(damm, quote.nextSqrtPrice, minBaseOut, spend - swapIn) * 97n) / 100n
+  if (liquidityDelta <= 0n) throw new Error('Fusion spend is too small to add liquidity')
+  const ix = await quantumProgram(connection, programId)
+    .methods.fusion(bn(spend), bn(swapIn), bn(minBaseOut), bn(liquidityDelta))
     .accountsStrict({
       caller,
       config: configPda(programId),
       quantum: quantumPda(mint, programId),
-      well,
+      well: wellPda(mint, programId),
       mint,
-      wellTokenAta: wellTokenAta(mint, programId, tokenProgram),
+      wellTokenAta: wellTokenAta(mint, programId),
       wellWsolAta: wellWsolAta(mint, programId),
       wsolMint: NATIVE_MINT,
-      pool: venue.pool,
-      lpMint: lpMintPda(venue.pool),
-      // PumpSwap LP mints are always Token-2022, whatever the coin's token program.
-      wellLpAta: getAssociatedTokenAddressSync(
-        lpMintPda(venue.pool),
-        well,
-        true,
-        TOKEN_2022_PROGRAM_ID,
-      ),
-      tokenProgram,
-      lpTokenProgram: TOKEN_2022_PROGRAM_ID,
-      quoteTokenProgram: TOKEN_PROGRAM_ID,
+      tokenProgram: TOKEN_PROGRAM_ID,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
-      // Same public-caller rules as buildBurnInstructions; the public grace counts from the later
-      // of the last fusion and graduation.
       instructionsSysvar: SYSVAR_INSTRUCTIONS_PUBKEY,
-      targetProgram: PUMP_AMM_PROGRAM_ID,
+      dammProgram: DAMM_V2_PROGRAM_ID,
+      dammPoolAuthority: DAMM_POOL_AUTHORITY,
+      dammEventAuthority: DAMM_EVENT_AUTHORITY,
+      dammPool: pk(quantum.dammPool),
+      dammPosition: pk(quantum.dammPosition),
+      dammNftAccount: pk(quantum.dammNftAccount),
+      dammVaultA: pk(damm.tokenAVault),
+      dammVaultB: pk(damm.tokenBVault),
     })
-    .remainingAccounts([...buyAccounts, ...asRemaining(deposit)])
     .instruction()
-  return [...pre, ix]
+  return [ix]
+}
+
+// DAMM v2 concentrated liquidity over the pool's range [sqrtMin, sqrtMax] (Q64.64 sqrt prices): the
+// liquidity `amountA` coin and `amountB` lamports fund at sqrt price P (the smaller of the two).
+function fullRangeLiquidity(damm, nextSqrtPrice, amountA, amountB) {
+  const Q64 = 1n << 64n
+  const P = BigInt((nextSqrtPrice ?? damm.raw.sqrtPrice).toString())
+  const lo = BigInt(damm.raw.sqrtMinPrice.toString())
+  const hi = BigInt(damm.raw.sqrtMaxPrice.toString())
+  if (P <= lo || P >= hi) return 0n
+  const fromA = (amountA * P * hi) / ((hi - P) * Q64)
+  const fromB = (amountB * Q64 * Q64) / (P - lo)
+  return fromA < fromB ? fromA : fromB
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1265,9 +1261,9 @@ export async function buildLockInstruction({
       launcher,
       quantum: quantumPda(mint, programId),
       mint,
-      launcherToken: getAssociatedTokenAddressSync(mint, launcher, true, TOKEN_2022_PROGRAM_ID),
+      launcherToken: getAssociatedTokenAddressSync(mint, launcher, true, TOKEN_PROGRAM_ID),
       lockAta: lockAta(mint, programId),
-      tokenProgram: TOKEN_2022_PROGRAM_ID,
+      tokenProgram: TOKEN_PROGRAM_ID,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
     })
@@ -1283,9 +1279,9 @@ export async function buildReleaseInstruction({ connection, launcher, mint, prog
       launcher,
       quantum: quantumPda(mint, programId),
       mint,
-      launcherToken: getAssociatedTokenAddressSync(mint, launcher, true, TOKEN_2022_PROGRAM_ID),
+      launcherToken: getAssociatedTokenAddressSync(mint, launcher, true, TOKEN_PROGRAM_ID),
       lockAta: lockAta(mint, programId),
-      tokenProgram: TOKEN_2022_PROGRAM_ID,
+      tokenProgram: TOKEN_PROGRAM_ID,
       associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
       systemProgram: SystemProgram.programId,
     })
@@ -1365,6 +1361,26 @@ export async function buildSetPausedInstruction({ connection, authority, paused,
   if (typeof paused !== 'boolean') throw new Error('paused must be true or false')
   return quantumProgram(connection, programId)
     .methods.setPaused(paused)
+    .accountsStrict({ authority: pk(authority), config: configPda(programId) })
+    .instruction()
+}
+
+/** set_launch_configs: authority only; the Meteora DBC configs new coins may launch under. */
+export async function buildSetLaunchConfigsInstruction({
+  connection,
+  authority,
+  configs,
+  expectedVersion,
+  programId,
+}) {
+  let version = expectedVersion
+  if (version === undefined) {
+    const current = await fetchConfig(connection, programId)
+    if (!current) throw new Error('Quantum config is not initialized')
+    version = current.version
+  }
+  return quantumProgram(connection, programId)
+    .methods.setLaunchConfigs(bn(version), configs.map(pk))
     .accountsStrict({ authority: pk(authority), config: configPda(programId) })
     .instruction()
 }

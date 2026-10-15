@@ -1,5 +1,4 @@
 use anchor_lang::prelude::*;
-use anchor_spl::token::Token;
 
 use crate::constants::*;
 use crate::errors::QuantumError;
@@ -7,12 +6,11 @@ use crate::events::Pulsed;
 use crate::state::{Config, Quantum};
 use crate::utils::*;
 
+/// Allocates the lamports `harvest` (or anyone) put in the well: protocol cut, module reserves,
+/// splits and the launcher, with an owed ledger for recipients that cannot hold their share yet.
+/// Permissionless and not blocked by a pause.
 #[derive(Accounts)]
 pub struct Pulse<'info> {
-    /// Gets back the rent of the well's WSOL ATA when this pulse closes it. The PumpSwap collect
-    /// leg creates that ATA at the transaction payer's expense; only creator fees are split.
-    #[account(mut)]
-    pub rent_payer: Signer<'info>,
     #[account(seeds = [CONFIG_SEED], bump = config.bump)]
     pub config: Box<Account<'info, Config>>,
     #[account(mut, seeds = [QUANTUM_SEED, quantum.mint.as_ref()], bump = quantum.bump)]
@@ -25,18 +23,6 @@ pub struct Pulse<'info> {
     /// CHECK: must be `quantum.launcher`; only receives lamports.
     #[account(mut, address = quantum.launcher @ QuantumError::NotLauncher)]
     pub launcher: UncheckedAccount<'info>,
-    /// CHECK: optional; the well's WSOL ATA. Closed into the well first when it exists.
-    #[account(mut, address = well_wsol_address(&well.key()))]
-    pub well_wsol_ata: Option<UncheckedAccount<'info>>,
-    pub token_program: Option<Program<'info, Token>>,
-    /// CHECK: optional; the coin's pump.fun bonding curve (address checked, read only). Passed
-    /// while `graduated_at` is unset and the curve is complete, so the pulse records graduation.
-    #[account(address = bonding_curve_address(&quantum.mint))]
-    pub bonding_curve: Option<UncheckedAccount<'info>>,
-    /// CHECK: optional; the coin's canonical PumpSwap pool (address checked, read only), passed
-    /// for the same reason once the coin has migrated.
-    #[account(address = canonical_pool(&quantum.mint) @ QuantumError::NotCanonicalPool)]
-    pub pool: Option<UncheckedAccount<'info>>,
     pub system_program: Program<'info, System>,
     // remaining_accounts: the Superposition wallets, writable, in stored order.
 }
@@ -102,32 +88,6 @@ pub(crate) fn pulse<'info>(mut ctx: Context<'_, '_, 'info, 'info, Pulse<'info>>)
     let well = accounts.well.to_account_info();
     let system_program = accounts.system_program.to_account_info();
     let rent = Rent::get()?;
-    let now = Clock::get()?.unix_timestamp;
-
-    // Post-graduation creator fees arrive as WSOL; unwrap them into the well first. The ATA's
-    // rent goes back to `rent_payer`, so only the wrapped SOL counts as fees.
-    let mut unwrapped = 0u64;
-    let mut rent_refunded = 0u64;
-    if let Some(wsol_ata) = &accounts.well_wsol_ata {
-        let wsol_ata = wsol_ata.to_account_info();
-        if is_token_account(&wsol_ata) {
-            let token_program = accounts
-                .token_program
-                .as_ref()
-                .ok_or(QuantumError::MissingTokenProgram)?
-                .to_account_info();
-            let closed = unwrap_to_well(&well, &wsol_ata, &token_program, signer)?;
-            (rent_refunded, unwrapped) =
-                split_closed_ata(closed, rent.minimum_balance(TOKEN_ACCOUNT_LEN));
-            pay_from_well(
-                &well,
-                &accounts.rent_payer.to_account_info(),
-                &system_program,
-                rent_refunded,
-                signer,
-            )?;
-        }
-    }
 
     // Superposition wallets must match the stored list exactly.
     let split_count = accounts.quantum.split_count as usize;
@@ -148,16 +108,7 @@ pub(crate) fn pulse<'info>(mut ctx: Context<'_, '_, 'info, 'info, Pulse<'info>>)
         );
     }
 
-    let graduated = accounts
-        .bonding_curve
-        .as_ref()
-        .is_some_and(|curve| curve_complete(&curve.to_account_info()))
-        || accounts
-            .pool
-            .as_ref()
-            .is_some_and(|pool| pool_exists(&pool.to_account_info()));
     let quantum = &mut accounts.quantum;
-    note_graduation(quantum, graduated, now);
 
     let rent_min = rent.minimum_balance(0);
     let available = well
@@ -268,7 +219,6 @@ pub(crate) fn pulse<'info>(mut ctx: Context<'_, '_, 'info, 'info, Pulse<'info>>)
 
     emit!(Pulsed {
         mint,
-        unwrapped,
         collected: allocated,
         protocol: protocol_paid,
         launcher_paid,
@@ -278,7 +228,6 @@ pub(crate) fn pulse<'info>(mut ctx: Context<'_, '_, 'info, 'info, Pulse<'info>>)
         fusion_added,
         deferred,
         owed_paid,
-        rent_refunded,
     });
     Ok(())
 }

@@ -1,14 +1,15 @@
-//! Fusion: after graduation the well buys base on the canonical PumpSwap pool and deposits both
-//! sides as liquidity. The LP tokens stay in the well's LP ATA forever (no withdraw path).
+//! Fusion: after migration the well buys some of its coin on the DAMM v2 pool `sync` recorded,
+//! adds both sides to its own position there (the creator position DBC handed it at migration)
+//! and permanently locks exactly the liquidity it added. Locked liquidity keeps earning LP fees,
+//! which `harvest` claims. Whatever the deposit does not take is burned (coin) or unwrapped (SOL).
 use anchor_lang::prelude::*;
 use anchor_spl::associated_token::AssociatedToken;
-use anchor_spl::token::Token;
-use anchor_spl::token_2022::Token2022;
-use anchor_spl::token_interface::{self, Burn, Mint, TokenAccount, TokenInterface};
+use anchor_spl::token::{self, Burn, Mint, Token, TokenAccount};
 
 use crate::constants::*;
 use crate::errors::QuantumError;
 use crate::events::Fused;
+use crate::meteora::*;
 use crate::state::{Config, Quantum};
 use crate::utils::*;
 
@@ -28,7 +29,7 @@ pub struct Fusion<'info> {
     #[account(mut, seeds = [WELL_SEED, mint.key().as_ref()], bump = quantum.well_bump)]
     pub well: SystemAccount<'info>,
     #[account(mut, mint::token_program = token_program)]
-    pub mint: Box<InterfaceAccount<'info, Mint>>,
+    pub mint: Box<Account<'info, Mint>>,
     #[account(
         init_if_needed,
         payer = caller,
@@ -36,88 +37,71 @@ pub struct Fusion<'info> {
         associated_token::authority = well,
         associated_token::token_program = token_program
     )]
-    pub well_token_ata: Box<InterfaceAccount<'info, TokenAccount>>,
+    pub well_token_ata: Box<Account<'info, TokenAccount>>,
     /// CHECK: the well's WSOL ATA (address checked).
     #[account(mut, address = well_wsol_address(&well.key()))]
     pub well_wsol_ata: UncheckedAccount<'info>,
     /// CHECK: the WSOL mint.
     #[account(address = NATIVE_MINT)]
     pub wsol_mint: UncheckedAccount<'info>,
-    /// CHECK: the coin's canonical PumpSwap pool (address derived from the mint).
-    #[account(address = canonical_pool(&mint.key()) @ QuantumError::NotCanonicalPool)]
-    pub pool: UncheckedAccount<'info>,
-    #[account(
-        address = lp_mint_address(&pool.key()) @ QuantumError::NotCanonicalPool,
-        mint::token_program = lp_token_program
-    )]
-    pub lp_mint: Box<InterfaceAccount<'info, Mint>>,
-    #[account(
-        init_if_needed,
-        payer = caller,
-        associated_token::mint = lp_mint,
-        associated_token::authority = well,
-        associated_token::token_program = lp_token_program
-    )]
-    pub well_lp_ata: Box<InterfaceAccount<'info, TokenAccount>>,
-    /// The coin mint's owner: Token-2022 for `create_v2` coins, SPL Token for coins made with
-    /// pump.fun's legacy `create` (bound by the `mint::token_program` constraint).
-    pub token_program: Interface<'info, TokenInterface>,
-    /// PumpSwap always mints LP tokens with Token-2022.
-    pub lp_token_program: Program<'info, Token2022>,
-    pub quote_token_program: Program<'info, Token>,
+    pub token_program: Program<'info, Token>,
     pub associated_token_program: Program<'info, AssociatedToken>,
     pub system_program: Program<'info, System>,
     /// CHECK: the Instructions sysvar (address checked); read when the caller is not the keeper.
     #[account(address = anchor_lang::solana_program::sysvar::instructions::ID)]
     pub instructions_sysvar: UncheckedAccount<'info>,
-    /// CHECK: PumpSwap.
-    #[account(executable, address = PUMP_AMM_PROGRAM_ID @ QuantumError::InvalidTargetProgram)]
-    pub target_program: UncheckedAccount<'info>,
-    // remaining_accounts: buy accounts [0, buy_account_count), then deposit accounts.
+
+    /// CHECK: Meteora DAMM v2.
+    #[account(executable, address = DAMM_V2_PROGRAM_ID @ QuantumError::NotCanonicalDammPool)]
+    pub damm_program: UncheckedAccount<'info>,
+    /// CHECK: DAMM v2's pool authority.
+    #[account(address = DAMM_POOL_AUTHORITY @ QuantumError::NotCanonicalDammPool)]
+    pub damm_pool_authority: UncheckedAccount<'info>,
+    /// CHECK: DAMM v2's event authority.
+    #[account(address = DAMM_EVENT_AUTHORITY @ QuantumError::NotCanonicalDammPool)]
+    pub damm_event_authority: UncheckedAccount<'info>,
+    /// CHECK: the pool `sync` recorded.
+    #[account(mut, address = quantum.damm_pool @ QuantumError::NotMigrated)]
+    pub damm_pool: UncheckedAccount<'info>,
+    /// CHECK: the well's position `sync` recorded.
+    #[account(mut, address = quantum.damm_position @ QuantumError::PositionNotWells)]
+    pub damm_position: UncheckedAccount<'info>,
+    /// CHECK: the account holding that position's NFT, as recorded.
+    #[account(address = quantum.damm_nft_account @ QuantumError::PositionNotWells)]
+    pub damm_nft_account: UncheckedAccount<'info>,
+    /// CHECK: checked against the pool in the handler.
+    #[account(mut)]
+    pub damm_vault_a: UncheckedAccount<'info>,
+    /// CHECK: checked against the pool in the handler.
+    #[account(mut)]
+    pub damm_vault_b: UncheckedAccount<'info>,
 }
 
-pub(crate) fn fusion<'info>(
-    mut ctx: Context<'_, '_, 'info, 'info, Fusion<'info>>,
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn fusion(
+    mut ctx: Context<Fusion>,
     spend: u64,
-    buy_data: Vec<u8>,
-    buy_account_count: u8,
-    deposit_data: Vec<u8>,
+    swap_in: u64,
+    min_base_out: u64,
+    liquidity_delta: u128,
 ) -> Result<()> {
     let now = Clock::get()?.unix_timestamp;
     let rent = Rent::get()?;
-    let accounts = &mut ctx.accounts;
+    let accounts = &ctx.accounts;
+    require!(
+        accounts.quantum.damm_pool != Pubkey::default(),
+        QuantumError::NotMigrated
+    );
     let is_keeper = accounts.caller.key() == accounts.config.keeper;
-    // Fusion needs the canonical pool, so the coin has graduated. If no pulse or burn has
-    // recorded that yet, it happens now, and the public gate below stays shut for a full grace.
-    let pool_live = pool_exists(&accounts.pool.to_account_info());
-    note_graduation(&mut accounts.quantum, pool_live, now);
+    // Anyone may fuse only a full keeper grace after migration (or the last fusion).
     let last_fusion_at = accounts.quantum.last_fusion_at;
-    let grace_from = last_fusion_at.max(accounts.quantum.graduated_at);
+    let grace_from = last_fusion_at.max(accounts.quantum.migrated_at);
     check_action_gate(&accounts.config, is_keeper, last_fusion_at, grace_from, now)?;
-    check_spend(
-        &accounts.config,
-        is_keeper,
-        spend,
-        accounts.quantum.fusion_reserve,
-    )?;
+    check_spend(&accounts.config, is_keeper, spend, accounts.quantum.fusion_reserve)?;
     if !is_keeper {
-        // The public fallback: a smaller cap (above) and no trading around it in its transaction.
         check_public_transaction(&accounts.instructions_sysvar.to_account_info())?;
     }
-    check_discriminator(&buy_data, &PUMP_AMM_BUY_DISCRIMINATORS)?;
-    check_discriminator(&deposit_data, &[PUMP_AMM_DEPOSIT_DISCRIMINATOR])?;
-
-    let split = buy_account_count as usize;
-    require!(
-        split > 0 && split < ctx.remaining_accounts.len(),
-        QuantumError::InvalidBuyAccountCount
-    );
-    let (buy_accounts, deposit_accounts) = ctx.remaining_accounts.split_at(split);
-    let pool = accounts.pool.key();
-    require!(
-        *buy_accounts[0].key == pool && *deposit_accounts[0].key == pool,
-        QuantumError::NotCanonicalPool
-    );
+    require!(swap_in > 0 && swap_in < spend && liquidity_delta > 0, QuantumError::ZeroAmount);
 
     let mint = accounts.mint.key();
     let well_bump = [accounts.quantum.well_bump];
@@ -125,53 +109,76 @@ pub(crate) fn fusion<'info>(
     let signer = &[well_seeds];
     let well = accounts.well.to_account_info();
     let wsol_ata = accounts.well_wsol_ata.to_account_info();
-    let quote_token_program = accounts.quote_token_program.to_account_info();
-    let target = accounts.target_program.to_account_info();
+    let base_ata = accounts.well_token_ata.to_account_info();
+    let token_program = accounts.token_program.to_account_info();
+    let mint_info = accounts.mint.to_account_info();
+    let wsol_mint = accounts.wsol_mint.to_account_info();
+    let program = accounts.damm_program.to_account_info();
+    let pool_authority = accounts.damm_pool_authority.to_account_info();
+    let event_authority = accounts.damm_event_authority.to_account_info();
+    let pool = accounts.damm_pool.to_account_info();
+    let position = accounts.damm_position.to_account_info();
+    let nft = accounts.damm_nft_account.to_account_info();
+    let vault_a = accounts.damm_vault_a.to_account_info();
+    let vault_b = accounts.damm_vault_b.to_account_info();
+
+    let state = read_damm_pool(&pool)?;
+    require!(
+        state.token_a_vault == *vault_a.key && state.token_b_vault == *vault_b.key,
+        QuantumError::NotCanonicalDammPool
+    );
+    require!(state.pool_status == 0, QuantumError::VenueUnavailable);
+    let locked_before = read_damm_position(&position)?.permanent_locked_liquidity;
 
     let lamports_before = well_total(&well, &wsol_ata)?;
     let tokens_before = accounts.well_token_ata.amount;
-    let lp_before = accounts.well_lp_ata.amount;
-
     wrap_from_well(
         &well,
         &wsol_ata,
-        &accounts.wsol_mint.to_account_info(),
-        &quote_token_program,
+        &wsol_mint,
+        &token_program,
         &accounts.associated_token_program.to_account_info(),
         &accounts.system_program.to_account_info(),
         spend,
         signer,
     )?;
+    let damm = Damm {
+        program: &program,
+        pool_authority: &pool_authority,
+        event_authority: &event_authority,
+        pool: &pool,
+        vault_a: &vault_a,
+        vault_b: &vault_b,
+        mint_a: &mint_info,
+        mint_b: &wsol_mint,
+        token_program: &token_program,
+    };
+    damm.buy(&well, &wsol_ata, &base_ata, swap_in, min_base_out, signer)?;
 
-    invoke_as_well(&target, buy_accounts, buy_data, &well.key(), &mint, signer)?;
+    let accounts = &mut ctx.accounts;
     accounts.well_token_ata.reload()?;
+    let base_held = accounts.well_token_ata.amount;
+    require!(base_held > tokens_before, QuantumError::NothingBought);
+    // The deposit may take at most what the well holds on each side.
+    let wsol_held = token::accessor::amount(&wsol_ata)?;
+    damm.add_liquidity(&position, &nft, &well, &base_ata, &wsol_ata, liquidity_delta, base_held, wsol_held, signer)?;
+    damm.permanent_lock(&position, &nft, &well, liquidity_delta, signer)?;
+    let after = read_damm_position(&position)?;
     require!(
-        accounts.well_token_ata.amount > tokens_before,
-        QuantumError::NothingBought
+        after.permanent_locked_liquidity == locked_before.saturating_add(liquidity_delta)
+            && after.unlocked_liquidity == 0,
+        QuantumError::LiquidityMismatch
     );
 
-    invoke_as_well(
-        &target,
-        deposit_accounts,
-        deposit_data,
-        &well.key(),
-        &mint,
-        signer,
-    )?;
-    accounts.well_lp_ata.reload()?;
-    let lp_received = accounts.well_lp_ata.amount.saturating_sub(lp_before);
-    require!(lp_received > 0, QuantumError::NoLiquidityAdded);
-
-    // Base the deposit did not take is burned; WSOL it did not take is unwrapped.
     accounts.well_token_ata.reload()?;
     let leftover = accounts.well_token_ata.amount;
     if leftover > 0 {
-        token_interface::burn(
+        token::burn(
             CpiContext::new_with_signer(
-                accounts.token_program.to_account_info(),
+                token_program.clone(),
                 Burn {
-                    mint: accounts.mint.to_account_info(),
-                    from: accounts.well_token_ata.to_account_info(),
+                    mint: mint_info.clone(),
+                    from: base_ata.clone(),
                     authority: well.clone(),
                 },
                 signer,
@@ -179,7 +186,7 @@ pub(crate) fn fusion<'info>(
             leftover,
         )?;
     }
-    unwrap_to_well(&well, &wsol_ata, &quote_token_program, signer)?;
+    unwrap_to_well(&well, &wsol_ata, &token_program, signer)?;
 
     let spent = lamports_before.saturating_sub(well.lamports());
     require!(spent <= spend, QuantumError::Overspent);
@@ -187,6 +194,10 @@ pub(crate) fn fusion<'info>(
     let quantum = &mut accounts.quantum;
     quantum.fusion_reserve = sub(quantum.fusion_reserve, spent)?;
     quantum.total_fused_sol = add(quantum.total_fused_sol, spent)?;
+    quantum.total_fused_liquidity = quantum
+        .total_fused_liquidity
+        .checked_add(liquidity_delta)
+        .ok_or(QuantumError::MathOverflow)?;
     quantum.total_burned_tokens = add(quantum.total_burned_tokens, leftover)?;
     quantum.last_fusion_at = now;
     assert_well_invariant(&well, quantum, &rent)?;
@@ -195,7 +206,7 @@ pub(crate) fn fusion<'info>(
         mint,
         caller: accounts.caller.key(),
         spent,
-        lp_received,
+        liquidity_added: liquidity_delta,
         tokens_burned: leftover,
     });
     Ok(())

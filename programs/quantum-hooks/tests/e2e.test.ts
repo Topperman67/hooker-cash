@@ -1,7 +1,7 @@
-// End-to-end tests against solana-test-validator running mainnet's pump.fun, PumpSwap, pump fees,
-// mayhem and Token-2022 programs (dumped by tests/fixtures/fetch-fixtures.mjs) plus quantum_hooks
-// built with the `short-expiry` feature (epochs expire after 20 s and may be posted every 15 s).
-// Started by tests/run-local.mjs.
+// End-to-end tests against solana-test-validator running mainnet's Meteora DBC and DAMM v2
+// programs (dumped by tests/fixtures/fetch-fixtures.mjs, never built from source) plus
+// quantum_hooks built with the `short-expiry` feature (epochs expire after 20 s and may be posted
+// every 15 s). Started by tests/run-local.mjs.
 import { before, describe, test } from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
@@ -22,32 +22,18 @@ import {
 import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   NATIVE_MINT,
-  TOKEN_2022_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
   getAssociatedTokenAddressSync,
   unpackAccount,
   unpackMint,
 } from '@solana/spl-token'
 import BN from 'bn.js'
-import {
-  OnlinePumpAmmSdk,
-  PUMP_AMM_SDK,
-  canonicalPumpPoolPda,
-  coinCreatorVaultAtaPda,
-  coinCreatorVaultAuthorityPda,
-  lpMintPda,
-} from '@pump-fun/pump-swap-sdk'
+import { DynamicBondingCurveClient } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import * as q from '../../../shared/quantum.mjs'
+import * as m from '../../../shared/meteora.mjs'
+import { launchConfigParameters } from '../../../shared/dbc-config.mjs'
 import * as ops from '../../../scripts/program-ops.mjs'
 import { buildEntanglementTree } from '../../../shared/merkle.mjs'
-import {
-  OnlinePumpSdk,
-  PUMP_SDK,
-  bondingCurvePda,
-  creatorVaultPda,
-  getBuyTokenAmountFromSolAmount,
-  getFeeRecipient,
-} from '../../../shared/vendor/pump-sdk.node.mjs'
 
 const rpcUrl = process.env.QH_RPC ?? 'http://127.0.0.1:8899'
 const connection = new Connection(rpcUrl, 'confirmed')
@@ -56,7 +42,7 @@ const authorityFile =
 const authority = Keypair.fromSecretKey(
   Uint8Array.from(JSON.parse(readFileSync(authorityFile, 'utf8'))),
 )
-const T22 = TOKEN_2022_PROGRAM_ID
+const SPL = TOKEN_PROGRAM_ID
 const SOL = BigInt(LAMPORTS_PER_SOL)
 const RENT0 = 890_880n
 
@@ -64,12 +50,20 @@ const RENT0 = 890_880n
 const keeper = Keypair.generate()
 const treasury = Keypair.generate()
 const launcher = Keypair.generate()
+const partner = Keypair.generate() // creates the test DBC configs
 const splitA = Keypair.generate() // funded
 const splitB = Keypair.generate() // never funded: small shares must be deferred, not fail the pulse
 const traders = [Keypair.generate(), Keypair.generate(), Keypair.generate()]
 const whale = Keypair.generate()
 const mintKp = Keypair.generate()
 const mint = mintKp.publicKey
+// Quant Pad's launch config as the tests create it: the production parameters with a 30 SOL
+// threshold, no anti-sniper window and a 2% migration fee (so every harvest leg has something).
+const dbcConfigKp = Keypair.generate()
+const dbcConfig = dbcConfigKp.publicKey
+const TEST_LAUNCH = { migrationQuoteThresholdSol: 30, antiSniper: null, migrationFeePercentage: 2 }
+// A second, equally valid DBC config that is never allow-listed.
+const strayConfigKp = Keypair.generate()
 
 const CONFIG = {
   protocolBps: 500,
@@ -97,12 +91,12 @@ const HOOKS = {
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 const big = (v: any) => BigInt(v.toString())
 const bal = async (key: PublicKey) => BigInt(await connection.getBalance(key, 'confirmed'))
-async function tokenBalance(ata: PublicKey, program = T22) {
+async function tokenBalance(ata: PublicKey, program = SPL) {
   const info = await connection.getAccountInfo(ata, 'confirmed')
   return info ? unpackAccount(ata, info, program).amount : 0n
 }
-async function supply(m = mint, program = T22) {
-  return unpackMint(m, await connection.getAccountInfo(m, 'confirmed'), program).supply
+async function supply(mm = mint, program = SPL) {
+  return unpackMint(mm, await connection.getAccountInfo(mm, 'confirmed'), program).supply
 }
 async function chainNow() {
   const info = await connection.getAccountInfo(SYSVAR_CLOCK_PUBKEY, 'confirmed')
@@ -124,12 +118,16 @@ async function send(
   { cu = 400_000, luts = [] as any[] } = {},
 ): Promise<Sent> {
   const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed')
+  // Builders that already set a compute budget keep theirs.
+  const budgeted = instructions.some((ix) => ix.programId.equals(ComputeBudgetProgram.programId))
   const message = new TransactionMessage({
     payerKey: signers[0].publicKey,
     recentBlockhash: blockhash,
     // A random CU limit keeps retried-but-identical transactions from colliding on one blockhash.
     instructions: [
-      ComputeBudgetProgram.setComputeUnitLimit({ units: cu + Math.floor(Math.random() * 5000) }),
+      ...(budgeted
+        ? []
+        : [ComputeBudgetProgram.setComputeUnitLimit({ units: cu + Math.floor(Math.random() * 5000) })]),
       ...instructions,
     ],
   }).compileToV0Message(luts)
@@ -166,13 +164,12 @@ async function send(
     fee: BigInt(info?.meta?.fee ?? 0),
   }
 }
-// An address lookup table holding every non-signer key of `instructions` (create_v2 + dev buy
-// does not fit 1232 bytes without one, exactly as in the browser launch flow).
+// An address lookup table holding every non-signer, non-program key of `instructions` (the launch
+// transaction does not fit 1232 bytes without one, exactly as in the browser launch flow).
 async function lookupTableFor(instructions: any[], payer: Keypair) {
   const signers = new Set<string>()
   const keys = new Map<string, PublicKey>()
   for (const ix of instructions) {
-    keys.set(ix.programId.toBase58(), ix.programId)
     for (const k of ix.keys) {
       if (k.isSigner) signers.add(k.pubkey.toBase58())
       else keys.set(k.pubkey.toBase58(), k.pubkey)
@@ -216,141 +213,95 @@ const event = (sent: Sent, name: string) => {
   return found.data
 }
 const pct = (v: bigint, bps: number) => (v * BigInt(bps)) / 10_000n
-// quantum_burn: 14 named accounts (optional ones as program-id placeholders), then the CPI accounts;
-// data = discriminator (8) + spend (8) + Vec length (4) + CPI data.
-const BURN_FIXED_ACCOUNTS = 14
-const BURN_DATA_PREFIX = 20
 const program = () => q.quantumProgram(connection)
+const dbcClient = () => new DynamicBondingCurveClient(connection, 'confirmed')
 
-// Raw quantum_burn around an arbitrary CPI (for negative tests the client would never build).
-async function rawBurn(cpi: any, spend: bigint, caller: PublicKey, target = cpi.programId) {
-  const well = q.wellPda(mint)
-  return program()
-    .methods.quantumBurn(new BN(spend.toString()), Buffer.from(cpi.data))
-    .accountsStrict({
-      caller,
-      config: q.configPda(),
-      quantum: q.quantumPda(mint),
-      well,
-      mint,
-      wellTokenAta: q.wellTokenAta(mint),
-      wellWsolAta: null,
-      wsolMint: null,
-      tokenProgram: T22,
-      quoteTokenProgram: null,
-      associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
-      systemProgram: SystemProgram.programId,
-      instructionsSysvar: SYSVAR_INSTRUCTIONS_PUBKEY,
-      targetProgram: target,
-    })
-    .remainingAccounts(
-      cpi.keys.map((k: any) => ({ pubkey: k.pubkey, isWritable: k.isWritable, isSigner: false })),
+// ---- Meteora helpers --------------------------------------------------------------------------
+
+async function createDbcConfig(kp: Keypair, overrides = TEST_LAUNCH) {
+  const tx = await dbcClient().partner.createConfig({
+    config: kp.publicKey,
+    feeClaimer: partner.publicKey,
+    leftoverReceiver: partner.publicKey,
+    quoteMint: NATIVE_MINT,
+    payer: partner.publicKey,
+    ...launchConfigParameters(overrides),
+  })
+  return send(tx.instructions, [partner, kp])
+}
+async function dbcPoolState(mm = mint) {
+  return m.decodeDbcPool((await connection.getAccountInfo(m.dbcPoolPda(dbcConfig, mm)))?.data)!
+}
+async function dbcConfigState() {
+  return m.decodeDbcConfig((await connection.getAccountInfo(dbcConfig))?.data)!
+}
+/** A trader buys on the DBC curve (`partial`: fill up to the threshold). */
+async function curveBuy(user: Keypair, sol: number, mm = mint, { partial = false } = {}) {
+  const ixs = await m.dbcSwapInstructions({
+    config: dbcConfig,
+    mint: mm,
+    user: user.publicKey,
+    side: 'buy',
+    amountIn: BigInt(Math.round(sol * LAMPORTS_PER_SOL)),
+    minOut: 0n,
+    mode: partial ? m.SWAP_MODE.PARTIAL_FILL : m.SWAP_MODE.EXACT_IN,
+  })
+  return send(ixs, [user])
+}
+async function curveSell(user: Keypair, amount: bigint, mm = mint) {
+  const ixs = await m.dbcSwapInstructions({
+    config: dbcConfig,
+    mint: mm,
+    user: user.publicKey,
+    side: 'sell',
+    amountIn: amount,
+  })
+  return send(ixs, [user])
+}
+/** Fills the curve, then migrates it to DAMM v2 the way any keeper would (permissionless). */
+async function graduate(mm: PublicKey, buyer: Keypair) {
+  await curveBuy(buyer, 50, mm, { partial: true })
+  const pool = await dbcPoolState(mm)
+  assert.ok(pool.migrationProgress > m.PROGRESS.PRE, 'curve complete')
+  const config = await dbcConfigState()
+  const migration = await dbcClient().migration.migrateToDammV2({
+    payer: buyer.publicKey,
+    pool: m.dbcPoolPda(dbcConfig, mm),
+    dammConfig: m.DAMM_MIGRATION_CONFIGS[config.migrationFeeOption],
+  })
+  return send(
+    migration.transaction.instructions,
+    [buyer, migration.firstPositionNftKeypair, migration.secondPositionNftKeypair],
+    { cu: 1_400_000 },
+  )
+}
+async function dammState(mm = mint) {
+  const config = await dbcConfigState()
+  const pool = m.migratedPoolFor(config, mm)
+  return { pool, damm: m.decodeDammPool((await connection.getAccountInfo(pool))?.data)! }
+}
+async function poolBuys(mm: PublicKey, buyers: Keypair[], lamports: bigint) {
+  const { pool, damm } = await dammState(mm)
+  for (const t of buyers)
+    await send(
+      await m.dammSwapInstructions({ damm, dammPool: pool, mint: mm, user: t.publicKey, side: 'buy', amountIn: lamports }),
+      [t],
     )
-    .instruction()
-}
-
-async function curveBuy(user: Keypair, sol: number, m = mint, tokenProgram = T22) {
-  const online = new OnlinePumpSdk(connection)
-  const [global, feeConfig, state] = await Promise.all([
-    online.fetchGlobal(),
-    online.fetchFeeConfig(),
-    online.fetchBuyState(m, user.publicKey, tokenProgram),
-  ])
-  const quoteAmount = new BN(Math.round(sol * LAMPORTS_PER_SOL))
-  const amount = getBuyTokenAmountFromSolAmount({
-    global,
-    feeConfig,
-    mintSupply: new BN((await supply(m, tokenProgram)).toString()),
-    bondingCurve: state.bondingCurve,
-    amount: quoteAmount,
-    quoteMint: state.bondingCurve.quoteMint,
-  })
-  const ixs = await PUMP_SDK.buyV2Instructions({
-    global,
-    bondingCurveAccountInfo: state.bondingCurveAccountInfo,
-    bondingCurve: state.bondingCurve,
-    associatedUserAccountInfo: state.associatedUserAccountInfo,
-    mint: m,
-    user: user.publicKey,
-    amount,
-    quoteAmount,
-    slippage: 5,
-    tokenProgram,
-  })
-  return send(ixs, [user])
-}
-
-// Buys the rest of a curve and migrates it to PumpSwap (the canonical pool).
-async function graduate(m: PublicKey, buyer: Keypair, tokenProgram = T22) {
-  const online = new OnlinePumpSdk(connection)
-  const global = await online.fetchGlobal()
-  const state = await online.fetchBuyState(m, buyer.publicKey, tokenProgram)
-  const ixs = await PUMP_SDK.buyV2Instructions({
-    global,
-    bondingCurveAccountInfo: state.bondingCurveAccountInfo,
-    bondingCurve: state.bondingCurve,
-    associatedUserAccountInfo: state.associatedUserAccountInfo,
-    mint: m,
-    user: buyer.publicKey,
-    amount: state.bondingCurve.realTokenReserves,
-    quoteAmount: new BN((150n * SOL).toString()),
-    slippage: 0,
-    tokenProgram,
-  })
-  await send(ixs, [buyer])
-  const curve = PUMP_SDK.decodeBondingCurve((await connection.getAccountInfo(bondingCurvePda(m)))!)
-  assert.ok(curve.complete, 'curve complete')
-  const migrate = await PUMP_SDK.migrateV2Instruction({
-    withdrawAuthority: global.withdrawAuthority,
-    mint: m,
-    user: buyer.publicKey,
-    quoteMint: curve.quoteMint,
-    baseTokenProgram: tokenProgram,
-    quoteTokenProgram: TOKEN_PROGRAM_ID,
-  })
-  return send([migrate], [buyer], { cu: 1_000_000 })
-}
-
-async function poolBuys(m: PublicKey, buyers: Keypair[], lamports: bigint) {
-  const pool = canonicalPumpPoolPda(m)
-  const amm = new OnlinePumpAmmSdk(connection)
-  for (const t of buyers) {
-    const st = await amm.swapSolanaState(pool, t.publicKey)
-    await send(await PUMP_AMM_SDK.buyQuoteInput(st, new BN(lamports.toString()), 5), [t])
-  }
-}
-
-async function curveSell(user: Keypair, amount: bigint) {
-  const online = new OnlinePumpSdk(connection)
-  const [global, state] = await Promise.all([
-    online.fetchGlobal(),
-    online.fetchSellState(mint, user.publicKey, T22),
-  ])
-  const ixs = await PUMP_SDK.sellV2Instructions({
-    global,
-    bondingCurveAccountInfo: state.bondingCurveAccountInfo,
-    bondingCurve: state.bondingCurve,
-    mint,
-    user: user.publicKey,
-    amount: new BN(amount.toString()),
-    quoteAmount: new BN(0),
-    slippage: 0,
-    tokenProgram: T22,
-  })
-  return send(ixs, [user])
 }
 
 // ------------------------------------------------------------------------------------------------
-describe('quantum_hooks on a local validator with mainnet pump.fun', () => {
+describe('quantum_hooks on a local validator with mainnet Meteora DBC and DAMM v2', () => {
   let lockAmount = 0n
   let devBuyTokens = 0n
   let lockStart = 0
 
   before(async () => {
-    for (const k of [authority, keeper, treasury, launcher, splitA, ...traders])
+    for (const k of [authority, keeper, treasury, launcher, partner, splitA, ...traders])
       await airdrop(k.publicKey, 50)
     await airdrop(whale.publicKey, 200)
     await airdrop(whale.publicKey, 200)
+    await createDbcConfig(dbcConfigKp)
+    await createDbcConfig(strayConfigKp)
   })
 
   test('initialize_config: only the upgrade authority, once', async () => {
@@ -386,6 +337,7 @@ describe('quantum_hooks on a local validator with mainnet pump.fun', () => {
         bump: undefined,
         claimDelay: CONFIG.claimDelay,
         version: 0,
+        launchConfigs: [],
       },
     )
     const again = await q.buildInitializeConfigInstruction({
@@ -499,7 +451,26 @@ describe('quantum_hooks on a local validator with mainnet pump.fun', () => {
     assert.equal(config.version, before.version + 3)
   })
 
-  test('quantum launch: register, create_v2 (creator = well) + dev buy, lock — three transactions', async () => {
+  test('set_launch_configs: authority only, versioned, at most 4 distinct configs', async () => {
+    const ix = (signer: PublicKey, configs: PublicKey[], expectedVersion?: number) =>
+      q.buildSetLaunchConfigsInstruction({ connection, authority: signer, configs, expectedVersion })
+    await expectFail(send([await ix(keeper.publicKey, [dbcConfig])], [keeper]), /NotAuthority/)
+    const five = Array.from({ length: 5 }, () => Keypair.generate().publicKey)
+    await expectFail(send([await ix(authority.publicKey, five)], [authority]), /InvalidLaunchConfigs/)
+    await expectFail(
+      send([await ix(authority.publicKey, [dbcConfig, dbcConfig])], [authority]),
+      /InvalidLaunchConfigs/,
+    )
+    const v = (await q.fetchConfig(connection)).version
+    await expectFail(send([await ix(authority.publicKey, [dbcConfig], v - 1)], [authority]), /ConfigChanged/)
+    const sent = await send([await ix(authority.publicKey, [dbcConfig])], [authority])
+    assert.deepEqual(event(sent, 'LaunchConfigsSet').configs, [dbcConfig.toBase58()])
+    const config = await q.fetchConfig(connection)
+    assert.deepEqual(config.launchConfigs, [dbcConfig.toBase58()])
+    assert.equal(config.version, v + 1)
+  })
+
+  test('quantum launch: register, then DBC create + creator → well + sync + dev buy in one transaction, then lock', async () => {
     const built = await q.buildQuantumLaunchInstructions({
       connection,
       launcher: launcher.publicKey,
@@ -508,45 +479,53 @@ describe('quantum_hooks on a local validator with mainnet pump.fun', () => {
       symbol: 'QTEST',
       uri: 'https://example.invalid/qtest.json',
       hooks: HOOKS,
-      devBuy: { solLamports: 2n * SOL, slippagePct: 5 },
+      devBuy: { solLamports: 1n * SOL, slippagePct: 1 },
+      dbcConfig,
     })
     devBuyTokens = built.devBuyTokens
     lockAmount = built.lockAmount
     assert.ok(devBuyTokens > 0n)
     assert.equal(lockAmount, (devBuyTokens * 5000n) / 10_000n)
-    assert.equal(
-      built.instructions.length,
-      built.stages.register.length + built.stages.launch.length + built.stages.lock.length,
-    )
+    assert.ok(built.dbcPool.equals(m.dbcPoolPda(dbcConfig, mint)))
 
     const a = await send(built.stages.register, [launcher, mintKp])
     const registered = event(a, 'Registered')
     assert.equal(registered.mint, mint.toBase58())
     assert.equal(registered.wellFunded, RENT0)
+    assert.equal(registered.dbcPool, built.dbcPool.toBase58())
     const b = await send(built.stages.launch, [launcher, mintKp], {
-      cu: 500_000,
+      cu: 600_000,
       luts: [await lookupTableFor(built.stages.launch, launcher)],
     })
+    const synced = event(b, 'Synced')
+    assert.equal(synced.birthBound, true, 'bound before the first trade')
     const c = await send(built.stages.lock, [launcher])
     const locked = event(c, 'Locked')
     assert.equal(locked.amount, lockAmount)
     lockStart = Number(locked.lockStart)
     console.log(
-      `    tx sizes: register ${a.size} B, create+buy ${b.size} B, lock ${c.size} B; CU ${a.cu}/${b.cu}/${c.cu}`,
+      `    tx sizes: register ${a.size} B, create+bind+buy ${b.size} B (lookup table), lock ${c.size} B; CU ${a.cu}/${b.cu}/${c.cu}`,
     )
 
-    const curve = PUMP_SDK.decodeBondingCurve(
-      (await connection.getAccountInfo(bondingCurvePda(mint)))!,
-    )
     const well = q.wellPda(mint)
-    assert.ok(curve.creator.equals(well), 'pump.fun creator is the well')
+    const pool = await dbcPoolState()
+    assert.equal(pool.creator, well.toBase58(), 'the DBC pool creator is the well')
+    assert.ok(pool.hasSwap, 'the dev buy traded')
+    // The dev buy was the first swap in the create's transaction: DBC charged its minimum fee.
+    assert.ok(pool.creatorQuoteFee > 0n)
     assert.equal(await bal(well), RENT0)
-    const launcherAta = getAssociatedTokenAddressSync(mint, launcher.publicKey, true, T22)
-    assert.equal(await tokenBalance(launcherAta), devBuyTokens - lockAmount)
+    const launcherAta = getAssociatedTokenAddressSync(mint, launcher.publicKey, true, SPL)
+    assert.equal(await tokenBalance(launcherAta), devBuyTokens - lockAmount, 'exactly the quoted tokens')
     assert.equal(await tokenBalance(q.lockAta(mint)), lockAmount)
+    assert.equal(await supply(), 1_000_000_000_000_000n, 'fixed 1 B supply, 6 decimals')
 
     const quantum = await q.fetchQuantum(connection, mint)
     assert.equal(quantum.launcher, launcher.publicKey.toBase58())
+    assert.equal(quantum.dbcConfig, dbcConfig.toBase58())
+    assert.equal(quantum.dbcPool, built.dbcPool.toBase58())
+    assert.ok(quantum.boundAt > 0)
+    assert.equal(quantum.birthBound, true)
+    assert.equal(quantum.dammPool, null)
     assert.deepEqual(
       [quantum.creatorBps, quantum.burnBps, quantum.entangleBps, quantum.fusionBps],
       [4000, 2500, 2000, 1500],
@@ -556,26 +535,29 @@ describe('quantum_hooks on a local validator with mainnet pump.fun', () => {
     assert.equal(quantum.lockCliff - quantum.lockStart, 12)
     assert.equal(quantum.lockEnd - quantum.lockStart, 70)
     assert.equal(quantum.lastBurnAt, quantum.createdAt)
-    const verified = await q.verifyQuantumCoin(connection, mint)
-    assert.deepEqual(verified, {
+    assert.deepEqual(await q.verifyQuantumCoin(connection, mint), {
       registered: true,
-      curveExists: true,
+      poolExists: true,
       creatorIsWell: true,
       complete: false,
+      migrated: false,
+      bound: true,
+      birthBound: true,
     })
   })
 
-  test('register is rejected for an existing mint, without the mint signature, for a funded mint, and for bad hooks', async () => {
-    const registerIx = async (m: PublicKey, hooks: any = { ...HOOKS, lock: null }) =>
+  test('register is rejected for an existing mint, without the mint signature, for a funded mint, a config not on the allow-list, and bad hooks', async () => {
+    const registerIx = async (mm: PublicKey, hooks: any = { ...HOOKS, lock: null }, config = dbcConfig) =>
       (
         await q.buildQuantumLaunchInstructions({
           connection,
           launcher: launcher.publicKey,
-          mint: m,
+          mint: mm,
           name: 'X',
           symbol: 'X',
           uri: 'https://example.invalid/x.json',
           hooks,
+          dbcConfig: config,
         })
       ).stages.register[0]
     // Same mint again: the Quantum account exists and the mint is no longer empty.
@@ -603,49 +585,52 @@ describe('quantum_hooks on a local validator with mainnet pump.fun', () => {
       [launcher],
     )
     await expectFail(send([await registerIx(funded.publicKey)], [launcher, funded]), /MintNotFresh/)
-    // Validation errors come from the program too (bypass the client-side check).
+    // A real DBC config Quant Pad never allow-listed, and an account that is not a DBC config.
+    const stray = Keypair.generate()
+    await expectFail(
+      send([await registerIx(stray.publicKey, undefined, strayConfigKp.publicKey)], [launcher, stray]),
+      /LaunchConfigNotAllowed/,
+    )
+    const rawRegister = (mm: PublicKey, params: any, config = dbcConfig) =>
+      program()
+        .methods.register(params)
+        .accountsStrict({
+          launcher: launcher.publicKey,
+          mint: mm,
+          config: q.configPda(),
+          quantum: q.quantumPda(mm),
+          well: q.wellPda(mm),
+          dbcConfig: config,
+          systemProgram: SystemProgram.programId,
+        })
+        .instruction()
     const bad = Keypair.generate()
-    const raw = await program()
-      .methods.register({
-        creatorBps: 5000,
-        burnBps: 2000,
-        entangleBps: 2000,
-        fusionBps: 999,
-        splits: [],
-        lock: null,
-      })
-      .accountsStrict({
-        launcher: launcher.publicKey,
-        mint: bad.publicKey,
-        config: q.configPda(),
-        quantum: q.quantumPda(bad.publicKey),
-        well: q.wellPda(bad.publicKey),
-        systemProgram: SystemProgram.programId,
-      })
-      .instruction()
-    await expectFail(send([raw], [launcher, bad]), /InvalidAllocation/)
-    const dupe = await program()
-      .methods.register({
-        creatorBps: 10000,
-        burnBps: 0,
-        entangleBps: 0,
-        fusionBps: 0,
-        splits: [
-          { wallet: splitA.publicKey, bps: 100 },
-          { wallet: splitA.publicKey, bps: 100 },
+    const plain = { creatorBps: 10000, burnBps: 0, entangleBps: 0, fusionBps: 0, splits: [], lock: null }
+    await expectFail(send([await rawRegister(bad.publicKey, plain, launcher.publicKey)], [launcher, bad]), /LaunchConfigNotAllowed/)
+    // Validation errors come from the program too (bypass the client-side check).
+    await expectFail(
+      send(
+        [await rawRegister(bad.publicKey, { ...plain, creatorBps: 5000, burnBps: 2000, entangleBps: 2000, fusionBps: 999 })],
+        [launcher, bad],
+      ),
+      /InvalidAllocation/,
+    )
+    await expectFail(
+      send(
+        [
+          await rawRegister(bad.publicKey, {
+            ...plain,
+            splits: [
+              { wallet: splitA.publicKey, bps: 100 },
+              { wallet: splitA.publicKey, bps: 100 },
+            ],
+            lock: { cliffSecs: new BN(10), durationSecs: new BN(5) },
+          }),
         ],
-        lock: { cliffSecs: new BN(10), durationSecs: new BN(5) },
-      })
-      .accountsStrict({
-        launcher: launcher.publicKey,
-        mint: bad.publicKey,
-        config: q.configPda(),
-        quantum: q.quantumPda(bad.publicKey),
-        well: q.wellPda(bad.publicKey),
-        systemProgram: SystemProgram.programId,
-      })
-      .instruction()
-    await expectFail(send([dupe], [launcher, bad]), /InvalidSplitWallet|InvalidLockTerms/)
+        [launcher, bad],
+      ),
+      /InvalidSplitWallet|InvalidLockTerms/,
+    )
     // Keys the runtime always makes read-only (sysvars, builtin programs) and programs could
     // never be paid by `pulse`: the program and the client refuse them as split wallets.
     for (const reserved of [
@@ -653,35 +638,42 @@ describe('quantum_hooks on a local validator with mainnet pump.fun', () => {
       new PublicKey('Vote111111111111111111111111111111111111111'),
       new PublicKey('ComputeBudget111111111111111111111111111111'),
       q.QUANTUM_PROGRAM_ID,
+      m.DBC_PROGRAM_ID,
+      m.DAMM_V2_PROGRAM_ID,
     ]) {
-      const ix = await program()
-        .methods.register({
-          creatorBps: 10000,
-          burnBps: 0,
-          entangleBps: 0,
-          fusionBps: 0,
-          splits: [{ wallet: reserved, bps: 100 }],
-          lock: null,
-        })
-        .accountsStrict({
-          launcher: launcher.publicKey,
-          mint: bad.publicKey,
-          config: q.configPda(),
-          quantum: q.quantumPda(bad.publicKey),
-          well: q.wellPda(bad.publicKey),
-          systemProgram: SystemProgram.programId,
-        })
-        .instruction()
+      const ix = await rawRegister(bad.publicKey, { ...plain, splits: [{ wallet: reserved, bps: 100 }] })
       await expectFail(send([ix], [launcher, bad]), /InvalidSplitWallet/)
       assert.throws(
-        () =>
-          q.validateHooks({
-            creatorBps: 10000,
-            splits: [{ wallet: reserved.toBase58(), bps: 100 }],
-          }),
+        () => q.validateHooks({ creatorBps: 10000, splits: [{ wallet: reserved.toBase58(), bps: 100 }] }),
         /cannot be a split wallet/,
       )
     }
+  })
+
+  test('a creator handed to the well after the first trade is bound, but not birth-bound', async () => {
+    const late = Keypair.generate()
+    const built = await q.buildQuantumLaunchInstructions({
+      connection,
+      launcher: launcher.publicKey,
+      mint: late.publicKey,
+      name: 'Late',
+      symbol: 'LATE',
+      uri: 'https://example.invalid/late.json',
+      hooks: { ...HOOKS, lock: null },
+      dbcConfig,
+    })
+    await send(built.stages.register, [launcher, late])
+    // create only (launcher stays creator), then a trade, then the transfer + sync
+    const [create, transfer, sync] = built.stages.launch
+    await send([create], [launcher, late], { cu: 300_000 })
+    // sync refuses to record a binding that has not happened
+    await expectFail(send([sync], [launcher]), /NotBound/)
+    await curveBuy(traders[1], 0.2, late.publicKey)
+    const sent = await send([transfer, sync], [launcher])
+    assert.equal(event(sent, 'Synced').birthBound, false)
+    const quantum = await q.fetchQuantum(connection, late.publicKey)
+    assert.ok(quantum.boundAt > 0)
+    assert.equal(quantum.birthBound, false)
   })
 
   test('release before the cliff fails; only the launcher may release', async () => {
@@ -700,22 +692,18 @@ describe('quantum_hooks on a local validator with mainnet pump.fun', () => {
   })
 
   test('trades from other wallets accrue creator fees for the well', async () => {
-    const well = q.wellPda(mint)
     const before = await q.pendingCreatorFees(connection, mint)
-    for (const t of traders) await curveBuy(t, 6)
-    const ata = getAssociatedTokenAddressSync(mint, traders[0].publicKey, true, T22)
+    for (const t of traders) await curveBuy(t, 0.8)
+    const ata = getAssociatedTokenAddressSync(mint, traders[0].publicKey, true, SPL)
     await curveSell(traders[0], (await tokenBalance(ata)) / 3n)
     const after = await q.pendingCreatorFees(connection, mint)
     console.log(`    pending creator fees ${before} -> ${after} lamports`)
+    // 1% fee, 80% of it to the creator side: ~0.0019 SOL per 0.24 SOL traded
     assert.ok(after > before + 10_000_000n, 'at least 0.01 SOL of creator fees accrued')
-    const vault = await connection.getAccountInfo(creatorVaultPda(well))
-    const curve = PUMP_SDK.decodeBondingCurve(
-      (await connection.getAccountInfo(bondingCurvePda(mint)))!,
-    )
-    assert.ok((vault ? BigInt(vault.lamports) : 0n) > RENT0 || big(curve.creatorFee) > 0n)
+    assert.ok((await dbcPoolState()).creatorQuoteFee > 0n)
   })
 
-  test('pulse: sweep + collect + pulse splits with protocol cut, Superposition, deferral and rounding', async () => {
+  test('harvest + pulse: claims the DBC creator fee and splits it with protocol cut, Superposition, deferral and rounding', async () => {
     const well = q.wellPda(mint)
     const wrongOrder = await q.buildPulseInstructions({ connection, payer: keeper.publicKey, mint })
     const pulseIx = wrongOrder[wrongOrder.length - 1]
@@ -724,14 +712,25 @@ describe('quantum_hooks on a local validator with mainnet pump.fun', () => {
     await expectFail(send(wrongOrder, [keeper]), /SplitAccountsMismatch/)
 
     const q0 = await q.fetchQuantum(connection, mint)
+    const fee0 = (await dbcPoolState()).creatorQuoteFee
     const balances0 = await Promise.all(
       [treasury, splitA, splitB, launcher].map((k) => bal(k.publicKey)),
     )
+    const keeper0 = await bal(keeper.publicKey)
     const ixs = await q.buildPulseInstructions({ connection, payer: keeper.publicKey, mint })
     const sent = await send(ixs, [keeper])
+    const harvested = event(sent, 'Harvested')
+    assert.equal(harvested.legs, q.HARVEST.TRADING_FEE, 'only the trading-fee leg has work before completion')
+    assert.equal(harvested.claimed, fee0, 'the whole DBC creator fee, as SOL')
+    assert.equal(harvested.rentRefunded, q.RENT_EXEMPT_TOKEN_ACCOUNT, 'WSOL account rent back to the caller')
+    assert.equal(harvested.tokensBurned, 0n)
+    // The keeper paid the fee and the well's coin ATA (created once); the WSOL account's rent came back.
+    assert.equal(keeper0 - (await bal(keeper.publicKey)), sent.fee + q.RENT_EXEMPT_TOKEN_ACCOUNT)
+    assert.equal((await dbcPoolState()).creatorQuoteFee, 0n)
     const pulsed = event(sent, 'Pulsed')
-    console.log(`    pulse tx ${sent.size} B, ${sent.cu} CU, collected ${pulsed.collected}`)
+    console.log(`    harvest+pulse tx ${sent.size} B, ${sent.cu} CU, collected ${pulsed.collected}`)
     const available = pulsed.collected
+    assert.equal(available, fee0, 'everything harvested is allocated')
     const protocol = pct(available, 500)
     const net = available - protocol
     const burn = pct(net, 2500),
@@ -741,33 +740,24 @@ describe('quantum_hooks on a local validator with mainnet pump.fun', () => {
     const a = pct(slice, 2500),
       b = pct(slice, 100)
     const launcherShare = slice - a - b
-    assert.equal(pulsed.rentRefunded, 0n, 'no WSOL account on the curve')
     assert.equal(pulsed.protocol, protocol)
     assert.equal(pulsed.burnAdded, burn)
     assert.equal(pulsed.entangleAdded, entangle)
     assert.equal(pulsed.fusionAdded, fusion)
     // splitB holds no lamports: a share below the rent minimum is owed to it, never re-split.
-    const bDeferred = b < RENT0
-    assert.ok(
-      bDeferred,
-      `expected splitB's share (${b}) below the rent minimum so deferral is exercised`,
-    )
-    assert.equal(pulsed.splitsPaid, a + (bDeferred ? 0n : b))
-    assert.equal(pulsed.deferred, bDeferred ? b : 0n)
+    assert.ok(b < RENT0, `expected splitB's share (${b}) below the rent minimum so deferral is exercised`)
+    assert.equal(pulsed.splitsPaid, a)
+    assert.equal(pulsed.deferred, b)
     assert.equal(pulsed.owedPaid, 0n)
     assert.equal(pulsed.launcherPaid, launcherShare)
-    assert.equal(
-      protocol + burn + entangle + fusion + a + b + launcherShare,
-      available,
-      'rounding is absorbed exactly',
-    )
+    assert.equal(protocol + burn + entangle + fusion + a + b + launcherShare, available, 'rounding is absorbed exactly')
 
     const balances1 = await Promise.all(
       [treasury, splitA, splitB, launcher].map((k) => bal(k.publicKey)),
     )
     assert.equal(balances1[0] - balances0[0], protocol)
     assert.equal(balances1[1] - balances0[1], a)
-    assert.equal(balances1[2] - balances0[2], bDeferred ? 0n : b)
+    assert.equal(balances1[2] - balances0[2], 0n)
     assert.equal(balances1[3] - balances0[3], launcherShare)
 
     const q1 = await q.fetchQuantum(connection, mint)
@@ -775,23 +765,18 @@ describe('quantum_hooks on a local validator with mainnet pump.fun', () => {
     assert.equal(q1.entangleReserve - q0.entangleReserve, entangle)
     assert.equal(q1.fusionReserve - q0.fusionReserve, fusion)
     assert.equal(q1.totalProtocol, protocol)
+    assert.equal(q1.totalHarvested, fee0)
     assert.deepEqual(q1.splitOwed, [0n, b], "splitB's share is owed to it")
-    assert.equal(q1.launcherOwed, 0n)
-    assert.equal(q1.protocolOwed, 0n)
     assert.equal(q1.totalCollected, available, 'an owed share counts as collected once')
     const wellBalance = await q.fetchWellBalance(connection, mint)
     assert.equal(
       wellBalance.lamports,
-      RENT0 +
-        q1.burnReserve +
-        q1.entangleReserve +
-        q1.entangleOwed +
-        q1.fusionReserve +
-        pulsed.deferred,
+      RENT0 + q1.burnReserve + q1.entangleReserve + q1.entangleOwed + q1.fusionReserve + pulsed.deferred,
     )
     assert.equal(await bal(well), wellBalance.lamports)
 
-    // Nothing new, and splitB still cannot hold what it is owed → NothingToPulse.
+    // Nothing new, and splitB still cannot hold what it is owed → NothingToPulse (a harvest with
+    // nothing to claim succeeds, the pulse after it fails).
     const again = await q.buildPulseInstructions({ connection, payer: keeper.publicKey, mint })
     await expectFail(send(again, [keeper]), /NothingToPulse/)
   })
@@ -820,207 +805,71 @@ describe('quantum_hooks on a local validator with mainnet pump.fun', () => {
     assert.deepEqual(q1.splitOwed, [0n, 0n])
     assert.equal(q1.totalCreatorPaid, q0.totalCreatorPaid + owed)
     assert.equal(q1.totalCollected, q0.totalCollected)
-    const well = await q.fetchWellBalance(connection, mint)
-    assert.equal(
-      well.reserved,
-      q1.burnReserve + q1.entangleReserve + q1.entangleOwed + q1.fusionReserve,
-    )
-    // Nothing owed and nothing new: NothingToPulse again.
     await expectFail(
       send(await q.buildPulseInstructions({ connection, payer: keeper.publicKey, mint }), [keeper]),
       /NothingToPulse/,
     )
   })
 
-  test('quantum_burn on the curve: caps, discriminator allow-list, target check, keeper gating and grace', async () => {
-    const well = q.wellPda(mint)
-    const q0 = await q.fetchQuantum(connection, mint)
-    assert.ok(q0.burnReserve > 1_000_000n, `burn reserve ${q0.burnReserve}`)
-    // Spend above the reserve.
-    await expectFail(
-      q
-        .buildBurnInstructions({
-          connection,
-          caller: keeper.publicKey,
-          mint,
-          spendLamports: q0.burnReserve + 1n,
-        })
-        .then((ixs: any) => send(ixs, [keeper])),
-      /SpendTooHigh/,
-    )
-    // A sell is not on the allow-list.
-    const online = new OnlinePumpSdk(connection)
-    const global = await online.fetchGlobal()
-    const sell = await PUMP_SDK.getSellInstructionRaw({
-      user: well,
-      mint,
-      creator: well,
-      amount: new BN(1000),
-      solAmount: new BN(0),
-      feeRecipient: getFeeRecipient(global, false),
-      tokenProgram: T22,
-    })
-    await expectFail(
-      send([await rawBurn(sell, 1_000_000n, keeper.publicKey)], [keeper]),
-      /DisallowedInstruction/,
-    )
-    // Only pump.fun / PumpSwap may be invoked.
-    const buildOk = await q.buildBurnInstructions({
+  test('quantum_burn on the DBC curve: venue pinned, caps, keeper gating and grace, public runs stand alone', async () => {
+    // more fees, so the burn reserve can pay for several burns
+    for (let i = 0; i < 4; i++) await curveBuy(whale, 4)
+    await send(await q.buildPulseInstructions({ connection, payer: keeper.publicKey, mint }), [keeper])
+    let quantum = await q.fetchQuantum(connection, mint)
+    assert.ok(quantum.burnReserve > 1_000_000n, `burn reserve ${quantum.burnReserve}`)
+    await waitForChainTime(quantum.lastBurnAt + CONFIG.minActionInterval)
+    const spend = quantum.burnReserve / 4n
+
+    // More than the reserve, or than the cap.
+    const tooMuch = await q.buildBurnInstructions({ connection, caller: keeper.publicKey, mint, spendLamports: quantum.burnReserve + 1n })
+    await expectFail(send(tooMuch, [keeper]), /SpendTooHigh/)
+    // The venue accounts must be the coin's own: another coin's pool is refused.
+    const [burnIx] = await q.buildBurnInstructions({ connection, caller: keeper.publicKey, mint, spendLamports: spend })
+    const other = Keypair.generate()
+    const otherBuilt = await q.buildStandardLaunchInstructions({
       connection,
-      caller: keeper.publicKey,
-      mint,
-      spendLamports: q0.burnReserve / 3n,
+      launcher: traders[2].publicKey,
+      mint: other.publicKey,
+      name: 'Other',
+      symbol: 'OTHR',
+      uri: 'https://example.invalid/o.json',
+      dbcConfig,
     })
-    const burnIx = buildOk[buildOk.length - 1]
-    const asToken = await rawBurn(
-      {
-        data: burnIx.data.subarray(BURN_DATA_PREFIX),
-        keys: burnIx.keys.slice(BURN_FIXED_ACCOUNTS),
-        programId: TOKEN_PROGRAM_ID,
-      },
-      1_000_000n,
-      keeper.publicKey,
-    )
-    await expectFail(send([asToken], [keeper]), /InvalidTargetProgram|DisallowedInstruction/)
+    await send(otherBuilt.instructions, [traders[2], other], { cu: 400_000 })
+    const otherPool = m.dbcPoolPda(dbcConfig, other.publicKey)
+    const swapped = { ...burnIx, keys: burnIx.keys.map((k: any) => (k.pubkey.equals(m.dbcPoolPda(dbcConfig, mint)) ? { ...k, pubkey: otherPool } : k)) }
+    await expectFail(send([swapped], [keeper]), /NotCanonicalPool/)
 
-    // The per-action cap (config.max_burn_lamports) applies too.
-    await send(
-      [
-        await q.buildUpdateConfigInstruction({
-          connection,
-          authority: authority.publicKey,
-          maxBurnLamports: 1_000_000n,
-        }),
-      ],
-      [authority],
-    )
-    await expectFail(
-      q
-        .buildBurnInstructions({
-          connection,
-          caller: keeper.publicKey,
-          mint,
-          spendLamports: 1_000_001n,
-        })
-        .then((ixs: any) => send(ixs, [keeper])),
-      /SpendTooHigh/,
-    )
-    await send(
-      [
-        await q.buildUpdateConfigInstruction({
-          connection,
-          authority: authority.publicKey,
-          maxBurnLamports: CONFIG.maxBurnLamports,
-        }),
-      ],
-      [authority],
-    )
-    // A buy whose cost exceeds the authorised spend is caught after the CPI (Overspent).
-    {
-      const curveNow = PUMP_SDK.decodeBondingCurve(
-        (await connection.getAccountInfo(bondingCurvePda(mint)))!,
-      )
-      const feeConfig = await online.fetchFeeConfig()
-      const tokens = getBuyTokenAmountFromSolAmount({
-        global,
-        feeConfig,
-        mintSupply: new BN((await supply()).toString()),
-        bondingCurve: curveNow,
-        amount: new BN(3_000_000),
-        quoteMint: curveNow.quoteMint,
-      })
-      const pricey = await PUMP_SDK.getBuyInstructionRaw({
-        user: well,
-        mint,
-        creator: well,
-        amount: tokens,
-        solAmount: new BN(4_000_000),
-        feeRecipient: getFeeRecipient(global, false),
-        tokenProgram: T22,
-      })
-      const pre = buildOk.slice(0, -1) // the well's volume accumulator init, if any
-      await expectFail(
-        send([...pre, await rawBurn(pricey, 1_000_000n, keeper.publicKey)], [keeper]),
-        /Overspent/,
-      )
-    }
-
-    // Keeper burn.
+    // The keeper's burn: tokens bought and burned, spent ≤ spend.
     const supply0 = await supply()
-    const sent = await send(buildOk, [keeper])
+    const sent = await send([burnIx], [keeper])
     const burned = event(sent, 'Burned')
-    console.log(
-      `    curve burn tx ${sent.size} B, ${sent.cu} CU, spent ${burned.spent}, burned ${burned.tokensBurned}`,
-    )
+    console.log(`    DBC burn ${sent.size} B, ${sent.cu} CU: spent ${burned.spent}, burned ${burned.tokensBurned}`)
     assert.equal(burned.venue, 0)
-    assert.ok(burned.spent > 0n && burned.spent <= q0.burnReserve / 3n)
+    assert.ok(burned.spent > 0n && burned.spent <= spend)
     assert.ok(burned.tokensBurned > 0n)
     assert.equal(await supply(), supply0 - burned.tokensBurned)
-    assert.equal(await tokenBalance(q.wellTokenAta(mint)), 0n)
-    const q1 = await q.fetchQuantum(connection, mint)
-    assert.equal(q1.burnReserve, q0.burnReserve - burned.spent)
-    assert.equal(q1.totalBurnedTokens, burned.tokensBurned)
-
-    // Right after: a stranger is gated by the keeper grace, the keeper by the interval.
-    const stranger = traders[1]
-    const asStranger = await q.buildBurnInstructions({
-      connection,
-      caller: stranger.publicKey,
-      mint,
-      spendLamports: q1.burnReserve / 3n,
-    })
-    await expectFail(send(asStranger, [stranger]), /KeeperOnly/)
-    const asKeeper = await q.buildBurnInstructions({
-      connection,
-      caller: keeper.publicKey,
-      mint,
-      spendLamports: q1.burnReserve / 3n,
-    })
-    await expectFail(send(asKeeper, [keeper]), /TooSoon/)
-    // After the grace anyone may run it, within the public limits.
-    await waitForChainTime(q1.lastBurnAt + CONFIG.keeperGrace + 1)
-    const spend = q1.burnReserve / 3n
-    const strangerBurn = () =>
-      q.buildBurnInstructions({
-        connection,
-        caller: stranger.publicKey,
-        mint,
-        spendLamports: spend,
-      })
-    // (1) A public run spends at most max_burn_lamports / 10 (the keeper keeps the full cap).
-    const setMaxBurn = async (lamports: bigint) =>
-      send(
-        [
-          await q.buildUpdateConfigInstruction({
-            connection,
-            authority: authority.publicKey,
-            maxBurnLamports: lamports,
-          }),
-        ],
-        [authority],
-      )
-    await setMaxBurn(spend * 10n - 10n)
-    assert.equal(q.publicSpendCap(await q.fetchConfig(connection)), spend - 1n)
-    await expectFail(send(await strangerBurn(), [stranger]), /SpendTooHigh/)
-    await setMaxBurn(CONFIG.maxBurnLamports)
-    // (2) It may not share its transaction with a pump.fun trade (here the sandwich's back leg; the
-    // check reads every top-level instruction through the Instructions sysvar).
-    const backRun = await PUMP_SDK.getSellInstructionRaw({
-      user: stranger.publicKey,
-      mint,
-      creator: well,
-      amount: new BN(1_000_000),
-      solAmount: new BN(0),
-      feeRecipient: getFeeRecipient(global, false),
-      tokenProgram: T22,
-    })
-    const bundled = [...(await strangerBurn()), backRun]
-    await expectFail(send(bundled, [stranger]), /PublicTransactionNotAllowed/)
-    // (3) Alone (plus compute budget and the volume-accumulator init) it goes through.
-    const lateSent = await send(await strangerBurn(), [stranger])
-    const late = event(lateSent, 'Burned')
-    assert.equal(late.caller, stranger.publicKey.toBase58())
-    assert.ok(late.tokensBurned > 0n && late.spent <= spend)
+    quantum = await q.fetchQuantum(connection, mint)
+    assert.equal(quantum.totalBurnSol, burned.spent)
+    // Again too soon.
+    await expectFail(
+      send(await q.buildBurnInstructions({ connection, caller: keeper.publicKey, mint, spendLamports: spend }), [keeper]),
+      /TooSoon/,
+    )
+    // Only the keeper may burn until the grace has passed.
+    await waitForChainTime(quantum.lastBurnAt + CONFIG.minActionInterval)
+    assert.ok((await chainNow()) <= quantum.lastBurnAt + CONFIG.keeperGrace, 'still inside the grace')
+    const asStranger = await q.buildBurnInstructions({ connection, caller: traders[1].publicKey, mint, spendLamports: spend })
+    await expectFail(send(asStranger, [traders[1]]), /KeeperOnly/)
+    // After the grace anyone may burn, up to a tenth of the cap, alone in its transaction.
+    await waitForChainTime(quantum.lastBurnAt + CONFIG.keeperGrace + 1)
+    const pub = await q.buildBurnInstructions({ connection, caller: traders[1].publicKey, mint, spendLamports: spend })
+    const sandwich = await m.dbcSwapInstructions({ config: dbcConfig, mint, user: traders[1].publicKey, side: 'buy', amountIn: 1_000_000n })
+    await expectFail(send([...sandwich, ...pub], [traders[1]]), /PublicTransactionNotAllowed/)
+    const capped = await q.buildBurnInstructions({ connection, caller: traders[1].publicKey, mint, spendLamports: q.publicSpendCap(await q.fetchConfig(connection)) + 1n })
+    await expectFail(send(capped, [traders[1]]), /SpendTooHigh/)
+    const ok = await send(pub, [traders[1]])
+    assert.equal(event(ok, 'Burned').caller, traders[1].publicKey.toBase58())
   })
 
   test('entanglement: post, claims closed until claim_start, one epoch per interval, claim with proofs, double claim / bad proofs rejected, close after expiry', async () => {
@@ -1293,7 +1142,7 @@ describe('quantum_hooks on a local validator with mainnet pump.fun', () => {
   test('release: partial after the cliff, everything after the end', async () => {
     await waitForChainTime(lockStart + HOOKS.lock.cliffSecs + 1)
     const ix = () => q.buildReleaseInstruction({ connection, launcher: launcher.publicKey, mint })
-    const launcherAta = getAssociatedTokenAddressSync(mint, launcher.publicKey, true, T22)
+    const launcherAta = getAssociatedTokenAddressSync(mint, launcher.publicKey, true, SPL)
     const t0 = await chainNow()
     const sent = await send([await ix()], [launcher])
     const t1 = await chainNow()
@@ -1309,372 +1158,206 @@ describe('quantum_hooks on a local validator with mainnet pump.fun', () => {
     await expectFail(send([await ix()], [launcher]), /NothingToRelease/)
   })
 
-  test('graduation: buy out the curve and migrate to PumpSwap', async () => {
-    const online = new OnlinePumpSdk(connection)
-    const global = await online.fetchGlobal()
-    const state = await online.fetchBuyState(mint, whale.publicKey, T22)
-    const remaining = state.bondingCurve.realTokenReserves
-    const ixs = await PUMP_SDK.buyV2Instructions({
-      global,
-      bondingCurveAccountInfo: state.bondingCurveAccountInfo,
-      bondingCurve: state.bondingCurve,
-      associatedUserAccountInfo: state.associatedUserAccountInfo,
-      mint,
-      user: whale.publicKey,
-      amount: remaining,
-      quoteAmount: new BN((150n * SOL).toString()),
-      slippage: 0,
-      tokenProgram: T22,
-    })
-    await send(ixs, [whale])
-    const curve = PUMP_SDK.decodeBondingCurve(
-      (await connection.getAccountInfo(bondingCurvePda(mint)))!,
+  test('graduation: the curve fills (burns stop), sync records it, Meteora migrates the coin to DAMM v2 and the well gets the locked LP', async () => {
+    await curveBuy(whale, 60, mint, { partial: true })
+    let pool = await dbcPoolState()
+    assert.ok(pool.migrationProgress > m.PROGRESS.PRE, 'curve complete')
+    assert.ok(pool.finishCurveTimestamp > 0)
+    // Between completion and migration there is nowhere to buy: the client and the program refuse.
+    await assert.rejects(
+      q.buildBurnInstructions({ connection, caller: keeper.publicKey, mint, spendLamports: 1_000n }),
+      /curve is full/,
     )
-    assert.ok(curve.complete, 'curve complete')
-    const migrate = await PUMP_SDK.migrateV2Instruction({
-      withdrawAuthority: global.withdrawAuthority,
-      mint,
-      user: whale.publicKey,
-      quoteMint: curve.quoteMint,
-      baseTokenProgram: T22,
-      quoteTokenProgram: TOKEN_PROGRAM_ID,
+    // sync records graduation from DBC's own timestamp
+    await send([await q.buildSyncInstruction({ connection, mint, damm: null })], [keeper])
+    let quantum = await q.fetchQuantum(connection, mint)
+    assert.equal(quantum.graduatedAt, pool.finishCurveTimestamp)
+    // The surplus leg runs once the curve is complete.
+    const harvest = await send(
+      [await q.buildHarvestInstruction({ connection, caller: keeper.publicKey, mint })],
+      [keeper],
+    )
+    assert.equal(event(harvest, 'Harvested').legs & q.HARVEST.SURPLUS, q.HARVEST.SURPLUS)
+
+    const config = await dbcConfigState()
+    const migration = await dbcClient().migration.migrateToDammV2({
+      payer: keeper.publicKey,
+      pool: m.dbcPoolPda(dbcConfig, mint),
+      dammConfig: m.DAMM_MIGRATION_CONFIGS[config.migrationFeeOption],
     })
-    const sent = await send([migrate], [whale], { cu: 1_000_000 })
-    console.log(`    migrate ${sent.size} B, ${sent.cu} CU`)
-    const pool = canonicalPumpPoolPda(mint)
-    const poolInfo = await connection.getAccountInfo(pool)
-    assert.ok(poolInfo, 'canonical pool exists')
-    const decoded = PUMP_AMM_SDK.decodePool(poolInfo)
-    assert.ok(decoded.coinCreator.equals(q.wellPda(mint)), 'pool coin creator is the well')
-    // Nothing of ours has run since: the program has not seen the graduation yet.
-    assert.equal((await q.fetchQuantum(connection, mint)).graduatedAt, 0)
+    const migrated = await send(
+      migration.transaction.instructions,
+      [keeper, migration.firstPositionNftKeypair, migration.secondPositionNftKeypair],
+      { cu: 1_400_000 },
+    )
+    console.log(`    migration ${migrated.size} B, ${migrated.cu} CU`)
+    pool = await dbcPoolState()
+    assert.equal(pool.migrationProgress, m.PROGRESS.MIGRATED)
+    const { pool: dammPool, damm } = await dammState()
+    assert.equal(damm.tokenAMint, mint.toBase58())
+    assert.equal(damm.tokenBMint, NATIVE_MINT.toBase58())
+    assert.equal(damm.collectFeeMode, 1, 'fees in SOL only')
+    const well = q.wellPda(mint)
+    const found = await q.findWellPosition(connection, well, dammPool)
+    assert.ok(found, 'the well owns the creator position NFT')
+    const position = m.decodePosition((await connection.getAccountInfo(found!.position))?.data)!
+    assert.ok(position.permanentLockedLiquidity > 0n)
+    assert.equal(position.unlockedLiquidity, 0n, 'all of it permanently locked')
   })
 
-  test('post-graduation pulse: PumpSwap sweep + collect (WSOL) unwrapped by pulse, ATA rent refunded', async () => {
-    await poolBuys(mint, traders, 3n * SOL)
-    const pending = await q.pendingCreatorFees(connection, mint)
-    assert.ok(pending > 1_000_000n)
-    assert.equal(await connection.getAccountInfo(q.wellWsolAta(mint)), null, 'no WSOL ATA yet')
-    const vaultAta = coinCreatorVaultAtaPda(
-      coinCreatorVaultAuthorityPda(q.wellPda(mint)),
-      NATIVE_MINT,
-      TOKEN_PROGRAM_ID,
+  test('sync records the DAMM v2 pool only with the coin\'s own migrated pool and the well\'s position', async () => {
+    const well = q.wellPda(mint)
+    const config = await dbcConfigState()
+    const dammConfig = m.DAMM_MIGRATION_CONFIGS[config.migrationFeeOption]
+    const { pool: dammPool } = await dammState()
+    const found = (await q.findWellPosition(connection, well, dammPool))!
+    // Another coin's migrated pool (fill and migrate the coin launched in the burn test).
+    const other = await connection.getProgramAccounts(m.DBC_PROGRAM_ID, {
+      filters: [{ memcmp: { offset: 72, bytes: dbcConfig.toBase58() } }],
+    })
+    const otherMint = other
+      .map((a) => m.decodeDbcPool(a.account.data)!)
+      .find((p) => p.baseMint !== mint.toBase58() && p.migrationProgress === 0 && p.creator !== well.toBase58())!.baseMint
+    await graduate(new PublicKey(otherMint), whale)
+    const otherPool = m.migratedPoolFor(config, new PublicKey(otherMint))
+    const syncWith = (damm: any) => q.buildSyncInstruction({ connection, mint, dbcPool: m.dbcPoolPda(dbcConfig, mint), damm })
+    await expectFail(
+      send([await syncWith({ config: dammConfig, pool: otherPool, position: found.position, nftAccount: found.nftAccount })], [keeper]),
+      /NotCanonicalDammPool/,
     )
-    const vaultExisted = !!(await connection.getAccountInfo(vaultAta))
-    const keeper0 = await bal(keeper.publicKey)
-    const ixs = await q.buildPulseInstructions({ connection, payer: keeper.publicKey, mint })
-    const t0 = await chainNow()
-    const sent = await send(ixs, [keeper], { cu: 600_000 })
+    // The right pool with a position that is not the well's: the other coin's creator position.
+    const otherCreator = new PublicKey(m.decodeDbcPool((await connection.getAccountInfo(m.dbcPoolPda(dbcConfig, new PublicKey(otherMint))))!.data)!.creator)
+    const theirs = (await q.findWellPosition(connection, otherCreator, otherPool))!
+    await expectFail(
+      send([await syncWith({ config: dammConfig, pool: dammPool, position: theirs.position, nftAccount: theirs.nftAccount })], [keeper]),
+      /PositionNotWells/,
+    )
+    // A DAMM config DBC did not migrate this coin under (another fee tier).
+    await expectFail(
+      send([await syncWith({ config: m.DAMM_MIGRATION_CONFIGS[0], pool: dammPool, position: found.position, nftAccount: found.nftAccount })], [keeper]),
+      /NotCanonicalDammPool/,
+    )
+    // The real ones.
+    const sent = await send([await q.buildSyncInstruction({ connection, mint })], [keeper])
+    const synced = event(sent, 'Synced')
+    assert.equal(synced.dammPool, dammPool.toBase58())
+    assert.equal(synced.collectFeeMode, 1)
+    const quantum = await q.fetchQuantum(connection, mint)
+    assert.equal(quantum.dammPool, dammPool.toBase58())
+    assert.equal(quantum.dammPosition, found.position.toBase58())
+    assert.ok(quantum.migratedAt > 0)
+  })
+
+  test('post-migration harvest + pulse: creator migration fee and DAMM v2 LP fees, as SOL', async () => {
+    await poolBuys(mint, traders, SOL / 2n)
+    const pending = await q.pendingCreatorFees(connection, mint)
+    const sent = await send(
+      await q.buildPulseInstructions({ connection, payer: keeper.publicKey, mint }),
+      [keeper],
+      { cu: 800_000 },
+    )
+    const harvested = event(sent, 'Harvested')
+    assert.equal(harvested.legs & q.HARVEST.MIGRATION_FEE, q.HARVEST.MIGRATION_FEE)
+    assert.equal(harvested.legs & q.HARVEST.LP_FEE, q.HARVEST.LP_FEE)
+    assert.ok(harvested.claimed > 0n)
+    assert.equal(harvested.tokensBurned, 0n, 'quote-only fees: no coin to burn')
     const pulsed = event(sent, 'Pulsed')
-    // The pulse saw the canonical pool and recorded the graduation (the public Fusion grace
-    // counts from here).
-    const graduatedAt = (await q.fetchQuantum(connection, mint)).graduatedAt
-    assert.ok(graduatedAt >= t0 && graduatedAt <= (await chainNow()), `graduatedAt ${graduatedAt}`)
-    // splitB was funded earlier, so its share is paid directly: nothing deferred.
-    assert.equal(pulsed.deferred, 0n)
-    console.log(
-      `    pool pulse tx ${sent.size} B, ${sent.cu} CU, unwrapped ${pulsed.unwrapped}, collected ${pulsed.collected}, rent refunded ${pulsed.rentRefunded}`,
-    )
-    assert.ok(pulsed.unwrapped > 0n, 'WSOL creator fees were unwrapped into the well')
-    assert.equal(await connection.getAccountInfo(q.wellWsolAta(mint)), null, 'WSOL ATA closed')
-    // The collect leg created the WSOL ATA at the keeper's expense; pulse refunds that rent and
-    // splits only the fees (before the fix `collected` was `pending` + 2 039 280).
-    assert.equal(pulsed.rentRefunded, q.RENT_EXEMPT_TOKEN_ACCOUNT)
-    assert.equal(pulsed.collected, pending, 'exactly the pending creator fees are split')
-    const vaultRent = vaultExisted ? 0n : q.RENT_EXEMPT_TOKEN_ACCOUNT
-    assert.equal(
-      await bal(keeper.publicKey),
-      keeper0 - sent.fee - vaultRent,
-      'the keeper pays only the network fee',
-    )
+    console.log(`    post-migration harvest+pulse ${sent.size} B, ${sent.cu} CU, claimed ${harvested.claimed}, pending was ${pending}`)
+    assert.ok(pulsed.collected >= harvested.claimed)
+    // the migration fee is paid once
+    const again = await send([await q.buildHarvestInstruction({ connection, caller: keeper.publicKey, mint })], [keeper])
+    assert.equal(event(again, 'Harvested').legs & q.HARVEST.MIGRATION_FEE, 0)
   })
 
-  test('post-graduation pulse with fees below 0.001 SOL fails with NothingToPulse (ATA rent is not fees)', async () => {
-    // A small trade leaves a few thousand lamports of creator fees in the PumpSwap coin-creator
-    // vault, so the client includes the collect leg, which creates the WSOL ATA (≈ 0.002 SOL of
-    // rent) again. Before the fix that rent lifted the pulse over the 0.001 SOL floor.
-    const before = await q.pendingCreatorFees(connection, mint)
-    await poolBuys(mint, [traders[0]], SOL / 20n)
-    const pending = await q.pendingCreatorFees(connection, mint)
-    assert.ok(pending > before, 'creator fees accrued')
-    assert.ok(pending < q.MIN_PULSE_LAMPORTS, `pending ${pending}`)
-    const ixs = await q.buildPulseInstructions({ connection, payer: keeper.publicKey, mint })
-    assert.ok(
-      ixs.some((ix: any) => ix.programId.equals(q.PUMP_AMM_PROGRAM_ID)),
-      'the pool collect leg is included',
-    )
-    await expectFail(send(ixs, [keeper], { cu: 600_000 }), /NothingToPulse/)
-  })
-
-  test('quantum_burn through the canonical PumpSwap pool (non-canonical pool rejected)', async () => {
-    const q0 = await q.fetchQuantum(connection, mint)
-    await waitForChainTime(q0.lastBurnAt + CONFIG.minActionInterval)
-    const spend = q0.burnReserve / 2n
-    const ixs = await q.buildBurnInstructions({
-      connection,
-      caller: keeper.publicKey,
-      mint,
-      spendLamports: spend,
-    })
-    const burnIx = ixs[ixs.length - 1]
-    const fake = {
-      ...burnIx,
-      keys: burnIx.keys.map((k: any, i: number) =>
-        i === BURN_FIXED_ACCOUNTS ? { ...k, pubkey: Keypair.generate().publicKey } : k,
-      ),
-    }
-    await expectFail(send([...ixs.slice(0, -1), fake], [keeper]), /NotCanonicalPool/)
+  test('quantum_burn on the DAMM v2 pool (the DBC pool is refused once migrated)', async () => {
+    let quantum = await q.fetchQuantum(connection, mint)
+    await waitForChainTime(quantum.lastBurnAt + CONFIG.minActionInterval)
+    const spend = quantum.burnReserve / 4n
     const supply0 = await supply()
-    const sent = await send(ixs, [keeper], { cu: 600_000 })
-    const burned = event(sent, 'Burned')
-    console.log(
-      `    pool burn tx ${sent.size} B, ${sent.cu} CU, spent ${burned.spent}, burned ${burned.tokensBurned}`,
+    const sent = await send(
+      await q.buildBurnInstructions({ connection, caller: keeper.publicKey, mint, spendLamports: spend }),
+      [keeper],
     )
+    const burned = event(sent, 'Burned')
+    console.log(`    DAMM burn ${sent.size} B, ${sent.cu} CU: spent ${burned.spent}, burned ${burned.tokensBurned}`)
     assert.equal(burned.venue, 1)
     assert.ok(burned.spent > 0n && burned.spent <= spend)
     assert.equal(await supply(), supply0 - burned.tokensBurned)
-    assert.equal(await connection.getAccountInfo(q.wellWsolAta(mint)), null)
-    const q1 = await q.fetchQuantum(connection, mint)
-    assert.equal(q1.burnReserve, q0.burnReserve - burned.spent)
-  })
-
-  test('fusion: the public grace counts from graduation; buy + deposit on the canonical pool, LP stays in the well', async () => {
-    const q0 = await q.fetchQuantum(connection, mint)
-    assert.ok(q0.fusionReserve > 1_000_000n, `fusion reserve ${q0.fusionReserve}`)
-    assert.equal(q0.lastFusionAt, q0.createdAt, 'no fusion yet')
-    assert.ok(q0.graduatedAt > q0.createdAt, 'graduation recorded by the pool pulse')
-    const setGrace = async (keeperGrace: number) =>
-      send(
-        [
-          await q.buildUpdateConfigInstruction({
-            connection,
-            authority: authority.publicKey,
-            keeperGrace,
-          }),
-        ],
-        [authority],
-      )
-    const stranger = traders[2]
-    const publicSpend = (() => {
-      const half = q0.fusionReserve / 2n
-      const cap = CONFIG.maxBurnLamports / q.PUBLIC_SPEND_DIVISOR
-      return half < cap ? half : cap
-    })()
-    const strangerFusion = async () =>
-      q.buildFusionInstructions({
-        connection,
-        caller: stranger.publicKey,
+    // A burn aimed at the (migrated) DBC pool is not the coin's venue any more.
+    quantum = await q.fetchQuantum(connection, mint)
+    await waitForChainTime(quantum.lastBurnAt + CONFIG.minActionInterval)
+    const pool = await dbcPoolState()
+    const raw = await program()
+      .methods.quantumBurn(new BN(spend.toString()), new BN(0))
+      .accountsStrict({
+        caller: keeper.publicKey,
+        config: q.configPda(),
+        quantum: q.quantumPda(mint),
+        well: q.wellPda(mint),
         mint,
-        spendLamports: publicSpend,
+        wellTokenAta: q.wellTokenAta(mint),
+        wellWsolAta: q.wellWsolAta(mint),
+        wsolMint: NATIVE_MINT,
+        tokenProgram: SPL,
+        associatedTokenProgram: ASSOCIATED_TOKEN_PROGRAM_ID,
+        systemProgram: SystemProgram.programId,
+        instructionsSysvar: SYSVAR_INSTRUCTIONS_PUBKEY,
+        venueProgram: m.DBC_PROGRAM_ID,
+        venuePoolAuthority: m.DBC_POOL_AUTHORITY,
+        venueEventAuthority: m.DBC_EVENT_AUTHORITY,
+        venuePool: m.dbcPoolPda(dbcConfig, mint),
+        venueBaseVault: new PublicKey(pool.baseVault),
+        venueQuoteVault: new PublicKey(pool.quoteVault),
+        dbcConfig,
       })
-    // A grace that ended long ago if counted from launch (the last fusion) but not if counted from
-    // graduation: the public run is still refused.
-    const now = await chainNow()
-    const grace = now - q0.graduatedAt + 30
-    assert.ok(
-      now - q0.lastFusionAt > grace + 5,
-      `launch ${now - q0.lastFusionAt} s ago, graduation ${now - q0.graduatedAt} s ago`,
-    )
-    await setGrace(grace)
-    await expectFail(send(await strangerFusion(), [stranger], { cu: 800_000 }), /KeeperOnly/)
-    // A full grace after graduation, anyone may fuse (within max_burn_lamports / 10).
-    await setGrace(CONFIG.keeperGrace)
-    await waitForChainTime(q0.graduatedAt + CONFIG.keeperGrace + 1)
-    const pub = await send(await strangerFusion(), [stranger], { cu: 800_000 })
-    const publicFused = event(pub, 'Fused')
-    console.log(
-      `    public fusion tx ${pub.size} B, ${pub.cu} CU, spent ${publicFused.spent}, lp ${publicFused.lpReceived}`,
-    )
-    assert.equal(publicFused.caller, stranger.publicKey.toBase58())
-    assert.ok(publicFused.lpReceived > 0n && publicFused.spent <= publicSpend)
-
-    // The keeper, after min_action_interval, with the rest of the reserve.
-    const q1 = await q.fetchQuantum(connection, mint)
-    assert.equal(q1.fusionReserve, q0.fusionReserve - publicFused.spent)
-    await waitForChainTime(q1.lastFusionAt + CONFIG.minActionInterval)
-    const ixs = await q.buildFusionInstructions({
-      connection,
-      caller: keeper.publicKey,
-      mint,
-      spendLamports: q1.fusionReserve,
-    })
-    const sent = await send(ixs, [keeper], { cu: 800_000 })
-    const fused = event(sent, 'Fused')
-    console.log(
-      `    fusion tx ${sent.size} B, ${sent.cu} CU, spent ${fused.spent}, lp ${fused.lpReceived}, burned ${fused.tokensBurned}`,
-    )
-    assert.ok(fused.lpReceived > 0n && fused.spent > 0n && fused.spent <= q1.fusionReserve)
-    const lpAta = getAssociatedTokenAddressSync(
-      lpMintPda(canonicalPumpPoolPda(mint)),
-      q.wellPda(mint),
-      true,
-      T22,
-    )
-    assert.equal(await tokenBalance(lpAta), publicFused.lpReceived + fused.lpReceived)
-    const q2 = await q.fetchQuantum(connection, mint)
-    assert.equal(q2.fusionReserve, q1.fusionReserve - fused.spent)
-    assert.equal(q2.totalFusedSol, publicFused.spent + fused.spent)
-    assert.equal(q2.graduatedAt, q0.graduatedAt, 'graduation is recorded once')
-    assert.equal(await connection.getAccountInfo(q.wellWsolAta(mint)), null)
+      .instruction()
+    await expectFail(send([raw], [keeper]), /NotCanonicalPool/)
   })
 
-  test('standard launch: plain pump.fun coin with creator = launcher', async () => {
-    const m = Keypair.generate()
+  test('fusion: the public grace counts from migration; buy + add liquidity to the well\'s position, permanently locked', async () => {
+    let quantum = await q.fetchQuantum(connection, mint)
+    assert.ok(quantum.fusionReserve > 0n, `fusion reserve ${quantum.fusionReserve}`)
+    const spend = quantum.fusionReserve / 2n
+    await waitForChainTime(quantum.lastFusionAt + CONFIG.minActionInterval)
+    // Long past the last fusion (= launch), but the migration was just now: still keeper only.
+    if ((await chainNow()) <= quantum.migratedAt + CONFIG.keeperGrace)
+      await expectFail(
+        send(await q.buildFusionInstructions({ connection, caller: traders[0].publicKey, mint, spendLamports: spend }), [traders[0]]),
+        /KeeperOnly/,
+      )
+    const position0 = m.decodePosition((await connection.getAccountInfo(new PublicKey(quantum.dammPosition!)))?.data)!
+    const ixs = await q.buildFusionInstructions({ connection, caller: keeper.publicKey, mint, spendLamports: spend })
+    const sent = await send(ixs, [keeper], { cu: 600_000 })
+    const fused = event(sent, 'Fused')
+    console.log(`    fusion ${sent.size} B, ${sent.cu} CU: spent ${fused.spent}, liquidity +${fused.liquidityAdded}, burned ${fused.tokensBurned}`)
+    assert.ok(fused.spent > 0n && fused.spent <= spend)
+    assert.ok(fused.liquidityAdded > 0n)
+    const position1 = m.decodePosition((await connection.getAccountInfo(new PublicKey(quantum.dammPosition!)))?.data)!
+    assert.equal(position1.permanentLockedLiquidity, position0.permanentLockedLiquidity + fused.liquidityAdded)
+    assert.equal(position1.unlockedLiquidity, 0n)
+    quantum = await q.fetchQuantum(connection, mint)
+    assert.equal(quantum.totalFusedLiquidity, fused.liquidityAdded)
+    assert.equal(await tokenBalance(q.wellTokenAta(mint)), 0n, 'nothing left in the well')
+  })
+
+  test('standard launch: a plain Meteora coin with the launcher as creator', async () => {
+    const plain = Keypair.generate()
     const built = await q.buildStandardLaunchInstructions({
       connection,
-      launcher: launcher.publicKey,
-      mint: m.publicKey,
+      launcher: traders[1].publicKey,
+      mint: plain.publicKey,
       name: 'Plain',
       symbol: 'PLAIN',
       uri: 'https://example.invalid/plain.json',
-      devBuy: { solLamports: SOL / 2n, slippagePct: 5 },
+      devBuy: { solLamports: SOL / 10n, slippagePct: 1 },
+      dbcConfig,
     })
-    await send(built.instructions, [launcher, m], {
-      cu: 500_000,
-      luts: [await lookupTableFor(built.instructions, launcher)],
-    })
-    const curve = PUMP_SDK.decodeBondingCurve(
-      (await connection.getAccountInfo(bondingCurvePda(m.publicKey)))!,
-    )
-    assert.ok(curve.creator.equals(launcher.publicKey))
-    assert.equal(
-      await tokenBalance(getAssociatedTokenAddressSync(m.publicKey, launcher.publicKey, true, T22)),
-      built.devBuyTokens,
-    )
-  })
-
-  test('legacy SPL Token coin (pump.fun `create`, creator = well): curve pulse and burn, graduation, pool pulse and burn, fusion', async () => {
-    const SPL = TOKEN_PROGRAM_ID
-    const legacyKp = Keypair.generate()
-    const m = legacyKp.publicKey
-    const well = q.wellPda(m)
-    const meta = { name: 'Legacy', symbol: 'LEGACY', uri: 'https://example.invalid/legacy.json' }
-    const built = await q.buildQuantumLaunchInstructions({
-      connection,
-      launcher: launcher.publicKey,
-      mint: m,
-      ...meta,
-      hooks: { ...HOOKS, splits: [{ wallet: splitA.publicKey.toBase58(), bps: 2500 }], lock: null },
-    })
-    await send(built.stages.register, [launcher, legacyKp])
-    // A third-party script can still use pump.fun's legacy `create` (SPL Token mint).
-    const create = await PUMP_SDK.createInstruction({
-      mint: m,
-      ...meta,
-      creator: well,
-      user: launcher.publicKey,
-    })
-    await send([create], [launcher, legacyKp])
-    const mintInfo = await connection.getAccountInfo(m)
-    assert.ok(mintInfo!.owner.equals(SPL), 'legacy create makes an SPL Token mint')
-    assert.ok(q.mintTokenProgram(mintInfo).equals(SPL))
-
-    for (const t of traders) await curveBuy(t, 4, m, SPL)
-    event(
-      await send(await q.buildPulseInstructions({ connection, payer: keeper.publicKey, mint: m }), [
-        keeper,
-      ]),
-      'Pulsed',
-    )
-    let quantum = await q.fetchQuantum(connection, m)
-    assert.ok(quantum.burnReserve > 0n && quantum.fusionReserve > 0n)
-
-    // Curve burn with the coin's own token program (it used to require Token-2022).
-    await waitForChainTime(quantum.lastBurnAt + CONFIG.minActionInterval)
-    const supply0 = await supply(m, SPL)
-    const curveBurn = event(
-      await send(
-        await q.buildBurnInstructions({
-          connection,
-          caller: keeper.publicKey,
-          mint: m,
-          spendLamports: quantum.burnReserve / 2n,
-        }),
-        [keeper],
-      ),
-      'Burned',
-    )
-    assert.equal(curveBurn.venue, 0)
-    assert.ok(curveBurn.tokensBurned > 0n)
-    assert.equal(await supply(m, SPL), supply0 - curveBurn.tokensBurned)
-    assert.equal(await tokenBalance(q.wellTokenAta(m, undefined, SPL), SPL), 0n)
-
-    // Graduation, then collect what the buy-out paid the well on the curve.
-    const buyer = Keypair.generate()
-    await airdrop(buyer.publicKey, 200)
-    await graduate(m, buyer, SPL)
-    if ((await q.pendingCreatorFees(connection, m)) >= q.MIN_PULSE_LAMPORTS)
-      await send(
-        await q.buildPulseInstructions({ connection, payer: keeper.publicKey, mint: m }),
-        [keeper],
-        {
-          cu: 600_000,
-        },
-      )
-
-    // Pool pulse: WSOL unwrapped, ATA rent back to the keeper.
-    await poolBuys(m, traders, 2n * SOL)
-    const pending = await q.pendingCreatorFees(connection, m)
-    const poolPulse = event(
-      await send(
-        await q.buildPulseInstructions({ connection, payer: keeper.publicKey, mint: m }),
-        [keeper],
-        {
-          cu: 600_000,
-        },
-      ),
-      'Pulsed',
-    )
-    assert.ok(poolPulse.unwrapped > 0n)
-    assert.equal(poolPulse.rentRefunded, q.RENT_EXEMPT_TOKEN_ACCOUNT)
-    assert.equal(poolPulse.collected, pending)
-    assert.ok((await q.fetchQuantum(connection, m)).graduatedAt > 0, 'graduation recorded')
-
-    // Pool burn.
-    quantum = await q.fetchQuantum(connection, m)
-    await waitForChainTime(quantum.lastBurnAt + CONFIG.minActionInterval)
-    const supply1 = await supply(m, SPL)
-    const poolBurn = event(
-      await send(
-        await q.buildBurnInstructions({
-          connection,
-          caller: keeper.publicKey,
-          mint: m,
-          spendLamports: quantum.burnReserve / 2n,
-        }),
-        [keeper],
-        { cu: 600_000 },
-      ),
-      'Burned',
-    )
-    assert.equal(poolBurn.venue, 1)
-    assert.equal(await supply(m, SPL), supply1 - poolBurn.tokensBurned)
-
-    // Fusion: base on SPL Token, LP on Token-2022.
-    quantum = await q.fetchQuantum(connection, m)
-    const fused = event(
-      await send(
-        await q.buildFusionInstructions({
-          connection,
-          caller: keeper.publicKey,
-          mint: m,
-          spendLamports: quantum.fusionReserve,
-        }),
-        [keeper],
-        { cu: 800_000 },
-      ),
-      'Fused',
-    )
-    console.log(
-      `    legacy coin: curve burn ${curveBurn.tokensBurned}, pool burn ${poolBurn.tokensBurned}, fusion lp ${fused.lpReceived}`,
-    )
-    assert.ok(fused.lpReceived > 0n && fused.spent > 0n)
-    const lpAta = getAssociatedTokenAddressSync(lpMintPda(canonicalPumpPoolPda(m)), well, true, T22)
-    assert.equal(await tokenBalance(lpAta), fused.lpReceived)
-    assert.equal(
-      (await q.fetchQuantum(connection, m)).fusionReserve,
-      quantum.fusionReserve - fused.spent,
-    )
+    await send(built.instructions, [traders[1], plain], { cu: 500_000 })
+    const pool = await dbcPoolState(plain.publicKey)
+    assert.equal(pool.creator, traders[1].publicKey.toBase58())
+    const ata = getAssociatedTokenAddressSync(plain.publicKey, traders[1].publicKey, true, SPL)
+    assert.equal(await tokenBalance(ata), built.devBuyTokens)
+    assert.equal((await q.verifyQuantumCoin(connection, plain.publicKey)).registered, false)
   })
 
   test('paused config blocks register and burns', async () => {
@@ -1693,6 +1376,7 @@ describe('quantum_hooks on a local validator with mainnet pump.fun', () => {
       symbol: 'P',
       uri: 'https://example.invalid/p.json',
       hooks: { ...HOOKS, lock: null },
+      dbcConfig,
     })
     await expectFail(send(built.stages.register, [launcher, m]), /Paused/)
     // A pause stops only register, quantum_burn and fusion: pulses keep paying out.

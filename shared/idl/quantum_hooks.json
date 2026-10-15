@@ -4,7 +4,7 @@
     "name": "quantum_hooks",
     "version": "0.1.0",
     "spec": "0.1.0",
-    "description": "Quant Pad Quantum Hooks: creator-fee routing for pump.fun coins"
+    "description": "Quant Pad Quantum Hooks: creator-fee routing for Meteora coins"
   },
   "instructions": [
     {
@@ -469,13 +469,143 @@
           "address": "So11111111111111111111111111111111111111112"
         },
         {
-          "name": "pool"
+          "name": "token_program",
+          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
         },
         {
-          "name": "lp_mint"
+          "name": "associated_token_program",
+          "address": "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
         },
         {
-          "name": "well_lp_ata",
+          "name": "system_program",
+          "address": "11111111111111111111111111111111"
+        },
+        {
+          "name": "instructions_sysvar",
+          "address": "Sysvar1nstructions1111111111111111111111111"
+        },
+        {
+          "name": "damm_program"
+        },
+        {
+          "name": "damm_pool_authority",
+          "address": "HLnpSz9h2S4hiLQ43rnSD9XkcUThA7B8hQMKmDaiTLcC"
+        },
+        {
+          "name": "damm_event_authority",
+          "address": "3rmHSu74h1ZcmAisVcWerTCiRDQbUrBKmcwptYGjHfet"
+        },
+        {
+          "name": "damm_pool",
+          "writable": true
+        },
+        {
+          "name": "damm_position",
+          "writable": true
+        },
+        {
+          "name": "damm_nft_account"
+        },
+        {
+          "name": "damm_vault_a",
+          "writable": true
+        },
+        {
+          "name": "damm_vault_b",
+          "writable": true
+        }
+      ],
+      "args": [
+        {
+          "name": "spend",
+          "type": "u64"
+        },
+        {
+          "name": "swap_in",
+          "type": "u64"
+        },
+        {
+          "name": "min_base_out",
+          "type": "u64"
+        },
+        {
+          "name": "liquidity_delta",
+          "type": "u128"
+        }
+      ]
+    },
+    {
+      "name": "harvest",
+      "discriminator": [
+        228,
+        241,
+        31,
+        182,
+        53,
+        169,
+        59,
+        199
+      ],
+      "accounts": [
+        {
+          "name": "caller",
+          "writable": true,
+          "signer": true
+        },
+        {
+          "name": "quantum",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  113,
+                  117,
+                  97,
+                  110,
+                  116,
+                  117,
+                  109
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "well",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  119,
+                  101,
+                  108,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "mint"
+              }
+            ]
+          }
+        },
+        {
+          "name": "mint",
+          "writable": true,
+          "relations": [
+            "quantum"
+          ]
+        },
+        {
+          "name": "well_token_ata",
           "writable": true,
           "pda": {
             "seeds": [
@@ -485,11 +615,11 @@
               },
               {
                 "kind": "account",
-                "path": "lp_token_program"
+                "path": "token_program"
               },
               {
                 "kind": "account",
-                "path": "lp_mint"
+                "path": "mint"
               }
             ],
             "program": {
@@ -532,21 +662,15 @@
           }
         },
         {
+          "name": "well_wsol_ata",
+          "writable": true
+        },
+        {
+          "name": "wsol_mint",
+          "address": "So11111111111111111111111111111111111111112"
+        },
+        {
           "name": "token_program",
-          "docs": [
-            "The coin mint's owner: Token-2022 for `create_v2` coins, SPL Token for coins made with",
-            "pump.fun's legacy `create` (bound by the `mint::token_program` constraint)."
-          ]
-        },
-        {
-          "name": "lp_token_program",
-          "docs": [
-            "PumpSwap always mints LP tokens with Token-2022."
-          ],
-          "address": "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
-        },
-        {
-          "name": "quote_token_program",
           "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
         },
         {
@@ -558,30 +682,77 @@
           "address": "11111111111111111111111111111111"
         },
         {
-          "name": "instructions_sysvar",
-          "address": "Sysvar1nstructions1111111111111111111111111"
+          "name": "dbc_program",
+          "address": "dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN"
         },
         {
-          "name": "target_program",
-          "address": "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA"
+          "name": "dbc_pool_authority",
+          "address": "FhVo3mqL8PW5pH5U2CN4XE33DokiyZnUwuGpH2hmHLuM"
+        },
+        {
+          "name": "dbc_event_authority",
+          "address": "8Ks12pbrD6PXxfty1hVQiE9sc289zgU1zHkvXhrSdriF"
+        },
+        {
+          "name": "dbc_config"
+        },
+        {
+          "name": "dbc_pool",
+          "writable": true
+        },
+        {
+          "name": "dbc_base_vault",
+          "writable": true
+        },
+        {
+          "name": "dbc_quote_vault",
+          "writable": true
+        },
+        {
+          "name": "damm_program",
+          "docs": [
+            "position and NFT account (addresses stored by `sync`), plus the pool's vaults."
+          ],
+          "optional": true
+        },
+        {
+          "name": "damm_pool_authority",
+          "optional": true,
+          "address": "HLnpSz9h2S4hiLQ43rnSD9XkcUThA7B8hQMKmDaiTLcC"
+        },
+        {
+          "name": "damm_event_authority",
+          "optional": true,
+          "address": "3rmHSu74h1ZcmAisVcWerTCiRDQbUrBKmcwptYGjHfet"
+        },
+        {
+          "name": "damm_pool",
+          "optional": true
+        },
+        {
+          "name": "damm_position",
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "damm_nft_account",
+          "optional": true
+        },
+        {
+          "name": "damm_vault_a",
+          "writable": true,
+          "optional": true
+        },
+        {
+          "name": "damm_vault_b",
+          "writable": true,
+          "optional": true
         }
       ],
       "args": [
         {
-          "name": "spend",
-          "type": "u64"
-        },
-        {
-          "name": "buy_data",
-          "type": "bytes"
-        },
-        {
-          "name": "buy_account_count",
+          "name": "legs",
           "type": "u8"
-        },
-        {
-          "name": "deposit_data",
-          "type": "bytes"
         }
       ]
     },
@@ -994,15 +1165,6 @@
       ],
       "accounts": [
         {
-          "name": "rent_payer",
-          "docs": [
-            "Gets back the rent of the well's WSOL ATA when this pulse closes it. The PumpSwap collect",
-            "leg creates that ATA at the transaction payer's expense; only creator fees are split."
-          ],
-          "writable": true,
-          "signer": true
-        },
-        {
           "name": "config",
           "pda": {
             "seeds": [
@@ -1077,30 +1239,6 @@
         {
           "name": "launcher",
           "writable": true
-        },
-        {
-          "name": "well_wsol_ata",
-          "writable": true,
-          "optional": true
-        },
-        {
-          "name": "token_program",
-          "optional": true,
-          "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
-        },
-        {
-          "name": "bonding_curve",
-          "docs": [
-            "while `graduated_at` is unset and the curve is complete, so the pulse records graduation."
-          ],
-          "optional": true
-        },
-        {
-          "name": "pool",
-          "docs": [
-            "for the same reason once the coin has migrated."
-          ],
-          "optional": true
         },
         {
           "name": "system_program",
@@ -1260,27 +1398,16 @@
         {
           "name": "well_wsol_ata",
           "docs": [
-            "`spend` into it and closes it back into the well afterwards. The curve route omits it",
-            "(and `wsol_mint` / `quote_token_program`) to keep the transaction small."
+            "is closed back into the well afterwards (the well pays and recovers its rent)."
           ],
-          "writable": true,
-          "optional": true
+          "writable": true
         },
         {
           "name": "wsol_mint",
-          "optional": true,
           "address": "So11111111111111111111111111111111111111112"
         },
         {
           "name": "token_program",
-          "docs": [
-            "The coin mint's owner: Token-2022 for `create_v2` coins, SPL Token for coins made with",
-            "pump.fun's legacy `create` (bound by the `mint::token_program` constraint)."
-          ]
-        },
-        {
-          "name": "quote_token_program",
-          "optional": true,
           "address": "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
         },
         {
@@ -1296,7 +1423,29 @@
           "address": "Sysvar1nstructions1111111111111111111111111"
         },
         {
-          "name": "target_program"
+          "name": "venue_program"
+        },
+        {
+          "name": "venue_pool_authority"
+        },
+        {
+          "name": "venue_event_authority"
+        },
+        {
+          "name": "venue_pool",
+          "writable": true
+        },
+        {
+          "name": "venue_base_vault",
+          "writable": true
+        },
+        {
+          "name": "venue_quote_vault",
+          "writable": true
+        },
+        {
+          "name": "dbc_config",
+          "optional": true
         }
       ],
       "args": [
@@ -1305,8 +1454,8 @@
           "type": "u64"
         },
         {
-          "name": "cpi_data",
-          "type": "bytes"
+          "name": "min_out",
+          "type": "u64"
         }
       ]
     },
@@ -1331,8 +1480,9 @@
         {
           "name": "mint",
           "docs": [
-            "The fresh mint keypair pump.fun `create_v2` initialises right after this instruction.",
-            "Its signature binds the hooks to whoever creates the coin."
+            "The fresh mint keypair Meteora's DBC initialises right after this instruction (DBC's",
+            "`base_mint` must sign too, so nobody else can create the coin's pool). Its signature binds",
+            "the hooks to whoever creates the coin."
           ],
           "signer": true
         },
@@ -1401,6 +1551,9 @@
               }
             ]
           }
+        },
+        {
+          "name": "dbc_config"
         },
         {
           "name": "system_program",
@@ -1598,6 +1751,62 @@
       "args": []
     },
     {
+      "name": "set_launch_configs",
+      "discriminator": [
+        107,
+        231,
+        75,
+        56,
+        224,
+        226,
+        213,
+        111
+      ],
+      "accounts": [
+        {
+          "name": "authority",
+          "signer": true,
+          "relations": [
+            "config"
+          ]
+        },
+        {
+          "name": "config",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  113,
+                  112,
+                  45,
+                  99,
+                  111,
+                  110,
+                  102,
+                  105,
+                  103
+                ]
+              }
+            ]
+          }
+        }
+      ],
+      "args": [
+        {
+          "name": "expected_version",
+          "type": "u64"
+        },
+        {
+          "name": "configs",
+          "type": {
+            "vec": "pubkey"
+          }
+        }
+      ]
+    },
+    {
       "name": "set_paused",
       "discriminator": [
         91,
@@ -1646,6 +1855,90 @@
           "type": "bool"
         }
       ]
+    },
+    {
+      "name": "sync",
+      "discriminator": [
+        4,
+        219,
+        40,
+        164,
+        21,
+        157,
+        189,
+        88
+      ],
+      "accounts": [
+        {
+          "name": "quantum",
+          "writable": true,
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  113,
+                  117,
+                  97,
+                  110,
+                  116,
+                  117,
+                  109
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "quantum.mint",
+                "account": "Quantum"
+              }
+            ]
+          }
+        },
+        {
+          "name": "well",
+          "pda": {
+            "seeds": [
+              {
+                "kind": "const",
+                "value": [
+                  119,
+                  101,
+                  108,
+                  108
+                ]
+              },
+              {
+                "kind": "account",
+                "path": "quantum.mint",
+                "account": "Quantum"
+              }
+            ]
+          }
+        },
+        {
+          "name": "dbc_pool"
+        },
+        {
+          "name": "damm_config",
+          "docs": [
+            "account to record once the coin has migrated (verified in the handler)."
+          ],
+          "optional": true
+        },
+        {
+          "name": "damm_pool",
+          "optional": true
+        },
+        {
+          "name": "damm_position",
+          "optional": true
+        },
+        {
+          "name": "damm_nft_account",
+          "optional": true
+        }
+      ],
+      "args": []
     },
     {
       "name": "update_config",
@@ -1864,6 +2157,32 @@
       ]
     },
     {
+      "name": "Harvested",
+      "discriminator": [
+        249,
+        229,
+        78,
+        151,
+        106,
+        185,
+        149,
+        11
+      ]
+    },
+    {
+      "name": "LaunchConfigsSet",
+      "discriminator": [
+        129,
+        181,
+        102,
+        59,
+        181,
+        45,
+        115,
+        238
+      ]
+    },
+    {
       "name": "Locked",
       "discriminator": [
         188,
@@ -1913,6 +2232,19 @@
         189,
         15,
         220
+      ]
+    },
+    {
+      "name": "Synced",
+      "discriminator": [
+        114,
+        244,
+        163,
+        97,
+        99,
+        80,
+        164,
+        70
       ]
     }
   ],
@@ -2009,148 +2341,158 @@
     },
     {
       "code": 6018,
-      "name": "MissingTokenProgram",
-      "msg": "The SPL Token program is required to unwrap the well's WSOL account"
-    },
-    {
-      "code": 6019,
       "name": "KeeperOnly",
       "msg": "Only the keeper may act until the keeper grace period has passed"
     },
     {
-      "code": 6020,
+      "code": 6019,
       "name": "TooSoon",
       "msg": "The minimum interval between actions has not elapsed"
     },
     {
-      "code": 6021,
+      "code": 6020,
       "name": "SpendTooHigh",
       "msg": "Spend exceeds the module reserve or the per-action cap"
     },
     {
-      "code": 6022,
+      "code": 6021,
       "name": "Overspent",
       "msg": "The CPI spent more lamports than authorised"
     },
     {
-      "code": 6023,
-      "name": "InvalidTargetProgram",
-      "msg": "Target program must be pump.fun or PumpSwap"
-    },
-    {
-      "code": 6024,
-      "name": "DisallowedInstruction",
-      "msg": "CPI instruction is not on the discriminator allow-list"
-    },
-    {
-      "code": 6025,
-      "name": "MintNotInCpi",
-      "msg": "CPI accounts must include the coin's mint"
-    },
-    {
-      "code": 6026,
-      "name": "WellNotInCpi",
-      "msg": "CPI accounts must include the well"
-    },
-    {
-      "code": 6027,
+      "code": 6022,
       "name": "NotCanonicalPool",
-      "msg": "PumpSwap CPIs must target the coin's canonical pool"
+      "msg": "Venue accounts must be this coin's Meteora pool and its program's accounts"
     },
     {
-      "code": 6028,
+      "code": 6023,
       "name": "NothingBought",
       "msg": "The buy delivered no tokens to the well"
     },
     {
-      "code": 6029,
-      "name": "NoLiquidityAdded",
-      "msg": "The deposit minted no LP tokens to the well"
+      "code": 6024,
+      "name": "LiquidityMismatch",
+      "msg": "Fusion added a different amount of liquidity than requested"
     },
     {
-      "code": 6030,
-      "name": "InvalidBuyAccountCount",
-      "msg": "Invalid buy account count for fusion"
-    },
-    {
-      "code": 6031,
+      "code": 6025,
       "name": "InvalidLeafCount",
       "msg": "Entanglement leaf count must be 1..=16384"
     },
     {
-      "code": 6032,
+      "code": 6026,
       "name": "InsufficientEntangleReserve",
       "msg": "Epoch total exceeds the Entanglement reserve"
     },
     {
-      "code": 6033,
+      "code": 6027,
       "name": "EpochExpired",
       "msg": "This Entanglement epoch has expired"
     },
     {
-      "code": 6034,
+      "code": 6028,
       "name": "EpochNotExpired",
       "msg": "This Entanglement epoch has not expired yet"
     },
     {
-      "code": 6035,
+      "code": 6029,
       "name": "LeafOutOfRange",
       "msg": "Leaf index out of range"
     },
     {
-      "code": 6036,
+      "code": 6030,
       "name": "AlreadyClaimed",
       "msg": "This leaf was already claimed"
     },
     {
-      "code": 6037,
+      "code": 6031,
       "name": "InvalidProof",
       "msg": "Invalid merkle proof"
     },
     {
-      "code": 6038,
+      "code": 6032,
       "name": "ProofTooLong",
       "msg": "Merkle proof is too long"
     },
     {
-      "code": 6039,
+      "code": 6033,
       "name": "ClaimExceedsTotal",
       "msg": "Claim would exceed the epoch total"
     },
     {
-      "code": 6040,
+      "code": 6034,
       "name": "MathOverflow",
       "msg": "Arithmetic overflow"
     },
     {
-      "code": 6041,
+      "code": 6035,
       "name": "WellInvariant",
       "msg": "Well balance is below its rent minimum plus reserved ledgers"
     },
     {
-      "code": 6042,
+      "code": 6036,
       "name": "ConfigChanged",
       "msg": "The config changed since this update was prepared (expected_version does not match)"
     },
     {
-      "code": 6043,
+      "code": 6037,
       "name": "ClaimNotOpen",
       "msg": "Claims for this Entanglement epoch are not open yet"
     },
     {
-      "code": 6044,
+      "code": 6038,
       "name": "CancelWindowClosed",
       "msg": "This Entanglement epoch can no longer be cancelled: its claims have opened"
     },
     {
-      "code": 6045,
+      "code": 6039,
       "name": "EpochTooSoon",
       "msg": "The minimum interval between Entanglement epochs has not elapsed"
     },
     {
-      "code": 6046,
+      "code": 6040,
       "name": "PublicTransactionNotAllowed",
       "msg": "A public burn or fusion must be a top-level instruction and may share its transaction only with compute-budget, system, token, associated-token and Quantum Hooks instructions"
+    },
+    {
+      "code": 6041,
+      "name": "LaunchConfigNotAllowed",
+      "msg": "This DBC config is not one of Quant Pad's launch configs"
+    },
+    {
+      "code": 6042,
+      "name": "InvalidLaunchConfigs",
+      "msg": "At most 4 distinct, non-default launch configs"
+    },
+    {
+      "code": 6043,
+      "name": "NotBound",
+      "msg": "The well is not this coin's DBC pool creator"
+    },
+    {
+      "code": 6044,
+      "name": "VenueUnavailable",
+      "msg": "The venue cannot trade right now (curve complete but not migrated, or pool disabled)"
+    },
+    {
+      "code": 6045,
+      "name": "NotCanonicalDammPool",
+      "msg": "Not the DAMM v2 pool DBC migrated this coin into"
+    },
+    {
+      "code": 6046,
+      "name": "PositionNotWells",
+      "msg": "The DAMM v2 position is not the well's"
+    },
+    {
+      "code": 6047,
+      "name": "InvalidVenueAccount",
+      "msg": "A Meteora account has an unexpected owner, discriminator or size"
+    },
+    {
+      "code": 6048,
+      "name": "NotMigrated",
+      "msg": "The coin has not migrated to DAMM v2 yet"
     }
   ],
   "types": [
@@ -2170,7 +2512,7 @@
           {
             "name": "venue",
             "docs": [
-              "0 = bonding curve (pump.fun), 1 = PumpSwap pool."
+              "0 = Meteora DBC bonding curve, 1 = DAMM v2 pool."
             ],
             "type": "u8"
           },
@@ -2265,10 +2607,28 @@
           {
             "name": "version",
             "docs": [
-              "Incremented by every config change (`update_config`, `set_paused`). `update_config` names",
-              "the version it was prepared against, so a stale update cannot undo a later change."
+              "Incremented by every config change (`update_config`, `set_paused`, `set_launch_configs`).",
+              "`update_config` names the version it was prepared against, so a stale update cannot undo a",
+              "later change."
             ],
             "type": "u64"
+          },
+          {
+            "name": "launch_configs",
+            "docs": [
+              "Quant Pad's Meteora DBC configs: `register` only binds hooks to a pool launched under one",
+              "of these (DBC configs are immutable, so the address pins every curve and fee setting)."
+            ],
+            "type": {
+              "array": [
+                "pubkey",
+                4
+              ]
+            }
+          },
+          {
+            "name": "launch_config_count",
+            "type": "u8"
           },
           {
             "name": "reserved",
@@ -2514,11 +2874,82 @@
             "type": "u64"
           },
           {
-            "name": "lp_received",
+            "name": "liquidity_added",
+            "docs": [
+              "Liquidity added to the well's DAMM v2 position and permanently locked."
+            ],
+            "type": "u128"
+          },
+          {
+            "name": "tokens_burned",
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Harvested",
+      "docs": [
+        "`harvest` claimed the creator side's fees into the well."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "caller",
+            "type": "pubkey"
+          },
+          {
+            "name": "legs",
+            "docs": [
+              "Bitmask of the legs that ran (1 trading fee, 2 surplus, 4 migration fee, 8 LP fee)."
+            ],
+            "type": "u8"
+          },
+          {
+            "name": "claimed",
+            "docs": [
+              "Quote (SOL) claimed into the well, without the WSOL account's rent."
+            ],
             "type": "u64"
           },
           {
             "name": "tokens_burned",
+            "docs": [
+              "Coin tokens received (only if a fee mode ever pays base) and burned."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "rent_refunded",
+            "docs": [
+              "Rent of the WSOL account returned to `caller`."
+            ],
+            "type": "u64"
+          }
+        ]
+      }
+    },
+    {
+      "name": "LaunchConfigsSet",
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "configs",
+            "type": {
+              "vec": "pubkey"
+            }
+          },
+          {
+            "name": "version",
+            "docs": [
+              "The config version after this change."
+            ],
             "type": "u64"
           }
         ]
@@ -2582,14 +3013,6 @@
             "type": "pubkey"
           },
           {
-            "name": "unwrapped",
-            "docs": [
-              "WSOL (creator fees) unwrapped from the well's WSOL account before allocation, without the",
-              "account's rent (see `rent_refunded`)."
-            ],
-            "type": "u64"
-          },
-          {
             "name": "collected",
             "docs": [
               "Unallocated lamports this pulse distributed (`available`; 0 when below the 0.001 SOL floor",
@@ -2638,13 +3061,6 @@
             "name": "owed_paid",
             "docs": [
               "Owed amounts from earlier pulses paid by this one."
-            ],
-            "type": "u64"
-          },
-          {
-            "name": "rent_refunded",
-            "docs": [
-              "Rent of the closed WSOL account, returned to the pulse's `rent_payer` (not fees)."
             ],
             "type": "u64"
           }
@@ -2806,8 +3222,8 @@
           {
             "name": "graduated_at",
             "docs": [
-              "When `pulse`, `quantum_burn` or `fusion` first saw the coin graduated (0 = not yet). The",
-              "public Fusion grace counts from here."
+              "When the coin's bonding curve filled (DBC `finish_curve_timestamp`, recorded by `sync`;",
+              "0 = not yet)."
             ],
             "type": "i64"
           },
@@ -2831,6 +3247,70 @@
           {
             "name": "protocol_owed",
             "type": "u64"
+          },
+          {
+            "name": "dbc_config",
+            "docs": [
+              "The DBC config the coin launches under (allow-listed at `register`) and the virtual pool",
+              "that config derives for the mint."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "dbc_pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "damm_pool",
+            "docs": [
+              "The DAMM v2 pool the curve migrated into, the well's position in it and the account holding",
+              "that position's NFT, recorded and verified by `sync` (default until the coin migrates)."
+            ],
+            "type": "pubkey"
+          },
+          {
+            "name": "damm_position",
+            "type": "pubkey"
+          },
+          {
+            "name": "damm_nft_account",
+            "type": "pubkey"
+          },
+          {
+            "name": "bound_at",
+            "docs": [
+              "When `sync` first saw the well as the DBC pool's creator (0 = not bound yet)."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "birth_bound",
+            "docs": [
+              "The well became the creator before the pool's first trade, so the launcher never held a",
+              "creator fee (`sync` reads DBC's `has_swap`)."
+            ],
+            "type": "bool"
+          },
+          {
+            "name": "migrated_at",
+            "docs": [
+              "When `sync` recorded the DAMM v2 pool. The public Fusion grace counts from here."
+            ],
+            "type": "i64"
+          },
+          {
+            "name": "total_harvested",
+            "docs": [
+              "Quote lamports `harvest` has claimed into the well (rent refunds excluded)."
+            ],
+            "type": "u64"
+          },
+          {
+            "name": "total_fused_liquidity",
+            "docs": [
+              "DAMM v2 liquidity Fusion has added to the well's position and locked."
+            ],
+            "type": "u128"
           },
           {
             "name": "reserved",
@@ -2939,6 +3419,13 @@
           {
             "name": "well_funded",
             "type": "u64"
+          },
+          {
+            "name": "dbc_pool",
+            "docs": [
+              "The DBC virtual pool the coin's hooks are bound to."
+            ],
+            "type": "pubkey"
           }
         ]
       }
@@ -2982,6 +3469,48 @@
               "Share of the creator slice in bps."
             ],
             "type": "u16"
+          }
+        ]
+      }
+    },
+    {
+      "name": "Synced",
+      "docs": [
+        "`sync` recorded something new about the coin's Meteora venue."
+      ],
+      "type": {
+        "kind": "struct",
+        "fields": [
+          {
+            "name": "mint",
+            "type": "pubkey"
+          },
+          {
+            "name": "bound_at",
+            "type": "i64"
+          },
+          {
+            "name": "birth_bound",
+            "type": "bool"
+          },
+          {
+            "name": "graduated_at",
+            "type": "i64"
+          },
+          {
+            "name": "damm_pool",
+            "type": "pubkey"
+          },
+          {
+            "name": "damm_position",
+            "type": "pubkey"
+          },
+          {
+            "name": "collect_fee_mode",
+            "docs": [
+              "DAMM v2 `collect_fee_mode` of the recorded pool (1 = quote only); 0 before migration."
+            ],
+            "type": "u8"
           }
         ]
       }
