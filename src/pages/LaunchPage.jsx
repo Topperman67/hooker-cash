@@ -107,7 +107,9 @@ export default function LaunchPage() {
   const pendingLaunch = useRef(null)
   const fileInput = useRef(null)
 
-  const wantsQuantum = draft.mode === 'quantum'
+  // Until the Quantum Hooks program is live (and not paused), every launch is a standard one and the
+  // launch-type choice is not offered.
+  const wantsQuantum = draft.mode === 'quantum' && quantum.available
   const quantumMode = wantsQuantum && quantum.available
   const quantumBlocked = wantsQuantum && !quantum.available
   const quantumPaused = quantumBlocked && !!quantum.paused
@@ -504,15 +506,21 @@ export default function LaunchPage() {
             <h2 id="hooks-step">
               <span className="step-index">2</span> Quantum Hooks
             </h2>
-            <Segmented
-              label="Launch type"
-              value={wantsQuantum ? 'quantum' : 'standard'}
-              onChange={(mode) => set({ mode })}
-              options={[
-                ['quantum', 'Quantum launch'],
-                ['standard', 'Standard Meteora'],
-              ]}
-            />
+            {quantum.available ? (
+              <Segmented
+                label="Launch type"
+                value={wantsQuantum ? 'quantum' : 'standard'}
+                onChange={(mode) => set({ mode })}
+                options={[
+                  ['quantum', 'Quantum launch'],
+                  ['standard', 'Standard Meteora'],
+                ]}
+              />
+            ) : (
+              <p className="chip" style={{ display: 'inline-flex', margin: 0 }}>
+                Quantum Hooks: coming soon
+              </p>
+            )}
             {quantumBlocked && (
               <p className="notice notice-warn" style={{ marginTop: 14 }}>
                 {quantumPaused
