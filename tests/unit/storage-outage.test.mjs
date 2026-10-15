@@ -67,8 +67,8 @@ test('a used-up Upstash plan: 503 for callers, a reason code in health and logs,
   assert.equal(logs.length, 1, 'the same cause is logged once a minute')
 
   clock += 1_001
-  answer = () => new Response(JSON.stringify({ result: 'PONG' }))
-  await store.ping()
+  answer = () => new Response(JSON.stringify({ result: 0 }))
+  await store.check()
   assert.equal(calls, 3)
   assert.equal(store.health().healthy, true)
   assert.equal(logs.at(-1), '[storage] Redis is answering again.')
@@ -178,12 +178,15 @@ async function bootApp(options) {
 
 test('/api/status reports whether storage answers, with the reason when it does not', async () => {
   let answer = quotaResponse
-  let pings = 0
+  let checks = 0
   const store = createRedisStore({
     url: 'https://redis.invalid',
     token: 't',
+    // As Upstash does with a used-up plan: PING still answers, data commands (EXISTS too) do not.
     request: async (url, init) => {
-      if (JSON.parse(init.body)[0] === 'PING') pings++
+      const [name] = JSON.parse(init.body)
+      if (name === 'PING') return new Response(JSON.stringify({ result: 'PONG' }))
+      if (name === 'EXISTS') checks++
       return answer()
     },
     log: () => {},
@@ -207,7 +210,7 @@ test('/api/status reports whether storage answers, with the reason when it does 
       reason: 'quota-requests',
       error: 'Persistent storage is unavailable. Try again shortly.',
     })
-    assert.equal(pings, 1)
+    assert.equal(checks, 1)
 
     // The RPC proxy still answers; reads that need stored data say so.
     const keys = Array.from({ length: 100 }, () => 'So11111111111111111111111111111111111111112')
@@ -227,16 +230,16 @@ test('/api/status reports whether storage answers, with the reason when it does 
     assert.equal(market.status, 503)
     assert.equal((await market.json()).code, 'STORAGE_UNAVAILABLE')
 
-    // A failure seen moments ago is reported without another PING.
+    // A failure seen moments ago is reported without another check.
     await (await fetch(base + '/api/status')).json()
-    assert.equal(pings, 1)
+    assert.equal(checks, 1)
   } finally {
     await close()
     upstream.closeAllConnections?.()
     await new Promise((r) => upstream.close(r))
   }
 
-  answer = () => new Response(JSON.stringify({ result: 'PONG' }))
+  answer = () => new Response(JSON.stringify({ result: 0 }))
   const healthy = createRedisStore({
     url: 'https://redis.invalid',
     token: 't',

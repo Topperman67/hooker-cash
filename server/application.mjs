@@ -418,18 +418,18 @@ export async function createApplication(options = {}) {
   }
   // /api/status reports whether storage answers, not only whether it is configured. A Redis store
   // tracks how its last command went; when none ran on this instance for STORAGE_CHECK_MS, the
-  // status read sends one PING (shared by concurrent status reads).
+  // status read sends one check command (shared by concurrent status reads).
   const STORAGE_CHECK_MS = 30_000
-  let storagePing = null
+  let storageCheck = null
   async function storageStatus() {
     if (!storage.ready || typeof store.health !== 'function') return storage
     let health = store.health()
-    if (!(Date.now() - health.at < STORAGE_CHECK_MS) && typeof store.ping === 'function') {
-      storagePing ||= store
-        .ping()
+    if (!(Date.now() - health.at < STORAGE_CHECK_MS) && typeof store.check === 'function') {
+      storageCheck ||= store
+        .check()
         .catch(() => {})
-        .finally(() => (storagePing = null))
-      await storagePing
+        .finally(() => (storageCheck = null))
+      await storageCheck
       health = store.health()
     }
     if (health.healthy !== false) return { ...storage, healthy: true }

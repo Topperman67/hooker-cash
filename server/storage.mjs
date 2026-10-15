@@ -126,8 +126,10 @@ export function createRedisStore({
   return {
     mode: 'redis',
     health: () => ({ ...health }),
-    async ping() {
-      await command('PING')
+    // A health check that counts as a command: Upstash still answers PING (and ECHO) once a plan's
+    // commands are used up, but refuses EXISTS like any data command.
+    async check() {
+      await command('EXISTS', key('health'))
     },
     // One command: INCRBY, and the expiry when the key is new.
     async incrementExpiring(name, ttl, amount = 1) {
