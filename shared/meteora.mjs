@@ -6,7 +6,12 @@
 import { Buffer } from 'buffer'
 import BN from 'bn.js'
 import { AnchorProvider, Program } from '@coral-xyz/anchor'
-import { ComputeBudgetProgram, PublicKey, SystemProgram, SYSVAR_INSTRUCTIONS_PUBKEY } from '@solana/web3.js'
+import {
+  ComputeBudgetProgram,
+  PublicKey,
+  SystemProgram,
+  SYSVAR_INSTRUCTIONS_PUBKEY,
+} from '@solana/web3.js'
 import {
   NATIVE_MINT,
   TOKEN_PROGRAM_ID,
@@ -20,7 +25,10 @@ import {
   DynamicBondingCurveClient,
   swapQuoteExactIn as dbcSwapQuoteExactIn,
 } from '@meteora-ag/dynamic-bonding-curve-sdk'
-import { getUnClaimLpFee, swapQuoteExactInput as dammSwapQuoteExactIn } from '@meteora-ag/cp-amm-sdk'
+import {
+  getUnClaimLpFee,
+  swapQuoteExactInput as dammSwapQuoteExactIn,
+} from '@meteora-ag/cp-amm-sdk'
 import dbcIdl from './idl/meteora_dbc.json' with { type: 'json' }
 import dammIdl from './idl/meteora_damm_v2.json' with { type: 'json' }
 
@@ -48,17 +56,27 @@ const ordered = (a, b) => (Buffer.compare(a.toBuffer(), b.toBuffer()) > 0 ? [a, 
 
 export const dbcPoolPda = (config, baseMint) => {
   const [first, second] = ordered(pk(baseMint), NATIVE_MINT)
-  return find([Buffer.from('pool'), pk(config).toBuffer(), first.toBuffer(), second.toBuffer()], DBC_PROGRAM_ID)
+  return find(
+    [Buffer.from('pool'), pk(config).toBuffer(), first.toBuffer(), second.toBuffer()],
+    DBC_PROGRAM_ID,
+  )
 }
 export const dbcVaultPda = (pool, mint) =>
   find([Buffer.from('token_vault'), pk(mint).toBuffer(), pk(pool).toBuffer()], DBC_PROGRAM_ID)
 export const metadataPda = (mint) =>
-  find([Buffer.from('metadata'), METAPLEX_PROGRAM_ID.toBuffer(), pk(mint).toBuffer()], METAPLEX_PROGRAM_ID)
+  find(
+    [Buffer.from('metadata'), METAPLEX_PROGRAM_ID.toBuffer(), pk(mint).toBuffer()],
+    METAPLEX_PROGRAM_ID,
+  )
 export const dammPoolPda = (dammConfig, mint) => {
   const [first, second] = ordered(pk(mint), NATIVE_MINT)
-  return find([Buffer.from('pool'), pk(dammConfig).toBuffer(), first.toBuffer(), second.toBuffer()], DAMM_V2_PROGRAM_ID)
+  return find(
+    [Buffer.from('pool'), pk(dammConfig).toBuffer(), first.toBuffer(), second.toBuffer()],
+    DAMM_V2_PROGRAM_ID,
+  )
 }
-export const positionPda = (nftMint) => find([Buffer.from('position'), pk(nftMint).toBuffer()], DAMM_V2_PROGRAM_ID)
+export const positionPda = (nftMint) =>
+  find([Buffer.from('position'), pk(nftMint).toBuffer()], DAMM_V2_PROGRAM_ID)
 export const positionNftAccountPda = (nftMint) =>
   find([Buffer.from('position_nft_account'), pk(nftMint).toBuffer()], DAMM_V2_PROGRAM_ID)
 
@@ -71,7 +89,8 @@ const READONLY_WALLET = Object.freeze({
   signTransaction: async (tx) => tx,
   signAllTransactions: async (txs) => txs,
 })
-const provider = (connection) => new AnchorProvider(connection ?? null, READONLY_WALLET, { commitment: 'confirmed' })
+const provider = (connection) =>
+  new AnchorProvider(connection ?? null, READONLY_WALLET, { commitment: 'confirmed' })
 export const dbcProgram = (connection) => new Program(dbcIdl, provider(connection))
 export const dammProgram = (connection) => new Program(dammIdl, provider(connection))
 // The Program's coder: it camel-cases the IDL, so decoded fields match the SDKs' shapes.
@@ -87,7 +106,8 @@ const DISC = {
   Pool: disc(dammIdl, 'Pool'),
   Position: disc(dammIdl, 'Position'),
 }
-const is = (data, name) => !!data && data.length >= 8 && Buffer.from(data).subarray(0, 8).equals(DISC[name])
+const is = (data, name) =>
+  !!data && data.length >= 8 && Buffer.from(data).subarray(0, 8).equals(DISC[name])
 
 /** Raw DBC VirtualPool (the SDK's shape, for quotes) plus a flat bigint summary; null if not one. */
 export function decodeDbcPool(data) {
@@ -218,7 +238,15 @@ export function freshDbcPool(config) {
  * new pool (`firstSwap`: DBC charges the minimum fee when the swap shares the create's
  * transaction). Returns bigint { out, minOut }.
  */
-export function dbcQuote({ pool, config, side, amountIn, slippageBps = 0, currentPoint, firstSwap = false }) {
+export function dbcQuote({
+  pool,
+  config,
+  side,
+  amountIn,
+  slippageBps = 0,
+  currentPoint,
+  firstSwap = false,
+}) {
   const state = pool ? pool.raw : freshDbcPool(config)
   const q = dbcSwapQuoteExactIn(
     state,
@@ -230,7 +258,11 @@ export function dbcQuote({ pool, config, side, amountIn, slippageBps = 0, curren
     bn(currentPoint ?? 0),
     firstSwap,
   )
-  return { out: big(q.outputAmount), minOut: big(q.minimumAmountOut), fee: big(q.tradingFee) + big(q.protocolFee) }
+  return {
+    out: big(q.outputAmount),
+    minOut: big(q.minimumAmountOut),
+    fee: big(q.tradingFee) + big(q.protocolFee),
+  }
 }
 
 /**
@@ -242,7 +274,10 @@ export async function dbcMigrationInstructions({ connection, payer, dbcPool }) {
   const pool = decodeDbcPool((await connection.getAccountInfo(pk(dbcPool)))?.data)
   if (!pool) throw new Error('Not a DBC pool.')
   const config = decodeDbcConfig((await connection.getAccountInfo(pk(pool.config)))?.data)
-  const built = await new DynamicBondingCurveClient(connection, 'confirmed').migration.migrateToDammV2({
+  const built = await new DynamicBondingCurveClient(
+    connection,
+    'confirmed',
+  ).migration.migrateToDammV2({
     payer: pk(payer),
     pool: pk(dbcPool),
     dammConfig: DAMM_MIGRATION_CONFIGS[config.migrationFeeOption],
@@ -262,7 +297,7 @@ export function dammQuote({ damm, side, amountIn, slippageBps = 0, currentPoint,
     damm.raw,
     bn(currentPoint ?? 0),
     bn(amountIn),
-    slippageBps / 100,
+    slippageBps,
     side === 'sell',
     false,
     decimals,
@@ -277,7 +312,8 @@ export function dammQuote({ damm, side, amountIn, slippageBps = 0, currentPoint,
 
 // ---- instructions -----------------------------------------------------------------------------
 
-const ata = (mint, owner) => getAssociatedTokenAddressSync(pk(mint), pk(owner), true, TOKEN_PROGRAM_ID)
+const ata = (mint, owner) =>
+  getAssociatedTokenAddressSync(pk(mint), pk(owner), true, TOKEN_PROGRAM_ID)
 
 /** Wraps `lamports` into `owner`'s WSOL ATA (created if needed). */
 export function wrapSolInstructions(owner, lamports) {
@@ -289,10 +325,21 @@ export function wrapSolInstructions(owner, lamports) {
     createSyncNativeInstruction(wsol),
   ]
 }
-export const unwrapSolInstruction = (owner) => createCloseAccountInstruction(ata(NATIVE_MINT, owner), pk(owner), pk(owner))
+// Closes `owner`'s WSOL ATA, returning all of it as SOL: WSOL a wallet already held is unwrapped
+// by a trade too (nothing is lost; it comes back as native SOL).
+export const unwrapSolInstruction = (owner) =>
+  createCloseAccountInstruction(ata(NATIVE_MINT, owner), pk(owner), pk(owner))
 
 /** DBC `initialize_virtual_pool_with_spl_token` (Metaplex metadata; mint authority revoked). */
-export async function dbcCreatePoolInstruction({ config, mint, creator, payer, name, symbol, uri }) {
+export async function dbcCreatePoolInstruction({
+  config,
+  mint,
+  creator,
+  payer,
+  name,
+  symbol,
+  uri,
+}) {
   const pool = dbcPoolPda(config, mint)
   return dbcProgram()
     .methods.initializeVirtualPoolWithSplToken({ name, symbol, uri })
@@ -338,7 +385,16 @@ export async function dbcTransferCreatorInstruction({ config, mint, creator, new
  * `firstSwap` passes the Instructions sysvar so a dev buy in the create's transaction pays DBC's
  * minimum fee. Wraps / unwraps SOL around the swap.
  */
-export async function dbcSwapInstructions({ config, mint, user, side, amountIn, minOut = 0n, mode = SWAP_MODE.EXACT_IN, firstSwap = false }) {
+export async function dbcSwapInstructions({
+  config,
+  mint,
+  user,
+  side,
+  amountIn,
+  minOut = 0n,
+  mode = SWAP_MODE.EXACT_IN,
+  firstSwap = false,
+}) {
   user = pk(user)
   mint = pk(mint)
   const pool = dbcPoolPda(config, mint)
@@ -365,11 +421,15 @@ export async function dbcSwapInstructions({ config, mint, user, side, amountIn, 
       eventAuthority: DBC_EVENT_AUTHORITY,
       program: DBC_PROGRAM_ID,
     })
-    .remainingAccounts(firstSwap ? [{ pubkey: SYSVAR_INSTRUCTIONS_PUBKEY, isSigner: false, isWritable: false }] : [])
+    .remainingAccounts(
+      firstSwap ? [{ pubkey: SYSVAR_INSTRUCTIONS_PUBKEY, isSigner: false, isWritable: false }] : [],
+    )
     .instruction()
   const wrapIn = mode === SWAP_MODE.EXACT_OUT ? amountIn : amountIn
   return [
-    ...(buy ? wrapSolInstructions(user, wrapIn) : [createAssociatedTokenAccountIdempotentInstruction(user, wsol, user, NATIVE_MINT)]),
+    ...(buy
+      ? wrapSolInstructions(user, wrapIn)
+      : [createAssociatedTokenAccountIdempotentInstruction(user, wsol, user, NATIVE_MINT)]),
     createAssociatedTokenAccountIdempotentInstruction(user, coin, user, mint),
     swap,
     unwrapSolInstruction(user),
@@ -377,7 +437,15 @@ export async function dbcSwapInstructions({ config, mint, user, side, amountIn, 
 }
 
 /** A DAMM v2 trade by `user` on the migrated pool (exact in, min out). */
-export async function dammSwapInstructions({ damm, dammPool, mint, user, side, amountIn, minOut = 0n }) {
+export async function dammSwapInstructions({
+  damm,
+  dammPool,
+  mint,
+  user,
+  side,
+  amountIn,
+  minOut = 0n,
+}) {
   user = pk(user)
   mint = pk(mint)
   const buy = side === 'buy'
@@ -403,7 +471,9 @@ export async function dammSwapInstructions({ damm, dammPool, mint, user, side, a
     })
     .instruction()
   return [
-    ...(buy ? wrapSolInstructions(user, amountIn) : [createAssociatedTokenAccountIdempotentInstruction(user, wsol, user, NATIVE_MINT)]),
+    ...(buy
+      ? wrapSolInstructions(user, amountIn)
+      : [createAssociatedTokenAccountIdempotentInstruction(user, wsol, user, NATIVE_MINT)]),
     createAssociatedTokenAccountIdempotentInstruction(user, coin, user, mint),
     swap,
     unwrapSolInstruction(user),

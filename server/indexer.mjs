@@ -763,6 +763,7 @@ export function createIndexer({
       mint: base.mint,
       dbcPool: base.dbcPool,
       pool: null,
+      decimals: base.decimals ?? undefined,
     }).filter((t) => !MARKERS.has(t.side))
     let created = false
     let record = await writeCoin(base.mint, async (current) => {
@@ -771,6 +772,7 @@ export function createIndexer({
       const next = {
         ...current,
         ...base,
+        decimals: base.decimals ?? current?.decimals ?? null,
         identityPending,
         quantum: q.quantum,
         launcher: q.launcher || base.launcher,
@@ -940,7 +942,13 @@ export function createIndexer({
     let complete = !!record.complete
     let migrated = !!record.migrated
     const dbcPool = record.dbcPool
-    const decimals = record.decimals ?? undefined
+    // Trades are priced in the coin's decimals (its DBC config's, 6 or 9): a record that does not
+    // know them yet reads them before any trade is priced (Quant Pad's 6 when that read fails).
+    let decimals = record.decimals ?? undefined
+    if (decimals === undefined && dbcPool)
+      decimals = await readMarket(connection, mint, { dbcPool, supply: false, launchConfigs })
+        .then((m) => m.curve?.decimals ?? undefined)
+        .catch(() => undefined)
 
     // Reads the oldest unread signatures of one address, at most PER_PASS transactions, in
     // execution order. `seq` numbers transactions as read, so trades in one slot keep their order.
@@ -978,6 +986,11 @@ export function createIndexer({
             read++
           }
           if (fetched.error) error ||= fetched.error
+        }
+        // The whole window read: step past the failed signatures above it (see pendingSignatures).
+        if (read === plan.window.length && plan.last && state[field] !== plan.last) {
+          state[field] = plan.last
+          moved = true
         }
         if (read) moved = true
         if (!plan.reached || plan.anchor || read < plan.window.length) behind = true
@@ -1181,6 +1194,8 @@ export function summarize(r) {
     complete: !!r.complete,
     // Meteora moved the full curve into its DAMM v2 pool (until then a full curve cannot trade).
     migrated: !!r.migrated,
+    // The coin's DBC pool (public on-chain data): the keeper migrates full curves from the list.
+    dbcPool: r.dbcPool ?? null,
     progress: r.progress ?? 0,
     price: r.price ?? null,
     marketCap: r.marketCap ?? null,

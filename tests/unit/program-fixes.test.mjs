@@ -34,6 +34,7 @@ import {
   getAssociatedTokenAddressSync,
 } from '@solana/spl-token'
 import * as q from '../../shared/quantum.mjs'
+import { CONFIG, dbcPoolAccount, dbcPoolFor } from './meteora-chain.mjs'
 import { isMainnetUrl, parseArgs, solToLamports } from '../../scripts/init-config.mjs'
 
 const root = fileURLToPath(new URL('../../', import.meta.url))
@@ -84,8 +85,8 @@ test('validateHooks refuses split wallets register would reject (reserved keys, 
     'ComputeBudget111111111111111111111111111111',
     PublicKey.default.toBase58(),
     q.QUANTUM_PROGRAM_ID.toBase58(),
-    q.PUMP_PROGRAM_ID.toBase58(),
-    q.PUMP_AMM_PROGRAM_ID.toBase58(),
+    q.DBC_PROGRAM_ID.toBase58(),
+    q.DAMM_V2_PROGRAM_ID.toBase58(),
   ])
     assert.throws(
       () => q.validateHooks({ ...HOOKS, splits: [{ wallet, bps: 100 }] }),
@@ -114,32 +115,43 @@ test('validateHooks refuses split wallets register would reject (reserved keys, 
   )
 })
 
-test('regenerated IDL: same program id, pulse rent_payer, unpinned coin token program, LP on Token-2022', () => {
+test('regenerated IDL: same program id; pulse pays from the well; burn, fusion and harvest pin SPL Token and Meteora', () => {
   const idl = q.QUANTUM_IDL
   assert.equal(idl.address, 'FgAfzGavpUSkhRo1Z1CWuGRrcz1AgZVFrkPeji8DuvWK')
-  const lib = readFileSync(
-    `${root}programs/quantum-hooks/programs/quantum_hooks/src/lib.rs`,
-    'utf8',
-  )
-  assert.match(lib, new RegExp(`declare_id!\\("${idl.address}"\\)`))
+  const src = (file) =>
+    readFileSync(`${root}programs/quantum-hooks/programs/quantum_hooks/src/${file}`, 'utf8')
+  assert.match(src('lib.rs'), new RegExp(`declare_id!\\("${idl.address}"\\)`))
   const accounts = (name) => idl.instructions.find((i) => i.name === name).accounts
-  const pulse = accounts('pulse')
-  assert.deepEqual(pulse[0], {
-    name: 'rent_payer',
-    docs: pulse[0].docs,
-    writable: true,
-    signer: true,
-  })
-  const burnToken = accounts('quantum_burn').find((a) => a.name === 'token_program')
-  assert.equal(burnToken.address, undefined, 'burn accepts SPL Token and Token-2022 mints')
-  const fusion = accounts('fusion')
-  assert.equal(fusion.find((a) => a.name === 'token_program').address, undefined)
-  assert.equal(
-    fusion.find((a) => a.name === 'lp_token_program').address,
-    TOKEN_2022_PROGRAM_ID.toBase58(),
-  )
-  const pulsed = idl.types.find((t) => t.name === 'Pulsed').type.fields.map((f) => f.name)
-  assert.ok(pulsed.includes('rent_refunded'))
+  const names = (name) => accounts(name).map((a) => a.name)
+  // pulse moves lamports the well already holds (harvest claims the fees first): no payer signs.
+  assert.deepEqual(names('pulse'), [
+    'config',
+    'quantum',
+    'well',
+    'treasury',
+    'launcher',
+    'system_program',
+  ])
+  assert.ok(accounts('pulse').every((a) => !a.signer))
+  assert.match(src('instructions/pulse.rs'), /remaining_accounts: the Superposition wallets/)
+  // Quant Pad coins are SPL Token mints (the DBC launch config's token type).
+  const address = (ix, account) => accounts(ix).find((a) => a.name === account)?.address
+  for (const ix of ['quantum_burn', 'fusion', 'harvest'])
+    assert.equal(address(ix, 'token_program'), TOKEN_PROGRAM_ID.toBase58(), ix)
+  // A burn trades on whichever venue the coin is on (DBC or DAMM v2); Fusion only on DAMM v2.
+  assert.equal(address('quantum_burn', 'venue_program'), undefined)
+  assert.equal(address('harvest', 'dbc_program'), q.DBC_PROGRAM_ID.toBase58())
+  assert.ok(names('fusion').includes('damm_position'))
+  assert.ok(!names('fusion').includes('lp_token_program'))
+  // register binds the coin to a DBC config the program allows.
+  assert.ok(names('register').includes('dbc_config'))
+  const fields = (type) => idl.types.find((t) => t.name === type).type.fields.map((f) => f.name)
+  assert.ok(fields('Pulsed').includes('owed_paid'))
+  assert.ok(fields('Fused').includes('liquidity_added'))
+  assert.match(src('events.rs'), /pub liquidity_added: u128/)
+  for (const field of ['dbc_config', 'dbc_pool', 'damm_pool', 'damm_position', 'bound_at'])
+    assert.ok(fields('Quantum').includes(field), field)
+  assert.ok(fields('Config').includes('launch_configs'))
 })
 
 // ---------------------------------------------------------------------------------------------
@@ -189,6 +201,16 @@ async function quantumAccount(mint, launcher, splits, overrides = {}) {
     split_owed: Array(4).fill(zeroBn),
     launcher_owed: zeroBn,
     protocol_owed: zeroBn,
+    dbc_config: new PublicKey(CONFIG),
+    dbc_pool: new PublicKey(dbcPoolFor(mint)),
+    damm_pool: PublicKey.default,
+    damm_position: PublicKey.default,
+    damm_nft_account: PublicKey.default,
+    bound_at: zeroBn,
+    birth_bound: false,
+    migrated_at: zeroBn,
+    total_harvested: zeroBn,
+    total_fused_liquidity: zeroBn,
     reserved: Array(16).fill(0),
     ...overrides,
   })
@@ -206,6 +228,8 @@ async function configAccount(treasury) {
     bump: 255,
     claim_delay: new BN(21_600),
     version: zeroBn,
+    launch_configs: [new PublicKey(CONFIG), ...Array(3).fill(PublicKey.default)],
+    launch_config_count: 1,
     reserved: Array(48).fill(0),
   })
 }
@@ -217,64 +241,83 @@ const fakeConnection = (accounts) => ({
   getAccountInfo: async (k) => withOwner(accounts.get(k.toBase58())) ?? null,
 })
 
-test('buildPulseInstructions passes the payer as the writable rent_payer signer', async () => {
-  const mint = Keypair.generate().publicKey
-  const payer = Keypair.generate().publicKey
-  const launcher = Keypair.generate().publicKey
+// A Quantum coin whose DBC pool is `creator`'s (the well's once the launch handed it over).
+async function pulseAccounts(mint, { creator, splits = [], bound = true } = {}) {
   const treasury = Keypair.generate().publicKey
-  const split = Keypair.generate().publicKey
-  const accounts = new Map([
-    [
-      q.quantumPda(mint).toBase58(),
-      { data: await quantumAccount(mint, launcher, [{ wallet: split, bps: 100 }]) },
-    ],
-    [q.configPda().toBase58(), { data: await configAccount(treasury) }],
-  ])
-  const ixs = await q.buildPulseInstructions({ connection: fakeConnection(accounts), payer, mint })
-  assert.equal(ixs.length, 1)
-  const [pulse] = ixs
-  assert.ok(pulse.programId.equals(q.QUANTUM_PROGRAM_ID))
-  assert.ok(pulse.keys[0].pubkey.equals(payer))
-  assert.equal(pulse.keys[0].isSigner, true)
-  assert.equal(pulse.keys[0].isWritable, true)
-  const last = pulse.keys[pulse.keys.length - 1]
-  assert.ok(last.pubkey.equals(split) && last.isWritable)
-
-  // A WSOL ATA left over in the well is unwrapped (and its rent refunded to the payer).
-  accounts.set(q.wellWsolAta(mint).toBase58(), {
-    owner: TOKEN_PROGRAM_ID,
-    lamports: Number(q.RENT_EXEMPT_TOKEN_ACCOUNT) + 5,
-    data: Buffer.alloc(165),
-  })
-  const [withAta] = await q.buildPulseInstructions({
-    connection: fakeConnection(accounts),
-    payer,
-    mint,
-  })
-  assert.ok(withAta.keys.some((k) => k.pubkey.equals(q.wellWsolAta(mint)) && k.isWritable))
-})
-
-test('buildPulseInstructions marks a reserved split read-only (legacy coins; the program defers it)', async () => {
-  const mint = Keypair.generate().publicKey
+  const launcher = Keypair.generate().publicKey
   const accounts = new Map([
     [
       q.quantumPda(mint).toBase58(),
       {
-        data: await quantumAccount(mint, Keypair.generate().publicKey, [
-          { wallet: SYSVAR_RENT_PUBKEY, bps: 100 },
-        ]),
+        data: await quantumAccount(mint, launcher, splits, {
+          bound_at: new BN(bound ? 1_800_000_000 : 0),
+        }),
       },
     ],
-    [q.configPda().toBase58(), { data: await configAccount(Keypair.generate().publicKey) }],
+    [q.configPda().toBase58(), { data: await configAccount(treasury) }],
+    [
+      dbcPoolFor(mint),
+      await dbcPoolAccount(mint.toBase58(), { creator: creator ?? q.wellPda(mint) }),
+    ],
   ])
-  const [pulse] = await q.buildPulseInstructions({
-    connection: fakeConnection(accounts),
-    payer: Keypair.generate().publicKey,
+  return { accounts, treasury, launcher }
+}
+const ixName = (ix) => {
+  const disc = ix.data.subarray(0, 8)
+  return q.QUANTUM_IDL.instructions.find((i) => Buffer.from(i.discriminator).equals(disc))?.name
+}
+
+test("buildPulseInstructions harvests the well's creator fees, then pulses to every recipient", async () => {
+  const mint = Keypair.generate().publicKey
+  const payer = Keypair.generate().publicKey
+  const split = Keypair.generate().publicKey
+  const { accounts, treasury, launcher } = await pulseAccounts(mint, {
+    splits: [{ wallet: split, bps: 100 }],
+  })
+  const ixs = await q.buildPulseInstructions({ connection: fakeConnection(accounts), payer, mint })
+  assert.deepEqual(ixs.map(ixName), ['harvest', 'pulse'])
+  const [harvest, pulse] = ixs
+  assert.ok(ixs.every((ix) => ix.programId.equals(q.QUANTUM_PROGRAM_ID)))
+  // harvest: the payer signs and gets the WSOL ATA's rent back; the well claims from its DBC pool.
+  assert.ok(harvest.keys[0].pubkey.equals(payer) && harvest.keys[0].isSigner)
+  assert.ok(harvest.keys.some((k) => k.pubkey.toBase58() === dbcPoolFor(mint) && k.isWritable))
+  assert.ok(harvest.keys.some((k) => k.pubkey.equals(q.wellWsolAta(mint)) && k.isWritable))
+  // No DAMM v2 pool yet: the LP-fee leg is left out.
+  assert.equal(harvest.data.readUInt8(8), q.HARVEST.ALL & ~q.HARVEST.LP_FEE)
+  // pulse: no signer; treasury, launcher and the splits (in stored order) are paid.
+  assert.ok(pulse.keys.every((k) => !k.isSigner))
+  assert.ok(pulse.keys.some((k) => k.pubkey.equals(treasury) && k.isWritable))
+  assert.ok(pulse.keys.some((k) => k.pubkey.equals(launcher) && k.isWritable))
+  const last = pulse.keys[pulse.keys.length - 1]
+  assert.ok(last.pubkey.equals(split) && last.isWritable)
+})
+
+test('buildPulseInstructions syncs an unrecorded binding first, and only pulses a pool the well does not own', async () => {
+  const mint = Keypair.generate().publicKey
+  const payer = Keypair.generate().publicKey
+  // The launch handed the pool to the well, but no sync has recorded it yet.
+  const unbound = await pulseAccounts(mint, { bound: false })
+  const ixs = await q.buildPulseInstructions({
+    connection: fakeConnection(unbound.accounts),
+    payer,
     mint,
   })
-  const last = pulse.keys[pulse.keys.length - 1]
-  assert.ok(last.pubkey.equals(SYSVAR_RENT_PUBKEY))
-  assert.equal(last.isWritable, false)
+  assert.deepEqual(ixs.map(ixName), ['sync', 'harvest', 'pulse'])
+  assert.ok(ixs[0].keys.some((k) => k.pubkey.toBase58() === dbcPoolFor(mint)))
+  // A pool still owned by its launcher pays no creator fee to the well: nothing to harvest.
+  const other = await pulseAccounts(mint, { creator: Keypair.generate().publicKey })
+  assert.deepEqual(
+    (
+      await q.buildPulseInstructions({ connection: fakeConnection(other.accounts), payer, mint })
+    ).map(ixName),
+    ['pulse'],
+  )
+  // Without its DBC pool the coin cannot be pulsed.
+  other.accounts.delete(dbcPoolFor(mint))
+  await assert.rejects(
+    q.buildPulseInstructions({ connection: fakeConnection(other.accounts), payer, mint }),
+    /no Meteora DBC pool/,
+  )
 })
 
 test('pending creator fees count the WSOL ATA without its rent (pulse refunds the rent)', async () => {
@@ -293,7 +336,7 @@ test('pending creator fees count the WSOL ATA without its rent (pulse refunds th
   assert.equal(await q.pendingCreatorFees(fakeConnection(accounts), mint), 93_874n)
 })
 
-test('mintTokenProgram follows the mint owner (legacy pump.fun create makes SPL Token mints)', () => {
+test("mintTokenProgram follows the mint owner; the well's coin ATA is SPL Token's (DBC launches)", () => {
   assert.ok(q.mintTokenProgram({ owner: TOKEN_2022_PROGRAM_ID }).equals(TOKEN_2022_PROGRAM_ID))
   assert.ok(q.mintTokenProgram({ owner: TOKEN_PROGRAM_ID }).equals(TOKEN_PROGRAM_ID))
   assert.throws(() => q.mintTokenProgram({ owner: SystemProgram.programId }), /not an SPL Token/)
@@ -301,8 +344,11 @@ test('mintTokenProgram follows the mint owner (legacy pump.fun create makes SPL 
   const mint = Keypair.generate().publicKey
   const ata = (program) =>
     getAssociatedTokenAddressSync(mint, q.wellPda(mint), true, program).toBase58()
-  assert.equal(q.wellTokenAta(mint).toBase58(), ata(TOKEN_2022_PROGRAM_ID))
-  assert.equal(q.wellTokenAta(mint, undefined, TOKEN_PROGRAM_ID).toBase58(), ata(TOKEN_PROGRAM_ID))
+  assert.equal(q.wellTokenAta(mint).toBase58(), ata(TOKEN_PROGRAM_ID))
+  assert.equal(
+    q.wellTokenAta(mint, undefined, TOKEN_2022_PROGRAM_ID).toBase58(),
+    ata(TOKEN_2022_PROGRAM_ID),
+  )
 })
 
 // ---------------------------------------------------------------------------------------------
@@ -448,14 +494,20 @@ test('keeper contract: fetchWellBalance().unallocated is the same free-well term
   assert.equal((await q.fetchWellBalance(fakeConnection(new Map()), mint)).unallocated, 0n)
 })
 
-test('keeper contract: decodeQuantumEvents(logs) returns Burned/Fused with bigint spent, tokensBurned, lpReceived', () => {
+test('keeper contract: decodeQuantumEvents(logs) returns Burned/Fused with bigint spent, tokensBurned, liquidityAdded', () => {
   const mint = Keypair.generate().publicKey
   const caller = Keypair.generate().publicKey
   const logs = eventLogs(q.QUANTUM_PROGRAM_ID, [
     ['Burned', { mint, caller, venue: 1, spent: new BN(970_000), tokens_burned: new BN(7_000) }],
     [
       'Fused',
-      { mint, caller, spent: new BN(1_234_567), lp_received: new BN(55), tokens_burned: new BN(3) },
+      {
+        mint,
+        caller,
+        spent: new BN(1_234_567),
+        liquidity_added: new BN(55),
+        tokens_burned: new BN(3),
+      },
     ],
   ])
   const events = q.decodeQuantumEvents(logs)
@@ -470,9 +522,9 @@ test('keeper contract: decodeQuantumEvents(logs) returns Burned/Fused with bigin
   assert.equal(burned.mint, mint.toBase58())
   const fused = events.find((e) => e.name === 'Fused').data
   assert.equal(fused.spent, 1_234_567n)
-  assert.equal(fused.lpReceived, 55n)
+  assert.equal(fused.liquidityAdded, 55n)
   assert.equal(fused.tokensBurned, 3n)
-  for (const v of [burned.spent, burned.tokensBurned, fused.spent, fused.lpReceived])
+  for (const v of [burned.spent, burned.tokensBurned, fused.spent, fused.liquidityAdded])
     assert.equal(typeof v, 'bigint')
   // The keeper passes tx?.meta?.logMessages, which may be missing.
   assert.deepEqual(q.decodeQuantumEvents(undefined), [])

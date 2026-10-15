@@ -30,9 +30,7 @@ export default function HoloCard({ name, symbol, image, hooks, quantum, footer, 
             ))}
           </ul>
         ) : (
-          <p className="holo-plain">
-            The creator claims fees directly on Meteora. No hooks run.
-          </p>
+          <p className="holo-plain">The creator claims fees directly on Meteora. No hooks run.</p>
         )}
         {footer && <footer className="holo-foot">{footer}</footer>}
       </div>

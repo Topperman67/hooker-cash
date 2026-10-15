@@ -691,16 +691,23 @@ test('redis store: media quota counts the stored encoding and passes pending exp
 
 // --- packaging (clean-clone-1, clean-clone-2, clean-clone-7, clean-clone-4, clean-clone-6, clean-clone-8)
 
-test('pump SDK shim binds createRequire to a variable so Vercel traces the SDK', async () => {
-  const source = readFileSync(join(root, 'shared/vendor/pump-sdk.node.mjs'), 'utf8')
-  assert.match(source, /const require = createRequire\(import\.meta\.url\)/)
-  assert.doesNotMatch(
-    source,
-    /createRequire\([^)]*\)\s*\(/,
-    'immediately invoked form is invisible to nft',
-  )
-  const sdk = await import('../../shared/vendor/pump-sdk.node.mjs')
-  assert.equal(typeof sdk.PumpSdk, 'function')
+test("no pump.fun SDK or shim is left: the shared clients import Meteora's SDKs directly", async () => {
+  const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'))
+  for (const name of Object.keys({ ...pkg.dependencies, ...pkg.devDependencies }))
+    assert.doesNotMatch(name, /pump-fun/, name)
+  assert.equal(pkg.imports?.['#pump-sdk'], undefined)
+  for (const file of ['shared/meteora.mjs', 'shared/quantum.mjs', 'server/solana.mjs']) {
+    const source = readFileSync(join(root, file), 'utf8')
+    assert.doesNotMatch(source, /pump-sdk|pump-swap-sdk|createRequire/, file)
+  }
+  const meteora = readFileSync(join(root, 'shared/meteora.mjs'), 'utf8')
+  for (const name of ['@meteora-ag/dynamic-bonding-curve-sdk', '@meteora-ag/cp-amm-sdk']) {
+    assert.match(meteora, new RegExp(`from '${name}'`))
+    assert.ok(pkg.dependencies[name], `${name} is declared`)
+  }
+  // Both load under Node as the server does.
+  const client = await import('../../shared/quantum.mjs')
+  assert.equal(typeof client.buildPulseInstructions, 'function')
 })
 
 test('package.json declares the Node version and every imported package', () => {

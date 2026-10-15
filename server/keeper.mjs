@@ -23,9 +23,11 @@ const MIN_PULSE = 20_000_000n // 0.02 SOL of creator fees waiting outside the we
 // Burns wait out the launch config's anti-sniper fee window: early swaps pay up to 25%.
 const BURN_AFTER = Number(LAUNCH_CONFIG.antiSniper?.totalDurationSecs || 0)
 const MIGRATIONS_PER_TICK = 2
+const MIGRATION_LOOKUPS = 6 // full curves whose venue is read each tick
 const DAMM_ENABLED = 0 // DAMM v2 pool_status: 0 enabled, 1 disabled by Meteora's operators
 const MIN_BURN = 10_000_000n
 const MIN_FUSION = 50_000_000n
+const PUBLIC_SPEND_DIVISOR = 10n // the program's cap divisor for callers other than config.keeper
 const MIN_EPOCH = 50_000_000n
 const MIN_CLAIM = 50_000n
 const EPOCH_EVERY = 24 * 3600
@@ -705,7 +707,6 @@ export function createKeeper({
     const key = new PublicKey(mint)
     let state = await quantum.fetchQuantum(connection, key)
     if (!state) return
-    const coin = await indexer.coin(mint)
     const late = () => Date.now() >= deadline
     let mayPost = false
     try {
@@ -734,6 +735,10 @@ export function createKeeper({
     if (!late() && venue?.kind === 'pool' && !state.dammPool) {
       try {
         const sync = await quantum.buildSyncInstruction({ connection, mint: key })
+        // Without the well's position the sync records no pool: nothing to pay a fee for each tick.
+        const dammPool = venue.dammPool && String(venue.dammPool)
+        if (dammPool && !sync.keys.some((k) => k.pubkey.toBase58() === dammPool))
+          throw Error('the well holds no position in the DAMM v2 pool yet')
         const signature = await send([sync], [], { deadline })
         await record(mint, 'sync', { signature })
         state = (await quantum.fetchQuantum(connection, key)) || state
@@ -741,11 +746,21 @@ export function createKeeper({
         log(`sync ${mint}: ${e.message}`)
       }
     }
+    // A pool burn spends on the DAMM v2 pool sync recorded; until then the client would quote the
+    // full curve, which the program refuses.
     const open =
-      venue?.kind === 'curve' || (venue?.kind === 'pool' && venue.damm?.poolStatus === DAMM_ENABLED)
+      venue?.kind === 'curve' ||
+      (venue?.kind === 'pool' && !!state.dammPool && venue.damm?.poolStatus === DAMM_ENABLED)
     const config = await quantum.fetchConfig(connection)
     const now = Math.floor(Date.now() / 1000)
     const interval = Number(config?.minActionInterval || 0)
+    // The program caps a burn or Fusion at max_burn_lamports for config.keeper and a tenth of it
+    // for anyone else (a keeper key that is not the config's acts as a public caller).
+    const maxSpend = (reserve) => {
+      const max = BigInt(config?.maxBurnLamports || reserve)
+      const own = !config?.keeper || config.keeper === keeper.publicKey.toBase58()
+      return own ? max : max / PUBLIC_SPEND_DIVISOR
+    }
     const burnReserve = BigInt(state.burnReserve)
     if (
       !late() &&
@@ -754,7 +769,7 @@ export function createKeeper({
       now >= Number(state.lastBurnAt) + interval &&
       (venue.kind === 'pool' || now >= Number(state.createdAt || 0) + BURN_AFTER)
     ) {
-      const cap = BigInt(config?.maxBurnLamports || burnReserve)
+      const cap = maxSpend(burnReserve)
       const spendLamports = burnReserve < cap ? burnReserve : cap
       try {
         const signature = await send(
@@ -782,7 +797,7 @@ export function createKeeper({
       fusionReserve >= MIN_FUSION &&
       now >= Number(state.lastFusionAt) + interval
     ) {
-      const cap = BigInt(config?.maxBurnLamports || fusionReserve)
+      const cap = maxSpend(fusionReserve)
       const spendLamports = fusionReserve < cap ? fusionReserve : cap
       try {
         const signature = await send(
@@ -832,25 +847,46 @@ export function createKeeper({
   // Quant Pad launches whose curve filled but that Meteora has not migrated yet: nothing can trade
   // them until migration_damm_v2 runs, so the keeper runs it (it is permissionless; losing a race
   // to another migrator only costs a failed transaction). Quantum coins then record the DAMM pool
-  // on their next tick.
+  // on their next tick. Listed summaries carry no pool address, so it comes from the stored record.
+  // A coin Meteora already migrated (the index catches up on its next sync) does not use up one of
+  // the tick's migrations.
   async function migrateGraduates(items, deadline) {
-    const waiting = items.filter((c) => !c.external && c.complete && !c.migrated && c.dbcPool)
-    for (const coin of waiting.slice(0, MIGRATIONS_PER_TICK)) {
-      if (Date.now() >= deadline) return
+    const waiting = items.filter((c) => !c.external && c.complete && !c.migrated)
+    let migrations = 0
+    for (const coin of waiting.slice(0, MIGRATION_LOOKUPS)) {
+      if (migrations >= MIGRATIONS_PER_TICK || Date.now() >= deadline) return
       try {
-        const venue = await quantum.fetchVenue(connection, new PublicKey(coin.mint))
-        if (venue.kind !== 'migrating') continue
+        const dbcPool = coin.dbcPool || (await indexer.coin(coin.mint))?.dbcPool
+        if (!dbcPool) continue
+        const venue = await venueOf(coin.mint, dbcPool)
+        // A pool already marked migrated whose DAMM v2 pool this RPC node does not show yet is
+        // done too: running the migration again would only fail.
+        if (venue.kind !== 'migrating' || venue.pool?.isMigrated) continue
+        migrations++
         const { instructions, signers } = await quantum.dbcMigrationInstructions({
           connection,
           payer: keeper.publicKey,
-          dbcPool: coin.dbcPool,
+          dbcPool,
         })
         const signature = await send(instructions, signers, { deadline, units: 1_400_000 })
         await record(coin.mint, 'migrate', { signature })
-        await indexer.syncCoin?.(coin.mint)?.catch(() => {})
+        await indexer.syncCoin?.(coin.mint, { deadline })?.catch(() => {})
       } catch (e) {
         log(`migrate ${coin.mint}: ${e.message}`)
       }
+    }
+  }
+
+  // Where a Quant Pad launch trades. quantum.fetchVenue finds the pool through the coin's Quantum
+  // account, which a Standard launch does not have (it throws there): then the DBC pool is read
+  // directly.
+  async function venueOf(mint, dbcPool) {
+    const key = new PublicKey(mint)
+    try {
+      return await quantum.fetchVenue(connection, key)
+    } catch {
+      const { fetchMeteoraVenue } = await import('../shared/meteora.mjs')
+      return fetchMeteoraVenue(connection, key, { dbcPool })
     }
   }
 

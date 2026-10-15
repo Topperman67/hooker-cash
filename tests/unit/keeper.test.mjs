@@ -13,7 +13,8 @@ const MINT = Keypair.generate().publicKey.toBase58()
 const keeperKey = Keypair.generate()
 const holders = [Keypair.generate().publicKey, Keypair.generate().publicKey]
 const pda = PublicKey.findProgramAddressSync([Buffer.from('well')], SystemProgram.programId)[0]
-const TOKEN_2022 = new PublicKey('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb')
+// Quant Pad's DBC coins are SPL Token mints.
+const SPL_TOKEN = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
 
 // On-chain Epoch accounts by PDA (base58), shared by the fake connection and client.
 const chainEpochs = new Map()
@@ -31,7 +32,7 @@ function fakeConnection(sent) {
         chainEpochs.has(k.toBase58()) ? { data: chainEpochs.get(k.toBase58()) } : null,
       ),
     getTransaction: async () => null,
-    getAccountInfo: async () => ({ owner: TOKEN_2022 }), // the coin mint
+    getAccountInfo: async () => ({ owner: SPL_TOKEN }), // the coin mint
     rpcEndpoint: 'http://fake.invalid',
     getRecentPrioritizationFees: async () => [{ prioritizationFee: 5000 }],
     getLatestBlockhash: async () => ({
@@ -46,12 +47,12 @@ function fakeConnection(sent) {
       return signature
     },
     getSignatureStatuses: async ([s]) => ({ value: [statuses.get(s)] }),
-    // Token-2022 holder accounts: owner (32 bytes) + amount (u64 LE) slices.
+    // Holder token accounts: owner (32 bytes) + amount (u64 LE) slices.
     getProgramAccounts: async () =>
       [
         [holders[0], 600n],
         [holders[1], 400n],
-        [pda, 10_000n], // program-owned (bonding curve / pool / well) — excluded
+        [pda, 10_000n], // program-owned (Meteora vault / pool authority / well) — excluded
       ].map(([owner, amount]) => {
         const data = Buffer.alloc(40)
         owner.toBuffer().copy(data, 0)
@@ -74,6 +75,8 @@ function fakeQuantum(state, calls) {
     fetchQuantum: async () => state,
     fetchConfig: async () => ({ minActionInterval: 60, maxBurnLamports: 50_000_000n }),
     pendingCreatorFees: async () => state.pending,
+    // Still on its bonding curve, which trades.
+    fetchVenue: async () => ({ kind: 'curve' }),
     fetchWellBalance: async () => ({ unallocated: 0n }),
     epochPda,
     decodeEpoch: (data) => data,

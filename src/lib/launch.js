@@ -134,6 +134,31 @@ export async function launchInstructions({
   return { ...built, ...launchGroups({ launch: built.instructions, fee, devBuy: !!devBuy }) }
 }
 
+/**
+ * Checks a new launch's inputs the way its builders will, before anything is published or signed:
+ * Quantum Hooks settings that `register` would refuse (say, a split wallet listed twice or a program
+ * address), and a dev buy too small to buy any tokens or larger than the whole curve.
+ */
+export async function assertLaunchInputs({ hooks, devBuyLamports, dbcConfig }) {
+  const friendly = (message) => Object.assign(Error(message), { friendly: true })
+  const client = await loadQuantum()
+  if (hooks)
+    try {
+      client.validateHooks(hooks)
+    } catch (e) {
+      throw friendly(e.message)
+    }
+  if (!(devBuyLamports > 0n)) return
+  const tokens = await devBuyQuote(devBuyLamports, dbcConfig).catch((e) => {
+    // the quote refuses a buy past the curve's migration threshold
+    if (/liquidity/i.test(e?.message))
+      throw friendly('This dev buy is more than the whole bonding curve can sell. Lower it.')
+    throw e
+  })
+  if (tokens <= 0n)
+    throw friendly('This dev buy is too small to buy any tokens. Raise it, or set it to 0.')
+}
+
 /** Explains why a launch's indivisible create + dev buy group did not fit in one transaction. */
 export function launchTooLargeError(error, { devBuy }) {
   if (error?.code !== 'too_large') return error
@@ -149,10 +174,11 @@ export function launchTooLargeError(error, { devBuy }) {
 
 /**
  * Reads the Quantum Hooks config right before a `register` is signed and stops when launches are
- * paused (the app's status can be up to a minute old). If the read itself fails the launch goes
- * on: the transaction is simulated before sending, so a paused program still fails before any fee.
+ * paused, or when the launch's Meteora config (`dbcConfig`) is not on its allow-list (the app's
+ * status can be up to a minute old). If the read itself fails the launch goes on: the transaction
+ * is simulated before sending, so a paused program still fails before any fee.
  */
-export async function assertQuantumOpen() {
+export async function assertQuantumOpen(dbcConfig = null) {
   const client = await loadQuantum()
   let config
   try {
@@ -160,7 +186,7 @@ export async function assertQuantumOpen() {
   } catch {
     return
   }
-  const error = quantumConfigError(config)
+  const error = quantumConfigError(config, dbcConfig)
   if (error) throw error
 }
 
@@ -170,14 +196,16 @@ export async function launchProgress({ mint, snapshot }) {
   const launcher = new PublicKey(snapshot.launcher)
   const client = snapshot.quantum ? await loadQuantum() : null
   const ata = getAssociatedTokenAddressSync(mintKey, launcher, true, TOKEN_PROGRAM_ID)
-  const pool = dbcPoolPda(snapshot.dbcConfig, mintKey)
-  const keys = [pool, ata, ...(client ? [client.quantumPda(mintKey)] : [])]
+  // A job saved without its launch config falls back to the mint account, which only the DBC
+  // create makes (Quantum Hooks `register` requires a mint that does not exist yet).
+  const created = snapshot.dbcConfig ? dbcPoolPda(snapshot.dbcConfig, mintKey) : mintKey
+  const keys = [created, ata, ...(client ? [client.quantumPda(mintKey)] : [])]
   const [curve, token, quantum] = await connection.getMultipleAccountsInfo(keys, 'confirmed')
   const tokens = token ? unpackAccount(ata, token, TOKEN_PROGRAM_ID).amount : 0n
   const state = quantum ? client.decodeQuantum(quantum.data) : null
   return {
     registered: !!state,
-    created: !!curve,
+    created: !!curve && (!!snapshot.dbcConfig || curve.owner.equals(TOKEN_PROGRAM_ID)),
     tokens,
     locked: !!state && state.lockedAmount > 0n,
   }
@@ -232,7 +260,7 @@ export async function remainingLaunchGroups(job) {
       lamports: snapshot.devBuyLamports,
       slippagePct: snapshot.slippagePct,
       platform: snapshot.platform,
-      dbcPool: dbcPoolPda(snapshot.dbcConfig, mint).toBase58(),
+      dbcPool: snapshot.dbcConfig ? dbcPoolPda(snapshot.dbcConfig, mint).toBase58() : undefined,
     })
     // The lock is built on the next pass, from what this buy actually delivered.
     return planGroups([{ stages: ['buy'], instructions }])

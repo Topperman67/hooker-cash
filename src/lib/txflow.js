@@ -1,7 +1,10 @@
 // Transaction plumbing without module-level RPC, shared by solana.js, WalletContext and the unit
 // tests: packing instruction groups, classifying RPC failures, polling for confirmation, loading
 // lookup tables and the send-then-confirm loop.
-import { MESSAGES, explainError } from './txerrors.js'
+import { MESSAGES, explainError, isTransientRpcError } from './txerrors.js'
+
+// Lives in txerrors.js (friendlyWalletError uses it too); re-exported for solana.js and tests.
+export { isTransientRpcError }
 
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
@@ -33,25 +36,6 @@ export function packGroups(groups, fits) {
   })
   if (current) out.push(current)
   return out
-}
-
-const TRANSIENT_STATUS = new Set([429, 502, 503, 504])
-/**
- * Whether an RPC call failed in a way worth retrying: HTTP 429/502/503/504 (web3.js reports these
- * as "<status> <text>: <body>"), the same codes in a JSON-RPC error, a node that is behind, or a
- * network failure.
- */
-export function isTransientRpcError(e) {
-  if (!e) return false
-  const status = Number(e.status ?? e.statusCode)
-  if (TRANSIENT_STATUS.has(status)) return true
-  if (typeof e.code === 'number' && (TRANSIENT_STATUS.has(e.code) || e.code === -32005)) return true
-  const message = String(e.message ?? e)
-  if (/^(?:[\w ]+:\s*)?(429|502|503|504)\b/.test(message)) return true
-  if (e.name === 'TypeError' && /fetch|network|load failed/i.test(message)) return true
-  return /failed to fetch|fetch failed|networkerror|network error|network request failed|load failed|econnreset|econnrefused|etimedout|socket hang up|too many requests|bad gateway|service unavailable|gateway time-?out/i.test(
-    message,
-  )
 }
 
 export const unknownStatusError = (signature, cause) =>

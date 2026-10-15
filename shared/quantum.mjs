@@ -65,7 +65,13 @@ export const RENT_EXEMPT_EMPTY = 890_880n
 // to its caller when it closes that ATA; it is never creator fees.
 export const RENT_EXEMPT_TOKEN_ACCOUNT = 2_039_280n
 // `harvest` legs (bitmask): DBC trading fee, DBC surplus, DBC migration fee, DAMM v2 LP fee.
-export const HARVEST = Object.freeze({ TRADING_FEE: 1, SURPLUS: 2, MIGRATION_FEE: 4, LP_FEE: 8, ALL: 15 })
+export const HARVEST = Object.freeze({
+  TRADING_FEE: 1,
+  SURPLUS: 2,
+  MIGRATION_FEE: 4,
+  LP_FEE: 8,
+  ALL: 15,
+})
 
 // Keys the runtime never lets a transaction write-lock (sysvars, builtin and loader programs). A
 // split at one of them could never be paid, so `register` rejects them. Same list as
@@ -431,7 +437,13 @@ export async function verifyQuantumCoin(connection, mint, programId) {
   mint = pk(mint)
   const quantumInfo = await connection.getAccountInfo(quantumPda(mint, programId))
   if (!isQuantumAccount(quantumInfo, 'Quantum', programId))
-    return { registered: false, poolExists: false, creatorIsWell: false, complete: false, birthBound: false }
+    return {
+      registered: false,
+      poolExists: false,
+      creatorIsWell: false,
+      complete: false,
+      birthBound: false,
+    }
   const quantum = decodeQuantum(quantumInfo.data)
   const poolInfo = await connection.getAccountInfo(pk(quantum.dbcPool))
   const pool = decodeDbcPool(poolInfo?.data)
@@ -823,7 +835,13 @@ async function findMigration(connection, mint, programId, dbcPool) {
  * finish time, and, once migrated, the DAMM v2 pool and the well's position (looked up on-chain
  * when `damm` is undefined; pass null to skip). The program verifies everything it records.
  */
-export async function buildSyncInstruction({ connection, mint, programId, dbcPool, damm = undefined }) {
+export async function buildSyncInstruction({
+  connection,
+  mint,
+  programId,
+  dbcPool,
+  damm = undefined,
+}) {
   mint = pk(mint)
   if (!dbcPool || damm === undefined) {
     const quantum = await loadQuantum(connection, mint, programId)
@@ -930,11 +948,14 @@ export async function buildPulseInstructions({ connection, payer, mint, programI
   const pre = []
   const bound = pool.creator === wellPda(mint, programId).toBase58()
   if (bound) {
-    const damm = !quantum.dammPool && pool.isMigrated
-      ? await findMigration(connection, mint, programId, quantum.dbcPool)
-      : null
+    const damm =
+      !quantum.dammPool && pool.isMigrated
+        ? await findMigration(connection, mint, programId, quantum.dbcPool)
+        : null
     if (quantum.boundAt === 0 || damm) {
-      pre.push(await buildSyncInstruction({ connection, mint, programId, dbcPool: quantum.dbcPool, damm }))
+      pre.push(
+        await buildSyncInstruction({ connection, mint, programId, dbcPool: quantum.dbcPool, damm }),
+      )
       if (damm)
         quantum = {
           ...quantum,
@@ -943,9 +964,15 @@ export async function buildPulseInstructions({ connection, payer, mint, programI
           dammNftAccount: b58(damm.nftAccount),
         }
     }
-    pre.push(await buildHarvestInstruction({ connection, caller: payer, mint, programId, quantum, pool }))
+    pre.push(
+      await buildHarvestInstruction({ connection, caller: payer, mint, programId, quantum, pool }),
+    )
   }
-  const splits = quantum.splits.map((s) => ({ pubkey: pk(s.wallet), isSigner: false, isWritable: true }))
+  const splits = quantum.splits.map((s) => ({
+    pubkey: pk(s.wallet),
+    isSigner: false,
+    isWritable: true,
+  }))
   const pulse = await quantumProgram(connection, programId)
     .methods.pulse()
     .accountsStrict({
@@ -993,7 +1020,10 @@ export async function buildBurnInstructions({
   if (quantum.dammPool) {
     const damm = decodeDammPool((await connection.getAccountInfo(pk(quantum.dammPool)))?.data)
     if (!damm) throw new Error('The recorded DAMM v2 pool is missing')
-    minOut = slip(dammQuote({ damm, side: 'buy', amountIn: spend, currentPoint: now }).out, slippagePct)
+    minOut = slip(
+      dammQuote({ damm, side: 'buy', amountIn: spend, currentPoint: now }).out,
+      slippagePct,
+    )
     venue = {
       venueProgram: DAMM_V2_PROGRAM_ID,
       venuePoolAuthority: DAMM_POOL_AUTHORITY,
@@ -1014,7 +1044,10 @@ export async function buildBurnInstructions({
     if (pool.migrationProgress !== PROGRESS.PRE)
       throw new Error('The curve is full: burns resume on DAMM v2 after migration and sync')
     const point = config.activationType === 0 ? slot : now
-    minOut = slip(dbcQuote({ pool, config, side: 'buy', amountIn: spend, currentPoint: point }).out, slippagePct)
+    minOut = slip(
+      dbcQuote({ pool, config, side: 'buy', amountIn: spend, currentPoint: point }).out,
+      slippagePct,
+    )
     venue = {
       venueProgram: DBC_PROGRAM_ID,
       venuePoolAuthority: DBC_POOL_AUTHORITY,
@@ -1066,7 +1099,8 @@ export async function buildFusionInstructions({
   mint = pk(mint)
   const spend = BigInt(spendLamports)
   const quantum = await loadQuantum(connection, mint, programId)
-  if (!quantum.dammPool) throw new Error('Fusion needs a migrated coin whose DAMM v2 pool is synced')
+  if (!quantum.dammPool)
+    throw new Error('Fusion needs a migrated coin whose DAMM v2 pool is synced')
   const [poolInfo, positionInfo] = await connection.getMultipleAccountsInfo([
     pk(quantum.dammPool),
     pk(quantum.dammPosition),
@@ -1079,7 +1113,8 @@ export async function buildFusionInstructions({
   const quote = dammQuote({ damm, side: 'buy', amountIn: swapIn, currentPoint: now })
   const minBaseOut = slip(quote.out, slippagePct)
   // Liquidity the bought coin and the remaining SOL can fund at the post-swap price, with margin.
-  const liquidityDelta = (fullRangeLiquidity(damm, quote.nextSqrtPrice, minBaseOut, spend - swapIn) * 97n) / 100n
+  const liquidityDelta =
+    (fullRangeLiquidity(damm, quote.nextSqrtPrice, minBaseOut, spend - swapIn) * 97n) / 100n
   if (liquidityDelta <= 0n) throw new Error('Fusion spend is too small to add liquidity')
   const ix = await quantumProgram(connection, programId)
     .methods.fusion(bn(spend), bn(swapIn), bn(minBaseOut), bn(liquidityDelta))

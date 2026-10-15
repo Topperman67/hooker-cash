@@ -147,7 +147,9 @@ export default function CoinPage() {
             </h1>
             <div className="coin-badges">
               {c.quantum && <span className="chip chip-quantum">Quantum Hooks</span>}
-              {c.complete && <span className="chip chip-grad">Graduated</span>}
+              {c.complete && (
+                <span className="chip chip-grad">{c.migrated ? 'Graduated' : 'Graduating'}</span>
+              )}
               {c.external && <span className="chip">Launched outside Quant Pad</span>}
               <Address value={c.mint} href={explorer.token(c.mint)} />
             </div>
@@ -183,8 +185,13 @@ export default function CoinPage() {
 
       <div className="coin-grid-layout">
         <div className="coin-main">
-          <MarketChart mint={c.mint} symbol={c.symbol} supply={c.supply} mayhem={c.mayhem} />
-          <TradesTable mint={c.mint} symbol={c.symbol} launcher={c.launcher} />
+          <MarketChart mint={c.mint} symbol={c.symbol} supply={c.supply} decimals={c.decimals} />
+          <TradesTable
+            mint={c.mint}
+            symbol={c.symbol}
+            launcher={c.launcher}
+            decimals={c.decimals}
+          />
         </div>
         <aside className="coin-side">
           <TradeTicket coin={c} onTraded={coin.refresh} />

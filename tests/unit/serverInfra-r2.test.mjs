@@ -204,11 +204,13 @@ test('the real API: track has its own bucket, and the RPC budget covers new coin
       // A hidden mint is refused right after the track bucket, without any chain reads.
       hiddenMints: hiddenMint,
       rpcUrl: 'http://127.0.0.1:9',
-      // Every account is missing, so an unknown mint is "not a pump.fun coin" and stays unknown.
+      // Every account is missing and no DBC pool has the mint, so an unknown mint is "not a
+      // Meteora coin" and stays unknown.
       connection: {
         rpcEndpoint: 'http://rpc.invalid',
         getAccountInfo: async () => null,
         getMultipleAccountsInfo: async (keys) => keys.map(() => null),
+        getProgramAccounts: async () => [],
       },
       priceFeed: async () => ({ usd: 150 }),
     })
@@ -263,7 +265,7 @@ test('the real API: track has its own bucket, and the RPC budget covers new coin
     for (let i = 0; i < 2; i++) {
       const r = await booted.post('/api/coins/track', { mint: unknownMint })
       assert.equal(r.status, 404, String(r.body))
-      assert.equal(JSON.parse(r.body).code, 'not_pump')
+      assert.equal(JSON.parse(r.body).code, 'not_meteora')
     }
     // ... the third does not ...
     assert.equal((await booted.post('/api/coins/track', { mint: unknownMint })).status, 429)

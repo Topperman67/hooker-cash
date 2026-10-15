@@ -40,9 +40,13 @@ export const MESSAGES = {
   declined: 'You declined the request in your wallet.',
   compute: 'The transaction ran out of compute budget. Try again.',
   tokens: 'Your token balance is too low for this transaction.',
+  busy: 'The Solana network is busy right now. Wait a moment and try again.',
 }
 
+const TOO_LARGE = 'That amount is too large for this pool. Try a smaller amount.'
+// Codes from shared/idl/meteora_dbc.json and meteora_damm_v2.json.
 const DBC_ERRORS = {
+  6000: TOO_LARGE, // MathOverflow
   6002: MESSAGES.slippage, // ExceededSlippage
   6005: 'That amount is too small to trade.', // AmountIsZero
   6012: 'Not enough tokens left on the curve for that amount.', // NotEnoughLiquidity
@@ -50,10 +54,13 @@ const DBC_ERRORS = {
   6033: 'Not enough liquidity on the curve for that amount.', // InsufficientLiquidity
 }
 const DAMM_ERRORS = {
+  6000: TOO_LARGE, // MathOverflow
   6002: MESSAGES.slippage, // ExceededSlippage
   6003: 'Meteora has paused trading in this pool.', // PoolDisabled
   6006: 'That amount is too small to trade.', // AmountIsZero
+  6015: 'That trade would move the price past this pool’s range. Try a smaller amount.', // PriceRangeViolation
   6023: 'Not enough liquidity in the pool for that amount.', // InsufficientLiquidity
+  6069: 'That amount is too small to trade.', // TransferFeeExcludedAmountIsZero
 }
 // Quantum Hooks: user-facing wording for the errors people can hit; the rest use the IDL message.
 const QUANTUM_MESSAGES = {
@@ -195,6 +202,25 @@ function headline(e, message) {
     .trim()
 }
 
+const TRANSIENT_STATUS = new Set([429, 502, 503, 504])
+/**
+ * Whether an RPC call failed in a way worth retrying: HTTP 429/502/503/504 (web3.js reports these
+ * as "<status> <text>: <body>"), the same codes in a JSON-RPC error, a node that is behind, or a
+ * network failure.
+ */
+export function isTransientRpcError(e) {
+  if (!e) return false
+  const status = Number(e.status ?? e.statusCode)
+  if (TRANSIENT_STATUS.has(status)) return true
+  if (typeof e.code === 'number' && (TRANSIENT_STATUS.has(e.code) || e.code === -32005)) return true
+  const message = String(e.message ?? e)
+  if (/^(?:[\w ]+:\s*)?(429|502|503|504)\b/.test(message)) return true
+  if (e.name === 'TypeError' && /fetch|network|load failed/i.test(message)) return true
+  return /failed to fetch|fetch failed|networkerror|network error|network request failed|load failed|econnreset|econnrefused|etimedout|socket hang up|too many requests|bad gateway|service unavailable|gateway time-?out/i.test(
+    message,
+  )
+}
+
 /**
  * Message for anything thrown while signing, sending or confirming. Errors that already carry a
  * user-facing message (`friendly`, `unknown`, `expired`) pass through unchanged.
@@ -229,6 +255,8 @@ export function friendlyWalletError(e, { programIds } = {}) {
     return MESSAGES.noSol
   if (/blockhash not found|block height exceeded/i.test(head)) return MESSAGES.sendExpired
   if (/computational budget exceeded|exceeded cus meter/i.test(head)) return MESSAGES.compute
+  // A rate-limited or unreachable RPC (the public mainnet RPC answers 429 under load).
+  if (!simulated && isTransientRpcError(e)) return MESSAGES.busy
   const text = simulated
     ? head.replace(/^Transaction simulation failed:\s*/i, 'Rejected in simulation: ')
     : head

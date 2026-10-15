@@ -7,13 +7,13 @@ A plain keypair stood in for the well PDA.
 
 ## Pinned versions
 
-| Item | Value |
-|---|---|
-| DBC program | `dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN`, deployed IDL 0.2.1, sha256 `b3f7b765…6c44` |
-| DAMM v2 program | `cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG`, sha256 `7c479dd7…94e0` |
-| Upgrade authority (both programs) | `JADaUV8kvDpDbJr55wxXJHVaBS3VCj8thZZHjfeuCVLd` |
-| SDKs | `@meteora-ag/dynamic-bonding-curve-sdk` 1.5.13 and `@meteora-ag/cp-amm-sdk` 1.5.1, pinned exactly |
-| IDLs | `shared/idl/meteora_dbc.json`, `shared/idl/meteora_damm_v2.json` |
+| Item                              | Value                                                                                             |
+| --------------------------------- | ------------------------------------------------------------------------------------------------- |
+| DBC program                       | `dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN`, deployed IDL 0.2.1, sha256 `b3f7b765…6c44`         |
+| DAMM v2 program                   | `cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG`, sha256 `7c479dd7…94e0`                             |
+| Upgrade authority (both programs) | `JADaUV8kvDpDbJr55wxXJHVaBS3VCj8thZZHjfeuCVLd`                                                    |
+| SDKs                              | `@meteora-ag/dynamic-bonding-curve-sdk` 1.5.13 and `@meteora-ag/cp-amm-sdk` 1.5.1, pinned exactly |
+| IDLs                              | `shared/idl/meteora_dbc.json`, `shared/idl/meteora_damm_v2.json`                                  |
 
 **IDL source.** The IDLs come from the SDKs. The IDL accounts Meteora publishes on-chain are stale (0.1.10 and 0.2.0), so `scripts/meteora-idls.mjs` reports the differences and records the deployed program hashes. Re-run it after Meteora's next upgrade.
 
@@ -42,12 +42,12 @@ A plain keypair stood in for the well PDA.
 
 ## Sizes
 
-| Transaction | Size | Compute |
-|---|---|---|
-| T2 without a lookup table (worst-case 32-byte name, 10-byte symbol, 200-byte URI) | 1,206 B | about 215k CU |
-| Migration | 1,139 B | 167k CU |
-| DBC swap | about 740 B | |
-| DAMM swap | 681 B | |
+| Transaction                                                                       | Size        | Compute       |
+| --------------------------------------------------------------------------------- | ----------- | ------------- |
+| T2 without a lookup table (worst-case 32-byte name, 10-byte symbol, 200-byte URI) | 1,206 B     | about 215k CU |
+| Migration                                                                         | 1,139 B     | 167k CU       |
+| DBC swap                                                                          | about 740 B |               |
+| DAMM swap                                                                         | 681 B       |               |
 
 T2 is create + transfer + wrap + dev buy + unwrap. QH `sync` and the platform fee push it past 1,232 B, so T2 needs the lookup table, as planned.
 

@@ -1,292 +1,53 @@
 // Indexer fixes: launch provenance (C2), the tri-state quantum flag (C3), gap-free cursors,
 // time-bounded and throttle-tolerant passes, locking, eviction, trade order, prices and market caps.
-// Everything runs against an in-memory chain (mainnet getSignaturesForAddress semantics) and store.
+// Everything runs against an in-memory chain (mainnet getSignaturesForAddress semantics) and store,
+// with Meteora DBC / DAMM v2 transactions and accounts encoded by the programs' own IDLs.
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createHash, randomBytes } from 'node:crypto'
 import { readFileSync } from 'node:fs'
-import { Keypair, PublicKey } from '@solana/web3.js'
-import bs58 from 'bs58'
-import BN from 'bn.js'
-import { PUMP_SDK, bondingCurvePda } from '#pump-sdk'
-import { PUMP_AMM_SDK } from '@pump-fun/pump-swap-sdk'
-import { network, priceFromReserves } from '../../shared/network.mjs'
+import { network, priceFromSqrtPrice } from '../../shared/network.mjs'
+import {
+  NOW,
+  WSOL,
+  address,
+  signature,
+  coinAccounts,
+  createIx,
+  dammPoolAccount,
+  dammPoolFor,
+  dbcConfigAccount,
+  dbcPoolAccount,
+  dbcPoolFor,
+  fakeChain,
+  fakeQuantum,
+  idle,
+  installFetch,
+  memoryStore,
+  mintAccount,
+  swapIx,
+  transferCreatorIx,
+} from './meteora-chain.mjs'
 
 process.env.QUANTPAD_MAX_LAUNCHES = '3'
 const { createIndexer, issuedUriKey, stats, summarize } = await import('../../server/indexer.mjs')
-const {
-  extractEvents,
-  tradesFrom,
-  fetchTransactions,
-  pendingSignatures,
-  readMarket,
-  poolFor,
-  curveFor,
-} = await import('../../server/solana.mjs')
+const { extractEvents, tradesFrom, fetchTransactions, pendingSignatures, readMarket } =
+  await import('../../server/solana.mjs')
 const { candlesFor, compareTrades, capSupply } = await import('../../server/market-math.mjs')
 
-const PUMP = network.pumpProgram
-const NOW = Math.floor(Date.now() / 1000)
-const address = () => Keypair.generate().publicKey.toBase58()
-const signature = () => bs58.encode(randomBytes(64))
 const fixture = (name) =>
   JSON.parse(readFileSync(new URL(`../fixtures/${name}.json`, import.meta.url), 'utf8'))
+installFetch(test)
 
-// ---- encoded pump.fun events and accounts --------------------------------------------------------
-const TRADE = extractEvents(fixture('pump-trade').tx).find((e) => e.name === 'TradeEvent').event
-const CREATE = extractEvents(fixture('pump-create').tx).find((e) => e.name === 'CreateEvent').event
-const disc = (name) => createHash('sha256').update(`event:${name}`).digest().subarray(0, 8)
-function eventLogs(name, data) {
-  const body = PUMP_SDK.offlinePumpProgram.coder.types.encode(
-    name[0].toLowerCase() + name.slice(1),
-    data,
-  )
-  return [
-    `Program ${PUMP} invoke [1]`,
-    `Program data: ${Buffer.concat([disc(name), body]).toString('base64')}`,
-    `Program ${PUMP} success`,
-  ]
-}
-// A curve trade at `price` SOL per whole token (virtual reserves 30 SOL-ish / tokens).
-const tradeLogs = (mint, { price, timestamp = NOW }) => {
-  const tokens = 1_000_000_000_000_000
-  const sol = Math.round(price * 1e9 * (tokens / 1e6))
-  return eventLogs('TradeEvent', {
-    ...TRADE,
-    mint: new PublicKey(mint),
-    timestamp: new BN(timestamp),
-    virtualSolReserves: new BN(sol),
-    virtualQuoteReserves: new BN(sol),
-    virtualTokenReserves: new BN(tokens),
-    solAmount: new BN(1e9),
-    quoteAmount: new BN(1e9),
-  })
-}
-const createLogs = (mint, { creator, user = creator, uri, timestamp = NOW, quoteMint }) =>
-  eventLogs('CreateEvent', {
-    ...CREATE,
-    mint: new PublicKey(mint),
-    bondingCurve: bondingCurvePda(new PublicKey(mint)),
-    creator: new PublicKey(creator),
-    user: new PublicKey(user),
-    uri,
-    timestamp: new BN(timestamp),
-    isMayhemMode: false,
-    ...(quoteMint ? { quoteMint: new PublicKey(quoteMint) } : {}),
-  })
-
-async function curveAccount({
-  creator,
-  complete = false,
-  price = 3e-8,
-  mayhem = false,
-  quoteMint = PublicKey.default,
-}) {
-  const tokens = complete ? 0 : 1_073_000_000_000_000
-  const sol = complete ? 0 : Math.round(price * 1e9 * (tokens / 1e6))
-  const data = await PUMP_SDK.offlinePumpProgram.coder.accounts.encode('bondingCurve', {
-    virtualTokenReserves: new BN(tokens),
-    virtualQuoteReserves: new BN(sol),
-    realTokenReserves: new BN(complete ? 0 : 793_100_000_000_000),
-    realQuoteReserves: new BN(0),
-    tokenTotalSupply: new BN(network.totalSupply),
-    complete,
-    creator: new PublicKey(creator),
-    isMayhemMode: mayhem,
-    isCashbackCoin: false,
-    quoteMint: new PublicKey(quoteMint),
-    creatorFeeBps: new BN(0),
-    canEditCreatorFee: false,
-    isHolderReward: false,
-    creatorFee: new BN(0),
-    protocolFees: new BN(0),
-    depth: 0,
-    initialVirtualQuoteReserves: new BN(sol),
-    postCompleteBaseOut: new BN(0),
-    postCompleteQuoteIn: new BN(0),
-  })
-  return { data, owner: new PublicKey(PUMP), lamports: 1_000_000, executable: false }
-}
-function mintAccount(supply) {
-  const data = Buffer.alloc(82)
-  data.writeBigUInt64LE(BigInt(supply), 36)
-  return { data, owner: new PublicKey(network.token2022Program), lamports: 1, executable: false }
-}
-const tokenAccount = (amount) => {
-  const data = Buffer.alloc(165)
-  data.writeBigUInt64LE(BigInt(amount), 64)
-  return { data, lamports: 1 }
-}
-async function poolAccounts(mint, { base, quote, virtualQuote = 0n, fees = [0n, 0n] }) {
-  const baseVault = Keypair.generate().publicKey
-  const quoteVault = Keypair.generate().publicKey
-  const data = await PUMP_AMM_SDK.offlineProgram.coder.accounts.encode('pool', {
-    poolBump: 255,
-    index: 0,
-    creator: PublicKey.default,
-    baseMint: new PublicKey(mint),
-    quoteMint: new PublicKey(network.wsolMint),
-    lpMint: PublicKey.default,
-    poolBaseTokenAccount: baseVault,
-    poolQuoteTokenAccount: quoteVault,
-    lpSupply: new BN(0),
-    coinCreator: PublicKey.default,
-    isMayhemMode: false,
-    isCashbackCoin: false,
-    virtualQuoteReserves: new BN(virtualQuote.toString()),
-    creatorFeeBps: new BN(0),
-    canEditCreatorFee: false,
-    isHolderReward: false,
-    protocolFees: new BN(fees[0].toString()),
-    creatorFees: new BN(fees[1].toString()),
-  })
-  return {
-    [poolFor(mint)]: { data, lamports: 1 },
-    [baseVault.toBase58()]: tokenAccount(base),
-    [quoteVault.toBase58()]: tokenAccount(quote),
-  }
-}
-
-// ---- in-memory store and chain ------------------------------------------------------------------
-function memoryStore({ latency = 0 } = {}) {
-  const data = new Map()
-  const sets = []
-  const pause = () =>
-    latency ? new Promise((r) => setTimeout(r, latency / 2 + Math.random() * latency)) : null
-  const live = (k) => {
-    const e = data.get(k)
-    if (e?.expires && e.expires < Date.now()) data.delete(k)
-    return data.get(k)
-  }
-  return {
-    data,
-    sets,
-    async get(k) {
-      await pause()
-      const e = live(k)
-      return e ? structuredClone(e.value) : null
-    },
-    async set(k, v, options = {}) {
-      sets.push([k, options])
-      await pause()
-      if (options.nx && live(k)) return false
-      data.set(k, {
-        value: structuredClone(v),
-        expires: options.ttl ? Date.now() + options.ttl : 0,
-      })
-      return true
-    },
-    async delete(k) {
-      await pause()
-      data.delete(k)
-    },
-    async release(k, owner) {
-      await pause()
-      if (live(k)?.value === owner) data.delete(k)
-    },
-  }
-}
-// Waits for fire-and-forget syncs (registerLaunch, track) to let go of their coin leases.
-async function idle(store) {
-  for (let i = 0; i < 400; i++) {
-    if (![...store.data.keys()].some((k) => k.startsWith('lease:') || k.startsWith('lock:'))) return
-    await new Promise((r) => setTimeout(r, 5))
-  }
-  throw Error('background sync did not finish')
-}
-
-let current = null
-const originalFetch = globalThis.fetch
-globalThis.fetch = (url, init) =>
-  current ? current.fetch(url, init) : Promise.reject(Error('offline'))
-test.after(() => {
-  globalThis.fetch = originalFetch
-})
-
-function fakeChain(endpoint = 'http://chain.invalid') {
-  const history = new Map() // address -> signatures, newest first
-  const txs = new Map()
-  const accounts = new Map()
-  const fetched = []
-  let slot = 5000
-  const chain = {
-    txs,
-    accounts,
-    fetched,
-    listed: [],
-    requests: [],
-    policy: null, // (body) => Response | undefined
-    add(addresses, { logs = [], blockTime = NOW, sameSlot = false, sig = signature() } = {}) {
-      if (!sameSlot) slot++
-      txs.set(sig, {
-        slot,
-        blockTime,
-        meta: { err: null, innerInstructions: [], logMessages: logs },
-        transaction: { message: { accountKeys: [] } },
-      })
-      for (const a of addresses) {
-        if (!history.has(a)) history.set(a, [])
-        history.get(a).unshift({ signature: sig, slot, blockTime, err: null })
-      }
-      return sig
-    },
-    connection: {
-      rpcEndpoint: endpoint,
-      async getSignaturesForAddress(key, { until, before, limit = 1000 } = {}) {
-        chain.listed.push({ address: key.toBase58(), until, before, limit })
-        const all = history.get(key.toBase58()) || []
-        let i = 0
-        if (before) {
-          i = all.findIndex((s) => s.signature === before) + 1
-          if (!i) return []
-        }
-        const out = []
-        for (; i < all.length && out.length < Math.min(limit, 1000); i++) {
-          if (all[i].signature === until) break
-          out.push({ ...all[i] })
-        }
-        return out
-      },
-      async getMultipleAccountsInfo(keys) {
-        return keys.map((k) => accounts.get(k.toBase58()) || null)
-      },
-      async getAccountInfo(key) {
-        return accounts.get(key.toBase58()) || null
-      },
-    },
-    async fetch(url, init) {
-      const body = JSON.parse(init.body)
-      chain.requests.push(body)
-      const override = chain.policy?.(body)
-      if (override) return override
-      const calls = Array.isArray(body) ? body : [body]
-      for (const c of calls) fetched.push(c.params[0])
-      const answer = (c) => ({ jsonrpc: '2.0', id: c.id, result: txs.get(c.params[0]) || null })
-      return Response.json(Array.isArray(body) ? calls.map(answer) : answer(body))
-    },
-  }
-  current = chain
-  return chain
-}
-
-// A Quantum client double: `wells` maps mints to their well, and a Quantum account is served by the
-// chain at quantumPda(mint) with its launcher.
-function fakeQuantum(chain) {
-  const seed = new PublicKey(network.pumpFeesProgram)
-  const pda = (tag, mint) =>
-    PublicKey.findProgramAddressSync([Buffer.from(tag), mint.toBuffer()], seed)[0]
-  return {
-    wellPda: (mint) => pda('well', mint),
-    quantumPda: (mint) => pda('quantum', mint),
-    decodeQuantum: (data) => JSON.parse(Buffer.from(data).toString()),
-    register(mint, launcher) {
-      chain.accounts.set(pda('quantum', new PublicKey(mint)).toBase58(), {
-        data: Buffer.from(JSON.stringify({ launcher, createdAt: NOW - 30 })),
-      })
-    },
-    well: (mint) => pda('well', new PublicKey(mint)).toBase58(),
-  }
-}
+// A launch: the DBC create by `launcher`, handed to `creator` (a Quantum coin's well) when that is
+// someone else.
+const launchIxs = (mint, { creator, launcher = creator, ...rest }) => [
+  createIx(mint, { creator: launcher, ...rest }),
+  ...(launcher === creator
+    ? []
+    : [transferCreatorIx(mint, { creator: launcher, newCreator: creator })]),
+]
+// A curve trade that leaves the coin at `price` SOL per whole token (1 SOL in).
+const tradeIxs = (mint, options) => [swapIx(mint, options)]
 
 async function syncUntilCaughtUp(indexer, mint, max = 200) {
   for (let n = 0; n < max; n++) {
@@ -298,7 +59,7 @@ async function syncUntilCaughtUp(indexer, mint, max = 200) {
 
 // ---- C2 -----------------------------------------------------------------------------------------
 test('C2: a launch is native only with a URI this server issued, with 4xx errors otherwise', async () => {
-  const chain = fakeChain()
+  const chain = await fakeChain()
   const store = memoryStore()
   const indexer = createIndexer({
     connection: chain.connection,
@@ -308,8 +69,8 @@ test('C2: a launch is native only with a URI this server issued, with 4xx errors
   const user = address()
   const mint = address()
   const uri = 'https://quantpad.test/m/' + 'a'.repeat(32)
-  const sig = chain.add([curveFor(mint)], {
-    logs: [...createLogs(mint, { creator: user, uri }), ...tradeLogs(mint, { price: 3e-8 })],
+  const sig = chain.add([dbcPoolFor(mint)], {
+    ixs: [...launchIxs(mint, { creator: user, uri }), ...tradeIxs(mint, { price: 3e-8 })],
   })
 
   await assert.rejects(indexer.registerLaunch('not-a-signature'), { status: 400 })
@@ -319,7 +80,7 @@ test('C2: a launch is native only with a URI this server issued, with 4xx errors
     status: 409,
     code: 'not_indexed_yet',
   })
-  // Any other pump.fun coin is not a Quant Pad launch, and nothing is stored for it.
+  // Any other Meteora coin is not a Quant Pad launch, and nothing is stored for it.
   await assert.rejects(indexer.registerLaunch(sig), { status: 400, code: 'not_quantpad' })
   assert.equal(await indexer.coin(mint), null)
   assert.deepEqual(await indexer.list(), [])
@@ -340,7 +101,7 @@ test('C2: a launch is native only with a URI this server issued, with 4xx errors
 })
 
 test("C2: registration by mint finds the create as the curve's first transaction", async () => {
-  const chain = fakeChain()
+  const chain = await fakeChain()
   const store = memoryStore()
   const indexer = createIndexer({
     connection: chain.connection,
@@ -351,9 +112,10 @@ test("C2: registration by mint finds the create as the curve's first transaction
   const mint = address()
   const uri = 'https://quantpad.test/m/' + 'b'.repeat(32)
   await store.set(issuedUriKey(uri), { at: Date.now() })
-  const create = chain.add([curveFor(mint)], { logs: createLogs(mint, { creator: user, uri }) })
+  await chain.setAccounts(coinAccounts(mint, { creator: user }))
+  const create = chain.add([dbcPoolFor(mint)], { ixs: launchIxs(mint, { creator: user, uri }) })
   let other
-  for (let i = 0; i < 1200; i++) other = chain.add([curveFor(mint)])
+  for (let i = 0; i < 1200; i++) other = chain.add([dbcPoolFor(mint)])
 
   // A signature that is not the create (or no signature) falls back to the mint's first transaction.
   const coin = await indexer.registerLaunch(other, { mint })
@@ -368,8 +130,9 @@ test("C2: registration by mint finds the create as the curve's first transaction
     code: 'not_indexed_yet',
   })
   const deep = address()
-  chain.add([curveFor(deep)], { logs: createLogs(deep, { creator: user, uri }) })
-  for (let i = 0; i < 5000; i++) chain.add([curveFor(deep)])
+  await chain.setAccounts(coinAccounts(deep, { creator: user }))
+  chain.add([dbcPoolFor(deep)], { ixs: launchIxs(deep, { creator: user, uri }) })
+  for (let i = 0; i < 5000; i++) chain.add([dbcPoolFor(deep)])
   await assert.rejects(indexer.registerLaunch('', { mint: deep }), {
     status: 400,
     code: 'not_quantpad',
@@ -377,7 +140,7 @@ test("C2: registration by mint finds the create as the curve's first transaction
 })
 
 test('C2: native registrations are capped', async () => {
-  const chain = fakeChain()
+  const chain = await fakeChain()
   const store = memoryStore()
   const indexer = createIndexer({
     connection: chain.connection,
@@ -391,13 +154,13 @@ test('C2: native registrations are capped', async () => {
   const mint = address()
   const uri = 'https://quantpad.test/m/' + 'c'.repeat(32)
   await store.set(issuedUriKey(uri), { at: Date.now() })
-  const sig = chain.add([curveFor(mint)], { logs: createLogs(mint, { creator: address(), uri }) })
+  const sig = chain.add([dbcPoolFor(mint)], { ixs: launchIxs(mint, { creator: address(), uri }) })
   await assert.rejects(indexer.registerLaunch(sig), { status: 429, code: 'launch_cap' })
 })
 
 // ---- C3 -----------------------------------------------------------------------------------------
 test('C3: a failed Quantum check is stored as unknown and healed on sync', async () => {
-  const chain = fakeChain()
+  const chain = await fakeChain()
   const store = memoryStore()
   const quantum = fakeQuantum(chain)
   const indexer = createIndexer({ connection: chain.connection, store, quantum })
@@ -405,8 +168,8 @@ test('C3: a failed Quantum check is stored as unknown and healed on sync', async
   const launcher = address()
   const uri = 'https://quantpad.test/m/' + 'd'.repeat(32)
   quantum.register(mint, launcher)
-  const sig = chain.add([curveFor(mint)], {
-    logs: createLogs(mint, { creator: quantum.well(mint), user: launcher, uri }),
+  const sig = chain.add([dbcPoolFor(mint)], {
+    ixs: launchIxs(mint, { creator: quantum.well(mint), launcher, uri }),
   })
   // The Quantum account read fails twice (a 503, then a node behind the create's slot).
   const reads = []
@@ -432,7 +195,7 @@ test('C3: a failed Quantum check is stored as unknown and healed on sync', async
 })
 
 test('C3: track and sync upgrade verified Quantum coins to native launches', async () => {
-  const chain = fakeChain()
+  const chain = await fakeChain()
   const store = memoryStore()
   const quantum = fakeQuantum(chain)
   const indexer = createIndexer({ connection: chain.connection, store, quantum })
@@ -440,7 +203,7 @@ test('C3: track and sync upgrade verified Quantum coins to native launches', asy
 
   const mint = address()
   quantum.register(mint, launcher)
-  chain.accounts.set(curveFor(mint), await curveAccount({ creator: quantum.well(mint) }))
+  await chain.setAccounts(coinAccounts(mint, { creator: quantum.well(mint) }))
   const tracked = await indexer.track(mint)
   assert.deepEqual(
     [tracked.quantum, tracked.external, tracked.source, tracked.launcher],
@@ -450,15 +213,15 @@ test('C3: track and sync upgrade verified Quantum coins to native launches', asy
   // A record stored with a sticky false flag as an external coin heals on its next sync.
   const stale = address()
   quantum.register(stale, launcher)
-  chain.accounts.set(curveFor(stale), await curveAccount({ creator: quantum.well(stale) }))
+  await chain.setAccounts(coinAccounts(stale, { creator: quantum.well(stale) }))
   const record = {
     mint: stale,
     name: 'Stale',
     creator: quantum.well(stale),
-    bondingCurve: curveFor(stale),
+    dbcPool: dbcPoolFor(stale),
     quantum: false,
     external: true,
-    source: 'pump.fun',
+    source: 'meteora',
     cursor: null,
   }
   await store.set(`coin:${stale}`, record)
@@ -470,24 +233,25 @@ test('C3: track and sync upgrade verified Quantum coins to native launches', asy
 
   // A coin whose creator is not its well is settled as not Quantum without an RPC read.
   const plain = address()
-  chain.accounts.set(curveFor(plain), await curveAccount({ creator: address() }))
+  await chain.setAccounts(coinAccounts(plain, { creator: address() }))
   assert.equal((await indexer.track(plain)).quantum, false)
   await idle(store)
 })
 
 // ---- cursors ------------------------------------------------------------------------------------
 test('a backlog deeper than several signature pages is read oldest-first without gaps', async () => {
-  const chain = fakeChain()
+  const chain = await fakeChain()
   const store = memoryStore()
   const indexer = createIndexer({ connection: chain.connection, store, quantum: null })
   const mint = address()
-  const curve = curveFor(mint)
+  const curve = dbcPoolFor(mint)
   const cursor = chain.add([curve])
   const expected = []
   for (let i = 0; i < 3500; i++) expected.push(chain.add([curve]))
   await store.set(`coin:${mint}`, {
     mint,
-    bondingCurve: curve,
+    dbcPool: curve,
+    decimals: 6,
     external: false,
     cursor,
     createdAt: NOW,
@@ -505,7 +269,7 @@ test('a backlog deeper than several signature pages is read oldest-first without
 })
 
 test('pendingSignatures pages back from a saved anchor instead of restarting at the tip', async () => {
-  const chain = fakeChain()
+  const chain = await fakeChain()
   const curve = address()
   const cursor = chain.add([curve])
   const sigs = []
@@ -525,14 +289,14 @@ test('pendingSignatures pages back from a saved anchor instead of restarting at 
 
 // ---- tracked coins' history ---------------------------------------------------------------------
 test('a tracked coin with a truncated history reports partial stats and no made-up age', async () => {
-  const chain = fakeChain()
+  const chain = await fakeChain()
   const store = memoryStore()
   const indexer = createIndexer({ connection: chain.connection, store, quantum: null })
   const mint = address()
-  chain.accounts.set(curveFor(mint), await curveAccount({ creator: address() }))
+  await chain.setAccounts(coinAccounts(mint, { creator: address() }))
   for (let i = 0; i < 250; i++)
-    chain.add([curveFor(mint)], {
-      logs: tradeLogs(mint, { price: 1e-8 * (1 + i / 100), timestamp: NOW - 3600 + i }),
+    chain.add([dbcPoolFor(mint)], {
+      ixs: tradeIxs(mint, { price: 1e-8 * (1 + i / 100), timestamp: NOW - 3600 + i }),
       blockTime: NOW - 3600 + i,
     })
   await indexer.track(mint)
@@ -552,20 +316,20 @@ test('a tracked coin with a truncated history reports partial stats and no made-
 })
 
 test('a native coin indexed from its create has complete stats and its real age', async () => {
-  const chain = fakeChain()
+  const chain = await fakeChain()
   const store = memoryStore()
   const indexer = createIndexer({ connection: chain.connection, store, quantum: null })
   const mint = address()
   const uri = 'https://quantpad.test/m/' + 'e'.repeat(32)
   await store.set(issuedUriKey(uri), { at: Date.now() })
   const created = NOW - 7200
-  const sig = chain.add([curveFor(mint)], {
-    logs: [...createLogs(mint, { creator: address(), uri, timestamp: created })],
+  const sig = chain.add([dbcPoolFor(mint)], {
+    ixs: [...launchIxs(mint, { creator: address(), uri, timestamp: created })],
     blockTime: created,
   })
   for (let i = 0; i < 260; i++)
-    chain.add([curveFor(mint)], {
-      logs: tradeLogs(mint, { price: 1e-8 * (1 + i / 100), timestamp: created + 10 + i }),
+    chain.add([dbcPoolFor(mint)], {
+      ixs: tradeIxs(mint, { price: 1e-8 * (1 + i / 100), timestamp: created + 10 + i }),
       blockTime: created + 10 + i,
     })
   await indexer.registerLaunch(sig)
@@ -604,17 +368,23 @@ test('24h change is unknown when the indexed history does not reach back a day',
 
 // ---- trade order --------------------------------------------------------------------------------
 test('trades in one slot keep their execution order, not signature order', async () => {
-  const chain = fakeChain()
+  const chain = await fakeChain()
   const store = memoryStore()
   const indexer = createIndexer({ connection: chain.connection, store, quantum: null })
   const mint = address()
-  const curve = curveFor(mint)
+  const curve = dbcPoolFor(mint)
   // Executed a, then b, then c in one slot; as strings, a sorts last and c first.
   const [a, b, c] = ['z', 'm', 'b'].map((ch) => ch.repeat(88))
-  chain.add([curve], { sig: a, logs: tradeLogs(mint, { price: 1e-8 }) })
-  chain.add([curve], { sig: b, sameSlot: true, logs: tradeLogs(mint, { price: 2e-8 }) })
-  chain.add([curve], { sig: c, sameSlot: true, logs: tradeLogs(mint, { price: 3e-8 }) })
-  await store.set(`coin:${mint}`, { mint, bondingCurve: curve, external: false, cursor: null })
+  chain.add([curve], { sig: a, ixs: tradeIxs(mint, { price: 1e-8 }) })
+  chain.add([curve], { sig: b, sameSlot: true, ixs: tradeIxs(mint, { price: 2e-8 }) })
+  chain.add([curve], { sig: c, sameSlot: true, ixs: tradeIxs(mint, { price: 3e-8 }) })
+  await store.set(`coin:${mint}`, {
+    mint,
+    dbcPool: curve,
+    decimals: 6,
+    external: false,
+    cursor: null,
+  })
   const record = await indexer.syncCoin(mint)
   assert.ok(Math.abs(record.price - 3e-8) < 1e-15)
   const { items } = await indexer.trades(mint)
@@ -633,50 +403,56 @@ test('trades in one slot keep their execution order, not signature order', async
 })
 
 // ---- prices and market caps ---------------------------------------------------------------------
-test('PumpSwap trades are priced from the reserves after the swap', () => {
-  const { signature: sig, tx } = fixture('pumpswap-trade')
-  const pool = extractEvents(tx)
-    .find((e) => e.name === 'SellEvent')
-    .event.pool.toBase58()
-  const [sell, buy] = tradesFrom(tx, { signature: sig, mint: 'irrelevant', pool })
-  // Matches the pool vaults: the sell's result is the buy's starting point, and the buy's result
-  // equals the vaults' post-transaction balances in the fixture.
-  assert.equal(sell.price, priceFromReserves(7083348246131846n, 1881777864711n))
-  assert.equal(buy.price, priceFromReserves(7132953084576368n, 1868723787469n))
-  const post = tx.meta.postTokenBalances.map((b) => b.uiTokenAmount.amount)
-  assert.ok(post.includes('1868723787469') && post.includes('7132953084576368'))
+test('DAMM v2 trades are priced from the sqrt price the swap left', () => {
+  const { signature: sig, tx } = fixture('damm-swap')
+  const swap = extractEvents(tx).find((e) => e.name === 'EvtSwap2')
+  const pool = swap.event.pool.toBase58()
+  const [trade] = tradesFrom(tx, { signature: sig, mint: 'irrelevant', dbcPool: null, pool })
+  assert.equal(trade.price, priceFromSqrtPrice(swap.event.swapResult.nextSqrtPrice))
+  // It agrees with the amounts swapped, within the pool's fee and the swap's price impact.
+  const r = swap.event.swapResult
+  const [lamports, tokens] =
+    trade.side === 'buy'
+      ? [r.excludedFeeInputAmount, r.outputAmount]
+      : [r.outputAmount, r.excludedFeeInputAmount]
+  const average = Number(lamports) / 1e9 / (Number(tokens) / 1e6)
+  assert.ok(Math.abs(trade.price / average - 1) < 0.05, `${trade.price} vs ${average}`)
 })
 
-test("tracking a graduated coin prices it from the pool with the mint's real supply", async () => {
-  const chain = fakeChain()
+test("tracking a migrated coin prices it from its DAMM v2 pool with the mint's real supply", async () => {
+  const chain = await fakeChain()
   const store = memoryStore()
   const indexer = createIndexer({ connection: chain.connection, store, quantum: null })
   const mint = address()
-  chain.accounts.set(
-    curveFor(mint),
-    await curveAccount({ creator: address(), complete: true, mayhem: true }),
-  )
-  chain.accounts.set(mint, mintAccount(2_000_000_000_000_000n))
-  for (const [key, info] of Object.entries(
-    await poolAccounts(mint, {
-      base: 200_000_000_000_000n,
-      quote: 90_500_000_000n, // includes 0.5 SOL of fee buckets that are not liquidity
-      fees: [300_000_000n, 200_000_000n],
+  await chain.setAccounts(
+    coinAccounts(mint, {
+      creator: address(),
+      price: 4e-7, // the curve's last price
+      migrated: true,
+      poolPrice: 6e-7,
+      supply: 2_000_000_000_000_000n,
     }),
-  ))
-    chain.accounts.set(key, info)
+  )
   const coin = await indexer.track(mint)
-  const price = priceFromReserves(90_000_000_000n, 200_000_000_000_000n)
-  assert.equal(coin.complete, true)
-  assert.equal(coin.price, price)
+  assert.deepEqual([coin.complete, coin.migrated, coin.pool], [true, true, dammPoolFor(mint)])
+  assert.ok(Math.abs(coin.price - 6e-7) < 1e-18, 'the pool, not the curve')
   assert.equal(coin.supply, '2000000000000000')
-  assert.ok(Math.abs(coin.marketCap - price * 2e9) < 1e-6, 'a 2B mayhem supply, not 1B')
+  assert.ok(Math.abs(coin.marketCap - 6e-7 * 2e9) < 1e-6, 'its 2B supply, not 1B')
+  assert.equal(coin.progress, 100)
   await idle(store)
 
-  // Burned supply counts too, and an unknown supply falls back to pump.fun's for the coin type.
+  // A full curve Meteora has not migrated yet keeps its last curve price and reads 100%.
+  const full = address()
+  await chain.setAccounts(coinAccounts(full, { creator: address(), price: 4e-7, complete: true }))
+  const waiting = await indexer.track(full)
+  assert.deepEqual([waiting.complete, waiting.migrated, waiting.pool], [true, false, null])
+  assert.ok(Math.abs(waiting.price - 4e-7) < 1e-18)
+  assert.equal(waiting.progress, 100)
+  await idle(store)
+
+  // Burned supply counts too, and an unknown supply falls back to Quant Pad's 1B.
   chain.accounts.set(mint, mintAccount(900_000_000_000_000n))
   assert.equal((await readMarket(chain.connection, mint)).supply, '900000000000000')
-  assert.equal(capSupply({ mayhem: true }), '2000000000000000')
   assert.equal(capSupply({}), network.totalSupply)
   assert.equal(
     stats([{ price: 1e-6, timestamp: NOW }], NOW, { supply: '900000000000000' }).marketCap,
@@ -686,7 +462,7 @@ test("tracking a graduated coin prices it from the pool with the mint's real sup
 
 // ---- throttling and batches ---------------------------------------------------------------------
 test('fetchTransactions keeps what it read when throttled and honours the deadline', async () => {
-  const chain = fakeChain('http://provider-a.invalid')
+  const chain = await fakeChain('http://provider-a.invalid')
   const sigs = Array.from({ length: 40 }, () => chain.add([address()]))
   let served = 0
   chain.policy = () =>
@@ -712,7 +488,7 @@ test('fetchTransactions keeps what it read when throttled and honours the deadli
 })
 
 test('fetchTransactions falls back to single requests when a provider refuses batches', async () => {
-  const chain = fakeChain('http://provider-b.invalid')
+  const chain = await fakeChain('http://provider-b.invalid')
   const sigs = Array.from({ length: 5 }, () => chain.add([address()]))
   chain.policy = (body) =>
     Array.isArray(body) && body.length > 1
@@ -741,15 +517,21 @@ test('fetchTransactions falls back to single requests when a provider refuses ba
 })
 
 test('a throttled sync saves the progress it made and resumes from it', async () => {
-  const chain = fakeChain('http://provider-c.invalid')
+  const chain = await fakeChain('http://provider-c.invalid')
   const store = memoryStore()
   const indexer = createIndexer({ connection: chain.connection, store, quantum: null })
   const mint = address()
-  const curve = curveFor(mint)
+  const curve = dbcPoolFor(mint)
   const sigs = Array.from({ length: 40 }, (_, i) =>
-    chain.add([curve], { logs: tradeLogs(mint, { price: 1e-8 * (i + 1) }) }),
+    chain.add([curve], { ixs: tradeIxs(mint, { price: 1e-8 * (i + 1) }) }),
   )
-  await store.set(`coin:${mint}`, { mint, bondingCurve: curve, external: false, cursor: null })
+  await store.set(`coin:${mint}`, {
+    mint,
+    dbcPool: curve,
+    decimals: 6,
+    external: false,
+    cursor: null,
+  })
   let served = 0
   chain.policy = () => (++served > 2 ? new Response('', { status: 429 }) : undefined)
   const record = await indexer.syncCoin(mint, { deadline: Date.now() + 300 })
@@ -766,23 +548,23 @@ test('a throttled sync saves the progress it made and resumes from it', async ()
 
 // ---- passes, leases and locks -------------------------------------------------------------------
 test('sync passes are leased past their time budget, rotate per coin and count only successes', async () => {
-  const chain = fakeChain()
+  const chain = await fakeChain()
   const store = memoryStore()
   const indexer = createIndexer({ connection: chain.connection, store, quantum: null })
   const mints = [address(), address(), address()]
   const broken = mints[1]
   const listSignatures = chain.connection.getSignaturesForAddress
   chain.connection.getSignaturesForAddress = async (key, options) => {
-    if (key.toBase58() === curveFor(broken)) throw Error('429 Too Many Requests')
+    if (key.toBase58() === dbcPoolFor(broken)) throw Error('429 Too Many Requests')
     return listSignatures(key, options)
   }
   const getMany = chain.connection.getMultipleAccountsInfo
   chain.connection.getMultipleAccountsInfo = async (keys) => {
-    if (keys[0].toBase58() === curveFor(broken)) throw Error('429 Too Many Requests')
+    if (keys[0].toBase58() === dbcPoolFor(broken)) throw Error('429 Too Many Requests')
     return getMany(keys)
   }
   for (const mint of mints) {
-    const record = { mint, name: mint, bondingCurve: curveFor(mint), external: false, cursor: null }
+    const record = { mint, name: mint, dbcPool: dbcPoolFor(mint), external: false, cursor: null }
     await store.set(`coin:${mint}`, record)
   }
   await store.set(
@@ -806,12 +588,11 @@ test('sync passes are leased past their time budget, rotate per coin and count o
 })
 
 test('concurrent writers keep every coin in coins:list and one sync per coin', async () => {
-  const chain = fakeChain()
+  const chain = await fakeChain()
   const store = memoryStore({ latency: 4 })
   const indexer = createIndexer({ connection: chain.connection, store, quantum: null })
   const mints = Array.from({ length: 6 }, address)
-  for (const mint of mints)
-    chain.accounts.set(curveFor(mint), await curveAccount({ creator: address() }))
+  for (const mint of mints) await chain.setAccounts(coinAccounts(mint, { creator: address() }))
   await Promise.all(mints.map((mint) => indexer.track(mint)))
   await idle(store)
   assert.deepEqual((await indexer.list()).map((c) => c.mint).sort(), [...mints].sort())
@@ -819,11 +600,11 @@ test('concurrent writers keep every coin in coins:list and one sync per coin', a
   const mint = mints[0]
   chain.listed.length = 0
   await Promise.all([indexer.syncCoin(mint), indexer.syncCoin(mint), indexer.syncCoin(mint)])
-  assert.equal(chain.listed.filter((l) => l.address === curveFor(mint)).length, 1)
+  assert.equal(chain.listed.filter((l) => l.address === dbcPoolFor(mint)).length, 1)
 })
 
 test('external eviction keeps the coin just tracked and deletes evicted records', async () => {
-  const chain = fakeChain()
+  const chain = await fakeChain()
   const store = memoryStore()
   const indexer = createIndexer({ connection: chain.connection, store, quantum: null })
   chain.connection.getSignaturesForAddress = async () => {
@@ -839,7 +620,7 @@ test('external eviction keeps the coin just tracked and deletes evicted records'
     await store.set(`trades:${mint}`, [{ id: 'x:0' }])
   }
   const mint = address()
-  chain.accounts.set(curveFor(mint), await curveAccount({ creator: address() }))
+  await chain.setAccounts(coinAccounts(mint, { creator: address() }))
   await indexer.track(mint)
   await idle(store)
   const listed = (await indexer.list()).map((c) => c.mint)
@@ -862,7 +643,7 @@ test('external eviction keeps the coin just tracked and deletes evicted records'
 
 // ---- busy coins ---------------------------------------------------------------------------------
 test("a busy coin's 24h figures stay whole after its trade list is cut", async () => {
-  const chain = fakeChain()
+  const chain = await fakeChain()
   const store = memoryStore()
   const indexer = createIndexer({ connection: chain.connection, store, quantum: null })
   // A native launch with `old` trades, then 4100 trades in the last ~70 minutes: more than the
@@ -871,19 +652,19 @@ test("a busy coin's 24h figures stay whole after its trade list is cut", async (
     const mint = address()
     const uri = 'https://quantpad.test/m/' + mint.slice(0, 32)
     await store.set(issuedUriKey(uri), { at: Date.now() })
-    const sig = chain.add([curveFor(mint)], {
-      logs: createLogs(mint, { creator: address(), uri, timestamp: created }),
+    const sig = chain.add([dbcPoolFor(mint)], {
+      ixs: launchIxs(mint, { creator: address(), uri, timestamp: created }),
       blockTime: created,
     })
     for (const [price, timestamp] of old)
-      chain.add([curveFor(mint)], {
-        logs: tradeLogs(mint, { price, timestamp }),
+      chain.add([dbcPoolFor(mint)], {
+        ixs: tradeIxs(mint, { price, timestamp }),
         blockTime: timestamp,
       })
     for (let i = 0; i < 4100; i++) {
       const timestamp = NOW - 4100 + i
-      chain.add([curveFor(mint)], {
-        logs: tradeLogs(mint, { price: 1e-8 * (1 + i / 1000), timestamp }),
+      chain.add([dbcPoolFor(mint)], {
+        ixs: tradeIxs(mint, { price: 1e-8 * (1 + i / 1000), timestamp }),
         blockTime: timestamp,
       })
     }
@@ -917,7 +698,7 @@ test("a busy coin's 24h figures stay whole after its trade list is cut", async (
 
 // ---- registration upgrades and metadata ---------------------------------------------------------
 test('registering by mint upgrades a tracked coin to a native launch and keeps its metadata', async () => {
-  const chain = fakeChain()
+  const chain = await fakeChain()
   const store = memoryStore()
   const indexer = createIndexer({
     connection: chain.connection,
@@ -927,9 +708,9 @@ test('registering by mint upgrades a tracked coin to a native launch and keeps i
   const user = address()
   const mint = address()
   const uri = 'https://quantpad.test/m/' + 'f'.repeat(32)
-  chain.accounts.set(curveFor(mint), await curveAccount({ creator: user }))
-  const create = chain.add([curveFor(mint)], {
-    logs: [...createLogs(mint, { creator: user, uri }), ...tradeLogs(mint, { price: 3e-8 })],
+  await chain.setAccounts(coinAccounts(mint, { creator: user }))
+  const create = chain.add([dbcPoolFor(mint)], {
+    ixs: [...launchIxs(mint, { creator: user, uri }), ...tradeIxs(mint, { price: 3e-8 })],
   })
   assert.equal((await indexer.track(mint)).external, true)
   await idle(store)
@@ -959,16 +740,17 @@ test('registering by mint upgrades a tracked coin to a native launch and keeps i
 })
 
 test('metadata saved while a sync reads the chain stays on the record and in the list', async () => {
-  const chain = fakeChain()
+  const chain = await fakeChain()
   const store = memoryStore()
   const indexer = createIndexer({ connection: chain.connection, store, quantum: null })
   const mint = address()
-  const curve = curveFor(mint)
-  chain.add([curve], { logs: tradeLogs(mint, { price: 2e-8 }) })
+  const curve = dbcPoolFor(mint)
+  chain.add([curve], { ixs: tradeIxs(mint, { price: 2e-8 }) })
   await store.set(`coin:${mint}`, {
     mint,
     name: 'M',
-    bondingCurve: curve,
+    dbcPool: curve,
+    decimals: 6,
     external: false,
     cursor: null,
   })
@@ -1009,16 +791,15 @@ test('metadata saved while a sync reads the chain stays on the record and in the
 // The verifier's race: a metadata write (server/application.mjs, through updateCoin) landing
 // while a sync advances one coin and another coin is tracked.
 test('a metadata update racing a sync and another track loses neither', async () => {
-  const chain = fakeChain()
+  const chain = await fakeChain()
   const store = memoryStore({ latency: 4 })
   const indexer = createIndexer({ connection: chain.connection, store, quantum: null })
   const [a, b] = [address(), address()]
-  for (const mint of [a, b])
-    chain.accounts.set(curveFor(mint), await curveAccount({ creator: address() }))
+  for (const mint of [a, b]) await chain.setAccounts(coinAccounts(mint, { creator: address() }))
   await indexer.track(a)
   await idle(store)
   const sigs = Array.from({ length: 5 }, (_, i) =>
-    chain.add([curveFor(a)], { logs: tradeLogs(a, { price: 1e-8 * (i + 1) }) }),
+    chain.add([dbcPoolFor(a)], { ixs: tradeIxs(a, { price: 1e-8 * (i + 1) }) }),
   )
   const meta = { name: 'A', image: 'https://img.test/a.png' }
   for (let round = 0; round < 3; round++) {
@@ -1041,7 +822,7 @@ test('a metadata update racing a sync and another track loses neither', async ()
 
 // ---- C1 -----------------------------------------------------------------------------------------
 test('C1: route errors carry a 4xx status, and RPC failures a retryable one without details', async () => {
-  const chain = fakeChain('http://provider-d.invalid')
+  const chain = await fakeChain('http://provider-d.invalid')
   const store = memoryStore()
   const indexer = createIndexer({ connection: chain.connection, store, quantum: null })
   const user = address()
@@ -1060,7 +841,7 @@ test('C1: route errors carry a 4xx status, and RPC failures a retryable one with
   await assert.rejects(indexer.registerLaunch(plain), {
     status: 400,
     code: 'not_create',
-    message: 'That transaction did not create a pump.fun coin.',
+    message: 'That transaction did not create a Meteora coin.',
   })
   const failedSig = chain.add([address()])
   chain.txs.get(failedSig).meta.err = { InstructionError: [0, { Custom: 6000 }] }
@@ -1070,8 +851,12 @@ test('C1: route errors carry a 4xx status, and RPC failures a retryable one with
   })
   const usdc = address()
   const quoted = address()
-  const quotedSig = chain.add([curveFor(quoted)], {
-    logs: createLogs(quoted, { creator: user, uri, quoteMint: usdc }),
+  // A USDC-quoted coin (its config quotes USDC): refused by signature and by mint.
+  const usdcConfig = address()
+  chain.accounts.set(usdcConfig, await dbcConfigAccount({ quoteMint: usdc }))
+  await chain.setAccounts(coinAccounts(quoted, { creator: user, config: usdcConfig }))
+  const quotedSig = chain.add([dbcPoolFor(quoted, usdcConfig)], {
+    ixs: launchIxs(quoted, { creator: user, uri, quoteMint: usdc, config: usdcConfig }),
   })
   for (const call of [
     () => indexer.registerLaunch(quotedSig),
@@ -1088,9 +873,9 @@ test('C1: route errors carry a 4xx status, and RPC failures a retryable one with
     status: 400,
     message: 'Enter a valid Solana mint address.',
   })
-  await assert.rejects(indexer.track(address()), { status: 404, code: 'not_pump' })
+  await assert.rejects(indexer.track(address()), { status: 404, code: 'not_meteora' })
   const other = address()
-  chain.accounts.set(curveFor(other), await curveAccount({ creator: user, quoteMint: usdc }))
+  await chain.setAccounts(coinAccounts(other, { creator: user, config: usdcConfig }))
   await assert.rejects(indexer.track(other), { status: 400, code: 'not_sol_quote' })
 
   // RPC failures: a status the client retries, and never the provider's message.
@@ -1100,6 +885,17 @@ test('C1: route errors carry a 4xx status, and RPC failures a retryable one with
     assert.ok(!e.message.includes('SECRET'))
     return true
   }
+  // Registration by mint finds the pool, then cannot list its history.
+  const unlisted = address()
+  await chain.setAccounts(coinAccounts(unlisted, { creator: user }))
+  const listSignatures = chain.connection.getSignaturesForAddress
+  chain.connection.getSignaturesForAddress = async () => {
+    throw Error('fetch failed ' + secret)
+  }
+  await assert.rejects(indexer.registerLaunch('', { mint: unlisted }), (e) =>
+    exposed(e, 503, 'rpc_unavailable'),
+  )
+  chain.connection.getSignaturesForAddress = listSignatures
   chain.connection.getMultipleAccountsInfo = async () => {
     throw Error(`failed to get info about account: fetch failed ${secret}`)
   }
@@ -1112,19 +908,32 @@ test('C1: route errors carry a 4xx status, and RPC failures a retryable one with
   await assert.rejects(indexer.registerLaunch(signature()), (e) =>
     exposed(e, 503, 'rpc_unavailable'),
   )
-  chain.connection.getSignaturesForAddress = async () => {
-    throw Error('fetch failed ' + secret)
+  chain.connection.getMultipleAccountsInfo = async () => {
+    throw Error(`fetch failed ${secret}`)
   }
   await assert.rejects(indexer.registerLaunch('', { mint: address() }), (e) =>
     exposed(e, 503, 'rpc_unavailable'),
   )
   // /api/sync gets the same when a coin's sync could read nothing.
+  chain.connection.getSignaturesForAddress = async () => {
+    throw Error('fetch failed ' + secret)
+  }
   const mint = address()
   await store.set(`coin:${mint}`, {
     mint,
-    bondingCurve: curveFor(mint),
+    dbcPool: dbcPoolFor(mint),
+    decimals: 6,
     external: false,
     cursor: null,
   })
   await assert.rejects(indexer.syncCoin(mint), (e) => exposed(e, 503, 'rpc_unavailable'))
+  // So does one that does not know its coin's decimals yet and cannot read them.
+  const unread = address()
+  await store.set(`coin:${unread}`, {
+    mint: unread,
+    dbcPool: dbcPoolFor(unread),
+    external: false,
+    cursor: null,
+  })
+  await assert.rejects(indexer.syncCoin(unread), (e) => exposed(e, 503, 'rpc_unavailable'))
 })

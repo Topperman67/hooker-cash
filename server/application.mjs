@@ -23,6 +23,7 @@ import {
   network,
   storageDirectory,
   isAddress,
+  launchTiers,
   DEFAULT_PLATFORM_FEE_BPS,
   MAX_PLATFORM_FEE_BPS,
 } from '../shared/network.mjs'
@@ -1127,12 +1128,15 @@ export async function createApplication(options = {}) {
       lookupTable: isAddress(process.env.QUANTPAD_LOOKUP_TABLE)
         ? process.env.QUANTPAD_LOOKUP_TABLE
         : null,
-      // The Meteora DBC config new launches use: the first of QUANTPAD_DBC_CONFIG.
+      // The Meteora DBC config new launches use: the first of QUANTPAD_DBC_CONFIG, else the
+      // Standard launch's (the first trading-tax tier, shared/network.mjs launchTiers).
       dbcConfig:
         String(process.env.QUANTPAD_DBC_CONFIG || '')
           .split(',')
           .map((s) => s.trim())
-          .find(isAddress) || null,
+          .find(isAddress) ||
+        launchTiers[0]?.config ||
+        null,
     }
   }
 
@@ -1262,8 +1266,11 @@ export async function createApplication(options = {}) {
       }
 
       if (path === '/api/keeper/tick') {
+        // Vercel Cron and the GitHub Actions schedule (.github/workflows/keeper-cron.yml) both
+        // send `Authorization: Bearer <CRON_SECRET>`. A secret pasted with a trailing newline
+        // still matches.
         const supplied = String(req.headers.authorization || '').replace(/^Bearer /, '')
-        if (!secretMatches(supplied, process.env.CRON_SECRET))
+        if (!secretMatches(supplied, String(process.env.CRON_SECRET || '').trim()))
           return json(res, 401, { error: 'Unauthorized' })
         const started = Date.now()
         const index = await indexer.sync({ budget: 8, ...INDEX_MS })

@@ -1,12 +1,13 @@
 import { network } from '../../shared/network.mjs'
 
 // Whole tokens a coin's market cap counts, matching the server's capSupply(): the mint's live raw
-// supply when the record has it (burns lower it), else Quant Pad's fixed 1B, or
-// 2B for a mayhem coin. Candle prices are SOL per whole token, so price × this is the market cap.
-export function capTokens({ supply, mayhem } = {}) {
+// supply when the record has it (burns lower it), else 1B whole tokens. `decimals` is the coin's
+// (6 for Quant Pad launches, 9 for some other Meteora launchpads). Candle prices are SOL per whole
+// token, so price × this is the market cap.
+export function capTokens({ supply, decimals } = {}) {
+  const d = Number.isInteger(decimals) ? decimals : network.tokenDecimals
   const live = Number(supply)
-  const raw = live > 0 ? live : Number(network.totalSupply) * (mayhem ? 2 : 1)
-  return raw / 10 ** network.tokenDecimals
+  return live > 0 ? live / 10 ** d : Number(network.totalSupply) / 10 ** network.tokenDecimals
 }
 
 // Candles as series points: OHLC for the candle style, closes for the line style, each price

@@ -1,5 +1,6 @@
 // Program group, round 2: claim delay / cancel / cadence (K1), versioned config updates and
-// set_paused (K2), public burn / fusion limits and graduation (K3), owed pulse payments (K4),
+// set_paused (K2), public burn / fusion limits, graduation recorded by sync (K3), owed pulse
+// payments (K4),
 // owner-checked account reads and the authority CLI. Offline checks of shared/quantum.mjs, the
 // regenerated IDL, scripts/init-config.mjs and scripts/program-ops.mjs.
 import test from 'node:test'
@@ -9,8 +10,17 @@ import { fileURLToPath } from 'node:url'
 import BN from 'bn.js'
 import { BorshCoder } from '@coral-xyz/anchor'
 import { Keypair, PublicKey, SYSVAR_INSTRUCTIONS_PUBKEY, SystemProgram } from '@solana/web3.js'
+import { TOKEN_2022_PROGRAM_ID } from '@solana/spl-token'
 import * as q from '../../shared/quantum.mjs'
-import { bondingCurvePda } from '../../shared/vendor/pump-sdk.node.mjs'
+import {
+  CONFIG,
+  dammPoolAccount,
+  dammPoolFor,
+  dammPositionAccount,
+  dbcConfigAccount,
+  dbcPoolAccount,
+  dbcPoolFor,
+} from './meteora-chain.mjs'
 import { parseArgs } from '../../scripts/init-config.mjs'
 import * as ops from '../../scripts/program-ops.mjs'
 
@@ -64,6 +74,16 @@ async function quantumData(mint, overrides = {}) {
     split_owed: Array(4).fill(zero),
     launcher_owed: zero,
     protocol_owed: zero,
+    dbc_config: new PublicKey(CONFIG),
+    dbc_pool: new PublicKey(dbcPoolFor(mint)),
+    damm_pool: PublicKey.default,
+    damm_position: PublicKey.default,
+    damm_nft_account: PublicKey.default,
+    bound_at: zero,
+    birth_bound: false,
+    migrated_at: zero,
+    total_harvested: zero,
+    total_fused_liquidity: zero,
     reserved: Array(16).fill(0),
     ...overrides,
   })
@@ -83,6 +103,8 @@ async function configData(overrides = {}) {
     bump: 255,
     claim_delay: new BN(21_600),
     version: new BN(7),
+    launch_configs: [new PublicKey(CONFIG), ...Array(3).fill(PublicKey.default)],
+    launch_config_count: 1,
     reserved: Array(48).fill(0),
     ...overrides,
   })
@@ -90,7 +112,10 @@ async function configData(overrides = {}) {
 
 // Accounts listed without an owner are Quantum Hooks accounts (the client checks the owner).
 const withOwner = (info) => info && { owner: q.QUANTUM_PROGRAM_ID, lamports: 1, ...info }
-const fakeConnection = (accounts, calls = []) => ({
+const fakeConnection = (accounts, calls = [], tokenAccounts = []) => ({
+  getTokenAccountsByOwner: async (owner, { programId }) => ({
+    value: tokenAccounts.filter((t) => t.owner.equals(owner) && t.account.owner.equals(programId)),
+  }),
   getMultipleAccountsInfo: async (keys) => {
     calls.push(keys.length)
     return keys.map((k) => withOwner(accounts.get(k.toBase58())) ?? null)
@@ -101,34 +126,11 @@ const fakeConnection = (accounts, calls = []) => ({
   },
 })
 
-// Zero value of any IDL type, so third-party accounts (pump.fun curve, PumpSwap pool) can be
-// encoded with their own SDK IDLs.
-function zeroOf(type, types) {
-  if (typeof type === 'string') {
-    if (type === 'bool') return false
-    if (type === 'pubkey') return PublicKey.default
-    if (/^[ui](8|16|32)$/.test(type)) return 0
-    return zero
-  }
-  if (type.array) return Array.from({ length: type.array[1] }, () => zeroOf(type.array[0], types))
-  if (type.vec) return []
-  if (type.option) return null
-  if (type.defined) {
-    const def = types.find((t) => t.name === (type.defined.name ?? type.defined))
-    return Object.fromEntries(def.type.fields.map((f) => [f.name, zeroOf(f.type, types)]))
-  }
-  throw new Error(`no zero for ${JSON.stringify(type)}`)
-}
-async function pumpAccount(file, name, values) {
-  const pumpIdl = JSON.parse(
-    readFileSync(`${root}node_modules/@pump-fun/pump-sdk/src/idl/${file}`, 'utf8'),
-  )
-  const base = zeroOf({ defined: { name } }, pumpIdl.types)
-  const data = await new BorshCoder(pumpIdl).accounts.encode(name, { ...base, ...values })
-  // Padding: the SDKs' own IDL copies may know a few more trailing fields.
-  return Buffer.concat([data, Buffer.alloc(256)])
-}
-
+const positionOf = (nftMint) =>
+  PublicKey.findProgramAddressSync(
+    [Buffer.from('position'), nftMint.toBuffer()],
+    new PublicKey('cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG'),
+  )[0]
 const decodeIx = (ix) => coder.instruction.decode(Buffer.from(ix.data))
 const keyAt = (ix, name, instruction) => {
   const accounts = idl.instructions.find((i) => i.name === instruction).accounts
@@ -174,36 +176,54 @@ test('IDL: cancel_epoch and set_paused exist, update_config is versioned and can
     const sysvar = ix(name).accounts.find((a) => a.name === 'instructions_sysvar')
     assert.equal(sysvar?.address, SYSVAR_INSTRUCTIONS_PUBKEY.toBase58(), name)
   }
-  const pulse = ix('pulse').accounts
-  for (const name of ['bonding_curve', 'pool'])
-    assert.equal(pulse.find((a) => a.name === name)?.optional, true, name)
+  // Graduation is recorded by sync, whose DAMM v2 accounts are optional until the coin migrates.
+  assert.deepEqual(
+    ix('sync')
+      .accounts.filter((a) => a.optional)
+      .map((a) => a.name),
+    ['damm_config', 'damm_pool', 'damm_position', 'damm_nft_account'],
+  )
   const fields = (name) => idl.types.find((t) => t.name === name).type.fields.map((f) => f.name)
   assert.ok(fields('Epoch').includes('claim_start'))
   assert.ok(fields('EpochPosted').includes('claim_start'))
   assert.deepEqual(fields('EpochCancelled'), ['mint', 'index', 'returned', 'rent_to'])
   for (const f of ['claim_delay', 'version']) assert.ok(fields('Config').includes(f), f)
-  for (const f of ['last_epoch_at', 'graduated_at', 'split_owed', 'launcher_owed', 'protocol_owed'])
+  for (const f of [
+    'last_epoch_at',
+    'graduated_at',
+    'split_owed',
+    'launcher_owed',
+    'protocol_owed',
+    'migrated_at',
+  ])
     assert.ok(fields('Quantum').includes(f), f)
   assert.ok(fields('Pulsed').includes('owed_paid'))
 })
 
-test('IDL: new errors are appended, so earlier error codes (and the frontend table) keep their numbers', () => {
+test('IDL: the error codes are errors.rs in order (the frontend explains them from the IDL)', () => {
+  const rust = [...src('errors.rs').matchAll(/^\s{4}([A-Z]\w+),$/gm)].map((m) => m[1])
+  assert.deepEqual(
+    idl.errors.map((e) => e.name),
+    rust,
+  )
+  idl.errors.forEach((e, i) => assert.equal(e.code, 6000 + i, e.name))
   const code = (name) => idl.errors.find((e) => e.name === name)?.code
   assert.equal(code('InvalidAllocation'), 6000)
   assert.equal(code('Paused'), 6007)
   assert.equal(code('NothingToPulse'), 6016)
-  assert.equal(code('KeeperOnly'), 6019)
-  assert.equal(code('WellInvariant'), 6041)
-  assert.deepEqual(
-    idl.errors.slice(-5).map((e) => [e.code, e.name]),
-    [
-      [6042, 'ConfigChanged'],
-      [6043, 'ClaimNotOpen'],
-      [6044, 'CancelWindowClosed'],
-      [6045, 'EpochTooSoon'],
-      [6046, 'PublicTransactionNotAllowed'],
-    ],
-  )
+  for (const name of [
+    'ConfigChanged',
+    'ClaimNotOpen',
+    'CancelWindowClosed',
+    'EpochTooSoon',
+    'PublicTransactionNotAllowed',
+    'LaunchConfigNotAllowed',
+    'NotBound',
+    'VenueUnavailable',
+    'NotCanonicalDammPool',
+    'NotMigrated',
+  ])
+    assert.ok(code(name) >= 6000, name)
 })
 
 test('constants: the client and init-config use the program values', () => {
@@ -448,71 +468,88 @@ test('buildCancelEpochInstruction({ connection, authority, mint, index }): rent 
 })
 
 // ---------------------------------------------------------------------------------------------
-// Pulse: graduation evidence
+// Pulse: the migration is recorded by sync
 
-test('buildPulseInstructions shows the program the pool (or a completed curve) until graduation is recorded', async () => {
+test("buildPulseInstructions records a migration (DAMM v2 pool and the well's position) before harvesting its LP fee", async () => {
   const mint = key()
-  const config = await configData()
-  const pool = q.canonicalPool(mint)
-  const curve = bondingCurvePda(mint)
-  const pulseOf = async (accounts) => {
-    const ixs = await q.buildPulseInstructions({
-      connection: fakeConnection(accounts),
-      payer: key(),
-      mint,
-    })
-    const ix = ixs[ixs.length - 1]
-    return {
-      pool: keyAt(ix, 'pool', 'pulse').pubkey,
-      curve: keyAt(ix, 'bonding_curve', 'pulse').pubkey,
-    }
-  }
-  const base = async (graduatedAt) =>
+  const well = q.wellPda(mint)
+  const nftMint = key()
+  const nftAccount = key()
+  const dammPool = dammPoolFor(mint.toBase58())
+  // The well's position NFT: a Token-2022 account holding 1.
+  const nft = Buffer.alloc(165)
+  nftMint.toBuffer().copy(nft, 0)
+  well.toBuffer().copy(nft, 32)
+  nft.writeBigUInt64LE(1n, 64)
+  nft[108] = 1 // initialized
+  const tokenAccounts = [
+    {
+      pubkey: nftAccount,
+      owner: well,
+      account: { owner: TOKEN_2022_PROGRAM_ID, lamports: 1, data: nft, executable: false },
+    },
+  ]
+  const chain = async ({ migrated, recorded }) =>
     new Map([
       [
         q.quantumPda(mint).toBase58(),
-        { data: await quantumData(mint, { graduated_at: new BN(graduatedAt) }) },
+        {
+          data: await quantumData(mint, {
+            bound_at: new BN(1_700_000_000),
+            ...(recorded
+              ? {
+                  damm_pool: new PublicKey(dammPool),
+                  damm_position: positionOf(nftMint),
+                  damm_nft_account: nftAccount,
+                }
+              : {}),
+          }),
+        },
       ],
-      [q.configPda().toBase58(), { data: config }],
+      [q.configPda().toBase58(), { data: await configData() }],
+      [CONFIG, await dbcConfigAccount()],
+      [dbcPoolFor(mint), await dbcPoolAccount(mint.toBase58(), { creator: well, migrated })],
+      ...(migrated
+        ? [
+            [dammPool, await dammPoolAccount(mint.toBase58(), {})],
+            [positionOf(nftMint).toBase58(), await dammPositionAccount(dammPool, nftMint)],
+          ]
+        : []),
     ])
-  // Not graduated: both optional accounts are left out (program id placeholders).
-  let seen = await pulseOf(await base(0))
-  assert.ok(seen.pool.equals(q.QUANTUM_PROGRAM_ID) && seen.curve.equals(q.QUANTUM_PROGRAM_ID))
+  const pulse = async (accounts) =>
+    q.buildPulseInstructions({
+      connection: fakeConnection(accounts, [], tokenAccounts),
+      payer: key(),
+      mint,
+    })
+  const names = (ixs) => ixs.map((ix) => decodeIx(ix).name)
 
-  // A completed curve before migration.
-  const completed = await base(0)
-  completed.set(curve.toBase58(), {
-    owner: q.PUMP_PROGRAM_ID,
-    lamports: 1_000_000,
-    data: await pumpAccount('pump.json', 'BondingCurve', {
-      complete: true,
-      creator: q.wellPda(mint),
-      quote_mint: new PublicKey('So11111111111111111111111111111111111111112'),
-    }),
-  })
-  seen = await pulseOf(completed)
-  assert.ok(seen.curve.equals(curve))
-  assert.ok(seen.pool.equals(q.QUANTUM_PROGRAM_ID))
+  // Still on the curve: harvest (no LP leg) and pulse.
+  let ixs = await pulse(await chain({ migrated: false }))
+  assert.deepEqual(names(ixs), ['harvest', 'pulse'])
+  assert.equal(decodeIx(ixs[0]).data.legs, q.HARVEST.ALL & ~q.HARVEST.LP_FEE)
 
-  // Migrated: the canonical pool is the evidence (its coin creator is someone else here, so no
-  // collect leg is built).
-  const migrated = new Map(completed)
-  migrated.set(pool.toBase58(), {
-    owner: q.PUMP_AMM_PROGRAM_ID,
-    lamports: 1_000_000,
-    data: await pumpAccount('pump_amm.json', 'Pool', { coin_creator: key() }),
-  })
-  seen = await pulseOf(migrated)
-  assert.ok(seen.pool.equals(pool))
-  assert.ok(seen.curve.equals(q.QUANTUM_PROGRAM_ID))
+  // Migrated, not recorded: sync names the pool, the position and its NFT account, and the harvest
+  // after it claims the position's LP fee too.
+  ixs = await pulse(await chain({ migrated: true }))
+  assert.deepEqual(names(ixs), ['sync', 'harvest', 'pulse'])
+  const sync = ixs[0]
+  assert.equal(keyAt(sync, 'damm_pool', 'sync').pubkey.toBase58(), dammPool)
+  assert.ok(keyAt(sync, 'damm_position', 'sync').pubkey.equals(positionOf(nftMint)))
+  assert.ok(keyAt(sync, 'damm_nft_account', 'sync').pubkey.equals(nftAccount))
+  assert.equal(decodeIx(ixs[1]).data.legs, q.HARVEST.ALL)
+  assert.equal(keyAt(ixs[1], 'damm_pool', 'harvest').pubkey.toBase58(), dammPool)
 
-  // Once recorded, the evidence is no longer sent.
-  const recorded = new Map(migrated)
-  recorded.set(q.quantumPda(mint).toBase58(), {
-    data: await quantumData(mint, { graduated_at: new BN(1_700_000_000) }),
-  })
-  seen = await pulseOf(recorded)
-  assert.ok(seen.pool.equals(q.QUANTUM_PROGRAM_ID) && seen.curve.equals(q.QUANTUM_PROGRAM_ID))
+  // A position the well does not hold (yet) records nothing: no sync, no LP leg.
+  tokenAccounts[0].owner = key()
+  ixs = await pulse(await chain({ migrated: true }))
+  assert.deepEqual(names(ixs), ['harvest', 'pulse'])
+  tokenAccounts[0].owner = well
+
+  // Once recorded, no sync is sent again.
+  ixs = await pulse(await chain({ migrated: true, recorded: true }))
+  assert.deepEqual(names(ixs), ['harvest', 'pulse'])
+  assert.equal(decodeIx(ixs[0]).data.legs, q.HARVEST.ALL)
 })
 
 // ---------------------------------------------------------------------------------------------

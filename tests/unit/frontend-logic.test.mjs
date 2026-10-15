@@ -2,7 +2,12 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 import { setAllocation, total, PRESETS, MODULE_KEYS } from '../../src/lib/hooks.js'
 import { formatUnits, parseUnits, price, pct, sol } from '../../src/lib/format.js'
-import { curveProgress, priceFromReserves, isAddress } from '../../shared/network.mjs'
+import {
+  curveProgress,
+  priceFromReserves,
+  priceFromSqrtPrice,
+  isAddress,
+} from '../../shared/network.mjs'
 
 test('hook allocation always sums to exactly 100% and keeps the edited value', () => {
   let hooks = { creatorBps: 3000, burnBps: 3000, entangleBps: 2000, fusionBps: 2000 }
@@ -40,13 +45,22 @@ test('tiny token prices keep significant digits', () => {
   assert.equal(sol(0.00001234), '0.0000123 SOL')
 })
 
-test('curve maths match pump.fun reserves', () => {
-  // Fresh curve: 30 SOL virtual / 1.073B tokens virtual.
-  const p = priceFromReserves(30_000_000_000n, 1_073_000_000_000_000n)
-  assert.ok(Math.abs(p - 2.796e-8) < 1e-10)
-  assert.equal(curveProgress('793100000000000'), 0)
-  assert.equal(curveProgress('0'), 100)
-  assert.ok(Math.abs(curveProgress('396550000000000') - 50) < 1e-9)
-  assert.equal(isAddress('6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P'), true)
+test('curve maths match Meteora pools', () => {
+  // Raw quote per raw base is (sqrtPrice / 2^64)^2: a Q64.64 sqrt price of 2^64 / 10^4 is
+  // 1e-8 lamports per raw token, i.e. 1e-8 * 1e6 / 1e9 = 1e-11 SOL per whole token.
+  const p = priceFromSqrtPrice(2n ** 64n / 10_000n)
+  assert.ok(Math.abs(p / 1e-11 - 1) < 1e-9, String(p))
+  assert.ok(Math.abs(priceFromSqrtPrice(2n ** 64n, 9) - 1) < 1e-12, 'equal decimals: 1 SOL')
+  assert.equal(priceFromSqrtPrice(0n), null)
+  // Reserves still price a pool: 30 SOL against 1.073B tokens.
+  assert.ok(Math.abs(priceFromReserves(30_000_000_000n, 1_073_000_000_000_000n) - 2.796e-8) < 1e-10)
+  // Curve progress: SOL in the DBC pool against its migration threshold.
+  const threshold = '85000000000'
+  assert.equal(curveProgress('0', threshold), 0)
+  assert.equal(curveProgress('42500000000', threshold), 50)
+  assert.equal(curveProgress(threshold, threshold), 100)
+  assert.equal(curveProgress('90000000000', threshold), 100, 'capped')
+  assert.equal(curveProgress('1000', null), 0, 'unknown threshold')
+  assert.equal(isAddress('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN'), true)
   assert.equal(isAddress('0x8366a39CC670B4001A1121B8F6A443A643e40951'), false)
 })

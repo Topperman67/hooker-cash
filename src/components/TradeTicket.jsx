@@ -91,17 +91,26 @@ export default function TradeTicket({ coin, onTraded }) {
   }, [trade, market, raw, side, slippage])
 
   const venue = market?.venue === 'pool' ? 'pool' : 'curve'
+  // A market Quant Pad cannot trade (a Token-2022 coin); the migrating state has its own note.
+  const unsupported = !migrated && trade && market ? trade.tradeBlocker(market) : null
+  const ready = !!market && !unsupported
+  // A curve buy larger than what is left fills to the threshold and refunds the rest.
+  const fills = side === 'buy' && !!raw && quote?.spend != null && quote.spend < raw
   // The fee this trade's transaction will carry (none while the treasury cannot take it yet).
   const fee = useChargedPlatformFee(
     platform,
-    raw ? (side === 'buy' ? raw : quote?.lamports || 0n) : 0n,
+    raw ? (side === 'buy' ? (quote?.spend ?? raw) : quote?.lamports || 0n) : 0n,
   )
+  const tier = tierForConfig(coin.dbcConfig || market?.pool?.config)
+  // In a launch's first 2 minutes the curve's tax is higher (anti-sniper), falling to the tier's.
+  const taxNow = trade && market ? trade.currentTaxBps(market) : null
   // The amount entered is the most a buy spends on either venue; the check adds the fee, network
   // fees and the token (and, for a pool, temporary WSOL) account rent.
+  // Boolean, not `raw &&`: an amount of 0 is 0n, which React would render as a stray "0".
   const insufficient =
     !migrated &&
     connected &&
-    raw &&
+    !!raw &&
     (side === 'buy'
       ? buyExceedsBalance(raw, balance, { feeBps: platform.feeBps, venue })
       : raw > held)
@@ -313,10 +322,14 @@ export default function TradeTicket({ coin, onTraded }) {
               <dd className="num">{sol(toSol(fee))}</dd>
             </>
           )}
-          {tierForConfig(coin.dbcConfig) && (
+          {tier && (
             <>
               <dt>Trading tax</dt>
-              <dd className="num">{tierForConfig(coin.dbcConfig).feeBps / 100}%</dd>
+              <dd className="num">
+                {taxNow > tier.feeBps
+                  ? `${bps(taxNow)} now, falling to ${bps(tier.feeBps)}`
+                  : bps(tier.feeBps)}
+              </dd>
             </>
           )}
           <dt>Route</dt>
@@ -343,6 +356,13 @@ export default function TradeTicket({ coin, onTraded }) {
             Meteora moves this coin to its DAMM v2 pool, usually within a minute.
           </p>
         )}
+        {unsupported && <p className="error-text">{unsupported}</p>}
+        {fills && !unsupported && (
+          <p className="muted ticket-note">
+            This fills the rest of the bonding curve: about {sol(toSol(quote.spend))} is used and
+            the rest stays in your wallet.
+          </p>
+        )}
         {marketError && !error && !migrated && <p className="error-text">{marketError}</p>}
         {error && (
           <p className="error-text" role="alert">
@@ -360,7 +380,7 @@ export default function TradeTicket({ coin, onTraded }) {
         <button
           type="submit"
           className={`btn btn-lg btn-block${migrated ? '' : side === 'buy' ? ' btn-buy' : ' btn-sell'}`}
-          disabled={migrated || !!busy || (connected && (!raw || insufficient || !market))}
+          disabled={migrated || !!busy || (connected && (!raw || insufficient || !ready))}
         >
           {migrated ? (
             'Graduating to DAMM v2'

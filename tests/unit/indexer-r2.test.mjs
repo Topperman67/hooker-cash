@@ -1,102 +1,46 @@
 // Indexer round 2: launch provenance and the native cap (QP-SEC-9, K5), the onNativeLaunch
-// callback that lets the app keep a launch's media (QP-SEC-2), and legacy SPL Token pump.fun coins
-// read from their Metaplex metadata (build-defect-4). Runs against an in-memory chain and store.
+// callback that lets the app keep a launch's media (QP-SEC-2), and coin identities read from
+// Metaplex metadata (Quant Pad's SPL Token coins) or the Token-2022 metadata extension
+// (build-defect-4). Runs against an in-memory chain and store, with Meteora DBC transactions and
+// accounts, and a real Quant Pad coin's mainnet accounts.
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { createHash, randomBytes } from 'node:crypto'
+import { randomBytes } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { Keypair, PublicKey } from '@solana/web3.js'
-import bs58 from 'bs58'
-import BN from 'bn.js'
-import { PUMP_SDK, bondingCurvePda } from '#pump-sdk'
 import { network } from '../../shared/network.mjs'
 import { createIndexer, issuedUriKey, issuedUriClaimKey, summarize } from '../../server/indexer.mjs'
 import { candlesFor } from '../../server/market-math.mjs'
 import {
-  extractEvents,
-  curveFor,
-  poolFor,
   readMarket,
   readTokenIdentity,
   metaplexMetadataPda,
   METAPLEX_METADATA,
 } from '../../server/solana.mjs'
+import {
+  CONFIG,
+  MAINNET,
+  NOW,
+  address,
+  coinAccounts,
+  createIx,
+  dbcPoolFor,
+  fakeChain,
+  fakeQuantum,
+  idle,
+  installFetch,
+  memoryStore,
+  swapIx,
+} from './meteora-chain.mjs'
 
-const PUMP = network.pumpProgram
 const DAY_MS = 86_400_000
-const NOW = Math.floor(Date.now() / 1000)
-const address = () => Keypair.generate().publicKey.toBase58()
-const signature = () => bs58.encode(randomBytes(64))
 const fixture = (name) =>
   JSON.parse(readFileSync(new URL(`../fixtures/${name}.json`, import.meta.url), 'utf8'))
+installFetch(test)
 
-// ---- encoded pump.fun events and accounts --------------------------------------------------------
-const TRADE = extractEvents(fixture('pump-trade').tx).find((e) => e.name === 'TradeEvent').event
-const CREATE = extractEvents(fixture('pump-create').tx).find((e) => e.name === 'CreateEvent').event
-const disc = (name) => createHash('sha256').update(`event:${name}`).digest().subarray(0, 8)
-function eventLogs(name, data) {
-  const body = PUMP_SDK.offlinePumpProgram.coder.types.encode(
-    name[0].toLowerCase() + name.slice(1),
-    data,
-  )
-  return [
-    `Program ${PUMP} invoke [1]`,
-    `Program data: ${Buffer.concat([disc(name), body]).toString('base64')}`,
-    `Program ${PUMP} success`,
-  ]
-}
-const tradeLogs = (mint, { price, timestamp = NOW, lamports = 1e9 }) => {
-  const tokens = 1_000_000_000_000_000
-  const sol = Math.round(price * 1e9 * (tokens / 1e6))
-  return eventLogs('TradeEvent', {
-    ...TRADE,
-    mint: new PublicKey(mint),
-    timestamp: new BN(timestamp),
-    virtualSolReserves: new BN(sol),
-    virtualQuoteReserves: new BN(sol),
-    virtualTokenReserves: new BN(tokens),
-    solAmount: new BN(lamports),
-    quoteAmount: new BN(lamports),
-  })
-}
-const createLogs = (mint, { creator, user = creator, uri, timestamp = NOW }) =>
-  eventLogs('CreateEvent', {
-    ...CREATE,
-    mint: new PublicKey(mint),
-    bondingCurve: bondingCurvePda(new PublicKey(mint)),
-    creator: new PublicKey(creator),
-    user: new PublicKey(user),
-    uri,
-    timestamp: new BN(timestamp),
-    isMayhemMode: false,
-  })
+// A curve trade that leaves the coin at `price` SOL per whole token (`lamports` in, 1 SOL default).
+const tradeIxs = (mint, options) => [swapIx(mint, options)]
 
-async function curveAccount({ creator, complete = false, price = 3e-8 }) {
-  const tokens = complete ? 0 : 1_073_000_000_000_000
-  const sol = complete ? 0 : Math.round(price * 1e9 * (tokens / 1e6))
-  const data = await PUMP_SDK.offlinePumpProgram.coder.accounts.encode('bondingCurve', {
-    virtualTokenReserves: new BN(tokens),
-    virtualQuoteReserves: new BN(sol),
-    realTokenReserves: new BN(complete ? 0 : 793_100_000_000_000),
-    realQuoteReserves: new BN(0),
-    tokenTotalSupply: new BN(network.totalSupply),
-    complete,
-    creator: new PublicKey(creator),
-    isMayhemMode: false,
-    isCashbackCoin: false,
-    quoteMint: PublicKey.default,
-    creatorFeeBps: new BN(0),
-    canEditCreatorFee: false,
-    isHolderReward: false,
-    creatorFee: new BN(0),
-    protocolFees: new BN(0),
-    depth: 0,
-    initialVirtualQuoteReserves: new BN(sol),
-    postCompleteBaseOut: new BN(0),
-    postCompleteQuoteIn: new BN(0),
-  })
-  return { data, owner: new PublicKey(PUMP), lamports: 1_000_000, executable: false }
-}
 const account = (owner, data) => ({
   data: Buffer.from(data),
   owner: new PublicKey(owner),
@@ -128,7 +72,7 @@ function token2022Mint(mint, { name, symbol, uri }) {
   base[165] = 1 // AccountType::Mint
   return account(network.token2022Program, Buffer.concat([base, tlv, metadata]))
 }
-// A Metaplex MetadataV1 account with NUL-padded fixed-size fields, as pump.fun's legacy coins have.
+// A Metaplex MetadataV1 account with NUL-padded fixed-size fields, as DBC's SPL Token coins have.
 const metaplexAccount = (mint, { name, symbol, uri }) =>
   account(
     METAPLEX_METADATA,
@@ -143,167 +87,27 @@ const metaplexAccount = (mint, { name, symbol, uri }) =>
     ]),
   )
 
-// ---- a real legacy coin: 9BB6…pump on mainnet (SPL Token mint, Metaplex metadata, a 150-byte
-// curve with no creator recorded, graduated to Raydium so it has no PumpSwap pool) ----------------
-const LEGACY = '9BB6NFEcjBCtnNLFko2FqVQBq8HHM13kCyYcdQbgpump'
-const padded = (base64, length) => {
-  const data = Buffer.alloc(length)
-  Buffer.from(base64, 'base64').copy(data)
-  return data
-}
-const LEGACY_ACCOUNTS = {
-  [LEGACY]: account(
-    network.tokenProgram,
-    padded('AAAAAAbFwc5jjSVn0mRosF65UdGijcxuEjSCtcZ1FJdw5ivyqh+x4mqNAwAGAQ==', 82),
-  ),
-  [curveFor(LEGACY)]: account(
-    PUMP,
-    padded('F7f4N2DYrGAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACAxqR+jQMAAQ==', 150),
-  ),
-  [metaplexMetadataPda(LEGACY).toBase58()]: account(
-    METAPLEX_METADATA,
-    padded(
-      'BAbFwc5jjSVn0mRosF65UdGijcxuEjSCtcZ1FJdw5ivyeXi3FEU80+h66x/Am/Bn+WzS1NabVxOV' +
-        'qpvxhq/52j8gAAAARmFydGNvaW4gAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKAAAARmFydGNvaW4g' +
-        'AMgAAABodHRwczovL2lwZnMuaW8vaXBmcy9RbVlmZTh6VkdIQTFoZWVqNDdBa0JYM05uZXRnMmgy' +
-        'a3FqNXl5bXoxeHlLZUhiAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' +
-        'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' +
-        'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAf8BAg==',
-      607,
-    ),
-  ),
-}
-const LEGACY_IDENTITY = {
-  name: 'Fartcoin',
-  symbol: 'Fartcoin',
-  uri: 'https://ipfs.io/ipfs/QmYfe8zVGHA1heej47AkBX3Nnetg2h2kqj5yymz1xyKeHb',
+// ---- a real Quant Pad coin: its mainnet mint (SPL Token), Metaplex metadata and DBC pool on the
+// 1% launch config, and its launch transaction (tests/fixtures) ----------------------------------
+const LAUNCH = fixture('dbc-create')
+const REAL = 'CVmkkge8UBWfCpJJHB2GZ5CzrpHppaoJgs2Rn45r6sQP'
+const REAL_POOL = 'FHbTvBB7jRmY7FgQunGAji9NjcvrAcsXfyjokGiiXy2P'
+const REAL_CREATOR = 'HrmZXCF6yZN6QhB7AmqPwFeqHEGGgXM7YKf3KwoJFGLx'
+const REAL_ACCOUNTS = Object.fromEntries(
+  [REAL, metaplexMetadataPda(REAL).toBase58(), REAL_POOL].map((k) => [k, MAINNET[k]]),
+)
+const REAL_IDENTITY = {
+  name: 'test1',
+  symbol: 'TEST',
+  uri: 'https://quant-pad.vercel.app/m/ec9a330326c26291842f8269919cb5e4',
 }
 
-// ---- in-memory store and chain ------------------------------------------------------------------
-function memoryStore() {
-  const data = new Map()
-  const live = (k) => {
-    const e = data.get(k)
-    if (e?.expires && e.expires < Date.now()) data.delete(k)
-    return data.get(k)
-  }
-  return {
-    data,
-    async get(k) {
-      const e = live(k)
-      return e ? structuredClone(e.value) : null
-    },
-    async set(k, v, options = {}) {
-      if (options.nx && live(k)) return false
-      data.set(k, {
-        value: structuredClone(v),
-        expires: options.ttl ? Date.now() + options.ttl : 0,
-      })
-      return true
-    },
-    async delete(k) {
-      data.delete(k)
-    },
-    async release(k, owner) {
-      if (live(k)?.value === owner) data.delete(k)
-    },
-  }
-}
-async function idle(store) {
-  for (let i = 0; i < 400; i++) {
-    if (![...store.data.keys()].some((k) => k.startsWith('lease:') || k.startsWith('lock:'))) return
-    await new Promise((r) => setTimeout(r, 5))
-  }
-  throw Error('background sync did not finish')
-}
-
-let current = null
-const originalFetch = globalThis.fetch
-globalThis.fetch = (url, init) =>
-  current ? current.fetch(url, init) : Promise.reject(Error('offline'))
-test.after(() => {
-  globalThis.fetch = originalFetch
-})
-
-function fakeChain() {
-  const history = new Map()
-  const txs = new Map()
-  const accounts = new Map()
-  let slot = 5000
-  const chain = {
-    accounts,
-    reads: [], // the keys of every getMultipleAccountsInfo call
-    add(addresses, { logs = [], blockTime = NOW } = {}) {
-      const sig = signature()
-      slot++
-      txs.set(sig, {
-        slot,
-        blockTime,
-        meta: { err: null, innerInstructions: [], logMessages: logs },
-        transaction: { message: { accountKeys: [] } },
-      })
-      for (const a of addresses) {
-        if (!history.has(a)) history.set(a, [])
-        history.get(a).unshift({ signature: sig, slot, blockTime, err: null })
-      }
-      return sig
-    },
-    connection: {
-      rpcEndpoint: 'http://chain.invalid',
-      async getSignaturesForAddress(key, { until, before, limit = 1000 } = {}) {
-        const all = history.get(key.toBase58()) || []
-        let i = 0
-        if (before) {
-          i = all.findIndex((s) => s.signature === before) + 1
-          if (!i) return []
-        }
-        const out = []
-        for (; i < all.length && out.length < Math.min(limit, 1000); i++) {
-          if (all[i].signature === until) break
-          out.push({ ...all[i] })
-        }
-        return out
-      },
-      async getMultipleAccountsInfo(keys) {
-        chain.reads.push(keys.map((k) => k.toBase58()))
-        return keys.map((k) => accounts.get(k.toBase58()) || null)
-      },
-      async getAccountInfo(key) {
-        return accounts.get(key.toBase58()) || null
-      },
-    },
-    async fetch(url, init) {
-      const body = JSON.parse(init.body)
-      const answer = (c) => ({ jsonrpc: '2.0', id: c.id, result: txs.get(c.params[0]) || null })
-      return Response.json(Array.isArray(body) ? body.map(answer) : answer(body))
-    },
-  }
-  current = chain
-  return chain
-}
 const identityReads = (chain, mint) =>
   chain.reads.filter((keys) => keys.includes(metaplexMetadataPda(mint).toBase58())).length
 
-function fakeQuantum(chain) {
-  const seed = new PublicKey(network.pumpFeesProgram)
-  const pda = (tag, mint) =>
-    PublicKey.findProgramAddressSync([Buffer.from(tag), mint.toBuffer()], seed)[0]
-  return {
-    wellPda: (mint) => pda('well', mint),
-    quantumPda: (mint) => pda('quantum', mint),
-    decodeQuantum: (data) => JSON.parse(Buffer.from(data).toString()),
-    register(mint, launcher) {
-      chain.accounts.set(pda('quantum', new PublicKey(mint)).toBase58(), {
-        data: Buffer.from(JSON.stringify({ launcher, createdAt: NOW - 30 })),
-      })
-    },
-    well: (mint) => pda('well', new PublicKey(mint)).toBase58(),
-  }
-}
-
 // A clock the test moves, and an indexer that records its onNativeLaunch calls.
-function setup({ fail = 0, ...options } = {}) {
-  const chain = fakeChain()
+async function setup({ fail = 0, ...options } = {}) {
+  const chain = await fakeChain()
   const store = memoryStore()
   const clock = { at: Date.now() }
   const calls = []
@@ -321,7 +125,7 @@ function setup({ fail = 0, ...options } = {}) {
   })
   return { chain, store, clock, calls, indexer }
 }
-// /api/metadata issuing `uri`, and a pump.fun create (with a 1 SOL dev buy) that uses it.
+// /api/metadata issuing `uri`, and a DBC launch (with a 1 SOL dev buy) that uses it.
 async function launch(
   chain,
   store,
@@ -329,10 +133,11 @@ async function launch(
 ) {
   uri ||= `https://quantpad.test/m/${randomBytes(16).toString('hex')}`
   await store.set(issuedUriKey(uri), { at: Date.now() }, { ttl: DAY_MS })
-  const sig = chain.add([curveFor(mint)], {
-    logs: [
-      ...createLogs(mint, { creator, uri, timestamp }),
-      ...tradeLogs(mint, { price: 3e-8, timestamp }),
+  await chain.setAccounts(coinAccounts(mint, { creator }))
+  const sig = chain.add([dbcPoolFor(mint)], {
+    ixs: [
+      createIx(mint, { creator, uri, activationPoint: timestamp }),
+      swapIx(mint, { price: 3e-8, timestamp, payer: creator }),
     ],
     blockTime: timestamp,
   })
@@ -341,7 +146,7 @@ async function launch(
 
 // ---- QP-SEC-9 / K5: issued URIs are single-use ------------------------------------------------
 test('K5: a native registration consumes its issued URI and announces the launch once', async () => {
-  const { chain, store, calls, indexer } = setup()
+  const { chain, store, calls, indexer } = await setup()
   const { mint, uri, sig } = await launch(chain, store)
 
   const coin = await indexer.registerLaunch(sig)
@@ -371,7 +176,7 @@ test('K5: a native registration consumes its issued URI and announces the launch
 })
 
 test('K5: concurrent registrations of one coin list and announce it once', async () => {
-  const { chain, store, calls, indexer } = setup()
+  const { chain, store, calls, indexer } = await setup()
   const { mint, sig } = await launch(chain, store)
   const results = await Promise.all([
     indexer.registerLaunch(sig),
@@ -401,7 +206,7 @@ test('K5: concurrent registrations of one coin list and announce it once', async
 })
 
 test('K5: a failed onNativeLaunch is retried by a later sync, then never again', async () => {
-  const { chain, store, clock, calls, indexer } = setup({ fail: 1 })
+  const { chain, store, clock, calls, indexer } = await setup({ fail: 1 })
   const { mint, uri, sig } = await launch(chain, store)
   const coin = await indexer.registerLaunch(sig) // the registration itself still succeeds
   assert.equal(coin.external, false)
@@ -423,14 +228,18 @@ test('K5: a failed onNativeLaunch is retried by a later sync, then never again',
 })
 
 test('K5: tracked Quantum coins are announced, including ones upgraded by a sync', async () => {
-  const { chain, store, calls, indexer } = setup()
+  const { chain, store, calls, indexer } = await setup()
   const quantum = fakeQuantum(chain)
   const launcher = address()
   const mint = address()
   const uri = 'https://quantpad.test/m/' + '1'.repeat(32)
   quantum.register(mint, launcher)
-  chain.accounts.set(curveFor(mint), await curveAccount({ creator: quantum.well(mint) }))
-  chain.accounts.set(mint, token2022Mint(mint, { name: 'Q', symbol: 'Q', uri }))
+  await chain.setAccounts(coinAccounts(mint, { creator: quantum.well(mint) }))
+  chain.accounts.set(mint, account(network.tokenProgram, Buffer.alloc(82)))
+  chain.accounts.set(
+    metaplexMetadataPda(mint).toBase58(),
+    metaplexAccount(mint, { name: 'Q', symbol: 'Q', uri }),
+  )
   const tracked = await indexer.track(mint)
   assert.equal(tracked.external, false)
   assert.deepEqual(calls, [{ mint, uri }])
@@ -438,17 +247,17 @@ test('K5: tracked Quantum coins are announced, including ones upgraded by a sync
 
   const stale = address()
   quantum.register(stale, launcher)
-  chain.accounts.set(curveFor(stale), await curveAccount({ creator: quantum.well(stale) }))
+  await chain.setAccounts(coinAccounts(stale, { creator: quantum.well(stale) }))
   const record = {
     mint: stale,
     name: 'Stale',
     symbol: 'S',
     uri: 'https://quantpad.test/m/' + '2'.repeat(32),
     creator: quantum.well(stale),
-    bondingCurve: curveFor(stale),
+    dbcPool: dbcPoolFor(stale),
     quantum: false,
     external: true,
-    source: 'pump.fun',
+    source: 'meteora',
     cursor: null,
   }
   await store.set(`coin:${stale}`, record)
@@ -464,7 +273,7 @@ test('K5: tracked Quantum coins are announced, including ones upgraded by a sync
 // ---- QP-SEC-9 / K5: the native cap ------------------------------------------------------------
 test('K5: hidden mints do not count against the native cap', async () => {
   const hiddenMint = address()
-  const { chain, store, indexer } = setup({ maxNative: 1, hidden: new Set([hiddenMint]) })
+  const { chain, store, indexer } = await setup({ maxNative: 1, hidden: new Set([hiddenMint]) })
   await store.set('coins:list', [summarize({ mint: hiddenMint, name: 'H', external: false })])
   const { mint, sig } = await launch(chain, store)
   assert.equal((await indexer.registerLaunch(sig)).mint, mint)
@@ -476,7 +285,7 @@ test('K5: hidden mints do not count against the native cap', async () => {
 
 test('QP-SEC-9: at the cap, launches whose trading stopped make room; active ones stay', async () => {
   const hiddenMint = address()
-  const { chain, store, clock, indexer } = setup({ maxNative: 7, hidden: [hiddenMint] })
+  const { chain, store, clock, indexer } = await setup({ maxNative: 7, hidden: [hiddenMint] })
   const at = clock.at
   const old = at - 8 * DAY_MS
   const oldSecs = Math.floor(old / 1000)
@@ -561,7 +370,7 @@ test('QP-SEC-9: at the cap, launches whose trading stopped make room; active one
 })
 
 test('QP-SEC-9: a dust buy a week on does not keep a junk launch listed', async () => {
-  const { chain, store, clock, indexer } = setup({ maxNative: 2 })
+  const { chain, store, clock, indexer } = await setup({ maxNative: 2 })
   const junk = await launch(chain, store)
   const kept = await launch(chain, store)
   for (const { sig } of [junk, kept]) await indexer.registerLaunch(sig)
@@ -577,8 +386,8 @@ test('QP-SEC-9: a dust buy a week on does not keep a junk launch listed', async 
     [junk.mint, 1000],
     [kept.mint, 2e9],
   ])
-    chain.add([curveFor(mint)], {
-      logs: tradeLogs(mint, { price: 3e-8, timestamp: hourAgo, lamports }),
+    chain.add([dbcPoolFor(mint)], {
+      ixs: tradeIxs(mint, { price: 3e-8, timestamp: hourAgo, lamports }),
       blockTime: hourAgo,
     })
   const dusted = await indexer.syncCoin(junk.mint)
@@ -604,7 +413,7 @@ test('QP-SEC-9: a dust buy a week on does not keep a junk launch listed', async 
 })
 
 test('QP-SEC-9: one wallet lists at most launchesPerWallet launches a day', async () => {
-  const { chain, store, clock, indexer } = setup({ launchesPerWallet: 2 })
+  const { chain, store, clock, indexer } = await setup({ launchesPerWallet: 2 })
   const creator = address()
   const [a, b, c] = [
     await launch(chain, store, { creator }),
@@ -637,7 +446,7 @@ test('QP-SEC-9: one wallet lists at most launchesPerWallet launches a day', asyn
 })
 
 test('QP-SEC-9: a registration that fails to store its record gives the wallet its slot back', async () => {
-  const { chain, store, indexer } = setup({ launchesPerWallet: 1 })
+  const { chain, store, indexer } = await setup({ launchesPerWallet: 1 })
   const { mint, sig } = await launch(chain, store)
   const { set } = store
   let failing = true
@@ -675,7 +484,8 @@ const nativeRecord = (mint) => ({
   symbol: 'SYN',
   uri: 'https://quantpad.test/m/syn',
   creator: address(),
-  bondingCurve: curveFor(mint),
+  dbcPool: dbcPoolFor(mint),
+  decimals: 6,
   external: false,
   quantum: false,
   source: 'quantpad',
@@ -708,7 +518,7 @@ const expectedPage = (rows, { side, offset = 0, limit = 50 } = {}) => {
 }
 
 test('QP-SEC-4: trades are kept in chunks; a page reads only the chunks it covers', async () => {
-  const { chain, store, indexer } = setup({ quantum: null })
+  const { chain, store, indexer } = await setup({ quantum: null })
   const mint = address()
   const legacy = synthetic(1234)
   await store.set(`coin:${mint}`, nativeRecord(mint))
@@ -758,7 +568,7 @@ test('QP-SEC-4: trades are kept in chunks; a page reads only the chunks it cover
   // New trades: the partial newest chunk is written again with them; the full ones stay.
   const stale = await store.get(`trades:${mint}`)
   for (const price of [5e-8, 6e-8, 7e-8])
-    chain.add([curveFor(mint)], { logs: tradeLogs(mint, { price }) })
+    chain.add([dbcPoolFor(mint)], { ixs: tradeIxs(mint, { price }) })
   io.reset()
   await indexer.syncCoin(mint)
   const after = await store.get(`trades:${mint}`)
@@ -797,7 +607,7 @@ test('QP-SEC-4: trades are kept in chunks; a page reads only the chunks it cover
 })
 
 test('QP-SEC-4: at the cap the oldest chunk is trimmed in the index, not written again', async () => {
-  const { chain, store, indexer } = setup({ quantum: null })
+  const { chain, store, indexer } = await setup({ quantum: null })
   const mint = address()
   const legacy = synthetic(4000)
   await store.set(`coin:${mint}`, nativeRecord(mint))
@@ -808,7 +618,7 @@ test('QP-SEC-4: at the cap the oldest chunk is trimmed in the index, not written
     [7, 6, 5, 4, 3, 2, 1, 0],
   )
   for (const price of [5e-8, 6e-8, 7e-8])
-    chain.add([curveFor(mint)], { logs: tradeLogs(mint, { price }) })
+    chain.add([dbcPoolFor(mint)], { ixs: tradeIxs(mint, { price }) })
   const io = spy(store)
   const record = await indexer.syncCoin(mint)
   const head = await store.get(`trades:${mint}`)
@@ -835,7 +645,7 @@ test('QP-SEC-4: at the cap the oldest chunk is trimmed in the index, not written
 
 // ---- QP-SEC-7: market() defaults -------------------------------------------------------------
 test('QP-SEC-7: market() treats unknown sorts and filters as the defaults', async () => {
-  const { store, indexer } = setup({ quantum: null })
+  const { store, indexer } = await setup({ quantum: null })
   const coin = (name, extra) => summarize({ mint: address(), name, symbol: name, ...extra })
   await store.set('coins:list', [
     coin('OLD', { createdAt: 1, volume24h: 9 }),
@@ -851,101 +661,120 @@ test('QP-SEC-7: market() treats unknown sorts and filters as the defaults', asyn
   assert.deepEqual(await names({ filter: 'tracked' }), ['EXT'])
 })
 
-// ---- build-defect-4: legacy SPL Token coins ---------------------------------------------------
-test('build-defect-4: a legacy SPL Token coin is tracked with its Metaplex identity', async () => {
-  const { chain, store, indexer } = setup({ quantum: null })
-  for (const [key, info] of Object.entries(LEGACY_ACCOUNTS)) chain.accounts.set(key, info)
-  assert.deepEqual(await readTokenIdentity(chain.connection, LEGACY), {
-    ...LEGACY_IDENTITY,
+// ---- build-defect-4: coin identities ------------------------------------------------------------
+test('build-defect-4: a real Quant Pad coin is tracked with its Metaplex identity and live curve', async () => {
+  const { chain, store, indexer } = await setup({ quantum: null })
+  await chain.setAccounts(REAL_ACCOUNTS)
+  assert.deepEqual(await readTokenIdentity(chain.connection, REAL), {
+    ...REAL_IDENTITY,
     tokenProgram: network.tokenProgram,
   })
-  const market = await readMarket(chain.connection, LEGACY)
-  assert.equal(market.curve.complete, true)
-  assert.equal(market.curve.creator, null, 'the zero key is not a creator')
-  assert.equal(market.poolMissing, true, 'it graduated to Raydium, not PumpSwap')
-
-  // An old curve trade (from before it graduated) is not its price now.
-  chain.add([curveFor(LEGACY)], {
-    logs: tradeLogs(LEGACY, { price: 4e-7, timestamp: NOW - 400 * 86400 }),
-    blockTime: NOW - 400 * 86400,
-  })
-  const coin = await indexer.track(LEGACY)
-  assert.deepEqual([coin.name, coin.symbol, coin.uri], Object.values(LEGACY_IDENTITY))
+  const market = await readMarket(chain.connection, REAL, { launchConfigs: [CONFIG] })
   assert.deepEqual(
-    [coin.creator, coin.tokenProgram, coin.complete, coin.poolMissing, coin.pool, coin.price],
-    [null, network.tokenProgram, true, true, null, null],
+    [market.curve.dbcPool, market.curve.dbcConfig, market.curve.creator, market.curve.quoteMint],
+    [REAL_POOL, CONFIG, REAL_CREATOR, network.wsolMint],
   )
+  assert.deepEqual(
+    [market.curve.complete, market.curve.migrated, market.pool],
+    [false, false, null],
+  )
+  assert.equal(market.curve.decimals, 6)
+  assert.equal(market.curve.migrationThreshold, '85000000000')
+  assert.ok(
+    Math.abs(market.curve.progress - (Number(market.curve.quoteReserve) / 85e9) * 100) < 1e-9,
+  )
+  assert.ok(market.curve.price > 0 && market.curve.price < 1e-6)
+  assert.equal(market.supply, network.totalSupply, 'a fixed 1B supply')
+
+  // Its launch is on chain: tracking reads the identity, the sync the dev buy.
+  chain.add([REAL_POOL], { tx: LAUNCH.tx, sig: LAUNCH.signature })
+  const coin = await indexer.track(REAL)
+  assert.deepEqual([coin.name, coin.symbol, coin.uri], Object.values(REAL_IDENTITY))
+  assert.deepEqual(
+    [coin.creator, coin.tokenProgram, coin.dbcPool, coin.complete, coin.migrated, coin.external],
+    [REAL_CREATOR, network.tokenProgram, REAL_POOL, false, false, true],
+  )
+  assert.equal(coin.price, market.curve.price)
   await idle(store)
-  const synced = await indexer.syncCoin(LEGACY)
-  assert.equal(synced.price, null)
-  assert.equal(synced.marketCap, null)
-  assert.equal(synced.name, 'Fartcoin')
+  const synced = await indexer.syncCoin(REAL)
+  assert.equal(
+    synced.price,
+    market.curve.price,
+    'the live curve, over the dev buy it moved on from',
+  )
+  assert.equal(synced.decimals, 6)
+  const [devBuy] = (await indexer.trades(REAL)).items
+  assert.deepEqual(
+    [devBuy.signature, devBuy.side, devBuy.solAmount, devBuy.trader],
+    [LAUNCH.signature, 'buy', '100000000', REAL_CREATOR],
+  )
   const [summary] = await indexer.list()
-  assert.deepEqual([summary.name, summary.poolMissing], ['Fartcoin', true])
+  assert.deepEqual([summary.name, summary.migrated], ['test1', false])
 })
 
 test("build-defect-4: records stored as 'Unknown $???' heal on the next sync or track", async () => {
-  const { chain, store, indexer } = setup({ quantum: null })
-  for (const [key, info] of Object.entries(LEGACY_ACCOUNTS)) chain.accounts.set(key, info)
-  // What the old track() stored for this coin.
+  const { chain, store, indexer } = await setup({ quantum: null })
+  await chain.setAccounts(REAL_ACCOUNTS)
+  // A record whose identity read failed when it was stored, before its DBC pool was known.
   const placeholder = {
-    mint: LEGACY,
+    mint: REAL,
     name: 'Unknown',
     symbol: '???',
     uri: '',
     creator: '11111111111111111111111111111111',
-    bondingCurve: curveFor(LEGACY),
     quantum: false,
     external: true,
-    source: 'pump.fun',
-    complete: true,
-    pool: poolFor(LEGACY),
+    source: 'meteora',
+    complete: false,
     cursor: null,
     poolCursor: null,
     price: null,
     registeredAt: Date.now(),
   }
-  await store.set(`coin:${LEGACY}`, placeholder)
+  await store.set(`coin:${REAL}`, placeholder)
   await store.set('coins:list', [summarize(placeholder)])
-  const synced = await indexer.syncCoin(LEGACY)
+  const synced = await indexer.syncCoin(REAL)
   assert.deepEqual(
-    [synced.name, synced.symbol, synced.uri, synced.creator, synced.pool, synced.poolMissing],
-    [...Object.values(LEGACY_IDENTITY), null, null, true],
+    [synced.name, synced.symbol, synced.uri, synced.creator, synced.dbcPool, synced.dbcConfig],
+    [...Object.values(REAL_IDENTITY), REAL_CREATOR, REAL_POOL, CONFIG],
   )
   assert.equal(synced.identityPending, false)
-  assert.equal((await indexer.list())[0].name, 'Fartcoin')
+  assert.equal(synced.decimals, 6)
+  assert.ok(synced.price > 0)
+  assert.equal((await indexer.list())[0].name, 'test1')
 
   // track() of a stored placeholder repairs it before answering.
-  await store.set(`coin:${LEGACY}`, { ...placeholder, syncedAt: Date.now() })
-  const tracked = await indexer.track(LEGACY)
-  assert.deepEqual([tracked.name, tracked.creator], ['Fartcoin', null])
+  await store.set(`coin:${REAL}`, { ...placeholder, syncedAt: Date.now() })
+  const tracked = await indexer.track(REAL)
+  assert.deepEqual([tracked.name, tracked.symbol], ['test1', 'TEST'])
+  assert.equal(tracked.creator, null, 'the system program is no creator; the next sync reads it')
   await idle(store)
 })
 
 test('build-defect-4: a failed identity read is retried, never stored as the real identity', async () => {
-  const { chain, store, indexer } = setup({ quantum: null })
-  for (const [key, info] of Object.entries(LEGACY_ACCOUNTS)) chain.accounts.set(key, info)
+  const { chain, store, indexer } = await setup({ quantum: null })
+  await chain.setAccounts(REAL_ACCOUNTS)
   const read = chain.connection.getMultipleAccountsInfo
   let throttled = true
   chain.connection.getMultipleAccountsInfo = async (keys) => {
-    if (throttled && keys.some((k) => k.equals(metaplexMetadataPda(LEGACY))))
+    if (throttled && keys.some((k) => k.equals(metaplexMetadataPda(REAL))))
       throw Error('429 Too Many Requests')
     return read(keys)
   }
-  await assert.rejects(readTokenIdentity(chain.connection, LEGACY), /429/)
-  const coin = await indexer.track(LEGACY)
+  await assert.rejects(readTokenIdentity(chain.connection, REAL), /429/)
+  const coin = await indexer.track(REAL)
   assert.deepEqual([coin.name, coin.identityPending], ['Unknown', true])
   await idle(store)
   throttled = false
-  const healed = await indexer.syncCoin(LEGACY)
-  assert.deepEqual([healed.name, healed.identityPending], ['Fartcoin', false])
+  const healed = await indexer.syncCoin(REAL)
+  assert.deepEqual([healed.name, healed.identityPending], ['test1', false])
 
   // A mint that is not visible yet (a lagging node) is not "no metadata" either.
   await assert.rejects(readTokenIdentity(chain.connection, address()), { code: 'mint_missing' })
 })
 
 test('build-defect-4: Token-2022 metadata is read from the mint; a coin without any settles', async () => {
-  const { chain, store, indexer } = setup({ quantum: null })
+  const { chain, store, indexer } = await setup({ quantum: null })
   const mint = address()
   chain.accounts.set(
     mint,
@@ -974,7 +803,7 @@ test('build-defect-4: Token-2022 metadata is read from the mint; a coin without 
   // No metadata anywhere: the placeholder is final and later syncs do not read it again.
   const bare = address()
   chain.accounts.set(bare, account(network.token2022Program, Buffer.alloc(82)))
-  chain.accounts.set(curveFor(bare), await curveAccount({ creator: address() }))
+  await chain.setAccounts(coinAccounts(bare, { creator: address() }))
   const coin = await indexer.track(bare)
   assert.deepEqual([coin.name, coin.symbol, coin.identityPending], ['Unknown', '???', false])
   await idle(store)

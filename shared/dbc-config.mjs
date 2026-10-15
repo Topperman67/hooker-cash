@@ -48,7 +48,12 @@ export function launchConfigParameters(overrides = {}) {
         numberOfPeriod: c.antiSniper.numberOfPeriod,
         totalDuration: c.antiSniper.totalDurationSecs,
       }
-    : { startingFeeBps: c.baseFeeBps, endingFeeBps: c.baseFeeBps, numberOfPeriod: 0, totalDuration: 0 }
+    : {
+        startingFeeBps: c.baseFeeBps,
+        endingFeeBps: c.baseFeeBps,
+        numberOfPeriod: 0,
+        totalDuration: 0,
+      }
   return buildCurve({
     token: {
       tokenType: TokenType.SPLToken,

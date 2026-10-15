@@ -10,6 +10,14 @@ import { createKeeper, loadQuantumClient, quantumClientError } from '../../serve
 import { createFileStore } from '../../server/storage.mjs'
 import { buildEntanglementTree, verifyClaim } from '../../shared/merkle.mjs'
 import { network } from '../../shared/network.mjs'
+import {
+  CONFIG,
+  dammPoolAccount,
+  dammPoolFor,
+  dbcConfigAccount,
+  dbcPoolAccount,
+  dbcPoolFor,
+} from './meteora-chain.mjs'
 
 const PROGRAM = SystemProgram.programId // any program id works for fake PDAs
 const DAY = 86400
@@ -68,7 +76,12 @@ function fakeChain() {
     statusFor: null,
     pending: 0n,
     unallocated: 0n,
+    // Where the coin trades (fetchVenue): its DBC curve until `complete`, then the DAMM v2 pool.
     complete: false,
+    venue: null, // overrides the venue kind ('curve', 'migrating', 'pool', 'none')
+    venues: new Map(), // mint -> venue kind, over `venue`
+    poolStatus: 0, // DAMM v2 pool_status: 0 enabled, 1 disabled
+    migrations: [], // dbcMigrationInstructions calls
     hang: new Set(),
     delay: 0,
     next: null,
@@ -167,6 +180,15 @@ function fakeChain() {
     fetchConfig: async () => ({ minActionInterval: 60, maxBurnLamports: 50_000_000n }),
     pendingCreatorFees: async () => chain.pending,
     fetchWellBalance: async () => ({ unallocated: chain.unallocated }),
+    // Mirrors shared/quantum.mjs: found through the coin's Quantum account, so a Standard launch
+    // (none) is refused.
+    fetchVenue: async (_c, mint) => {
+      if (!chain.coins.has(mint.toBase58()))
+        throw new Error('fetchMeteoraVenue needs the DBC config or pool')
+      const kind =
+        chain.venues.get(mint.toBase58()) ?? chain.venue ?? (chain.complete ? 'pool' : 'curve')
+      return kind === 'pool' ? { kind, damm: { poolStatus: chain.poolStatus } } : { kind }
+    },
     fetchEpoch: async (_c, mint, index) => chain.epoch(mint, index) ?? null,
     isLeafClaimed: (epoch, leafIndex) => epoch.claimed.has(leafIndex),
     decodeQuantumEvents: (logs) => logs || [],
@@ -196,7 +218,7 @@ function fakeChain() {
       chain.next = () => [
         {
           name: 'Fused',
-          data: { spent: spendLamports - 1_234n, lpReceived: 55n, tokensBurned: 3n },
+          data: { spent: spendLamports - 1_234n, liquidityAdded: 55n, tokensBurned: 3n },
         },
       ]
       return [ix()]
@@ -397,7 +419,12 @@ test('fusion logs the Fused event, and a failed transaction is not retried as an
   const chain = fakeChain()
   const store = newStore()
   const mint = newMint()
-  chain.register(mint, { fusionReserve: 80_000_000n, burnReserve: 20_000_000n })
+  // Migrated, and its DAMM v2 pool recorded by sync: Fusion adds to the well's position there.
+  chain.register(mint, {
+    fusionReserve: 80_000_000n,
+    burnReserve: 20_000_000n,
+    dammPool: newMint(),
+  })
   chain.complete = true
   chain.failBurn = true
   const keeper = makeKeeper(chain, store)
@@ -410,7 +437,180 @@ test('fusion logs the Fused event, and a failed transaction is not retried as an
   )
   assert.equal(rows[0].budget, '50000000')
   assert.equal(rows[0].spent, String(50_000_000 - 1_234))
-  assert.equal(rows[0].lpReceived, '55')
+  assert.equal(rows[0].liquidityAdded, '55')
+})
+
+// ---- Meteora venues ----------------------------------------------------------------------------
+test('burns wait for an open venue: not on a full curve awaiting migration or a disabled pool', async () => {
+  const chain = fakeChain()
+  const store = newStore()
+  const mint = newMint()
+  chain.register(mint, { burnReserve: 30_000_000n, dammPool: newMint() })
+  const keeper = makeKeeper(chain, store)
+  for (const [venue, poolStatus] of [
+    ['migrating', 0], // nothing trades until Meteora's migration runs
+    ['none', 0],
+    ['pool', 1], // Meteora's operators disabled the DAMM v2 pool
+  ]) {
+    Object.assign(chain, { venue, poolStatus })
+    await keeper.tick()
+    assert.deepEqual(chain.calls, [], venue)
+  }
+  // A venue read that fails skips the hooks that need one, and the pass goes on.
+  chain.quantum.fetchVenue = async () => {
+    throw new Error('429 Too Many Requests')
+  }
+  await keeper.tick()
+  assert.deepEqual(chain.calls, [])
+  delete chain.quantum.fetchVenue
+  await keeper.tick()
+  assert.deepEqual(chain.calls, [], 'a client without fetchVenue never burns blind')
+})
+
+test('a curve burn waits out the launch fee window; a pool burn does not', async () => {
+  const chain = fakeChain()
+  const store = newStore()
+  const mint = newMint()
+  // Launched 10 s ago: early swaps still pay the anti-sniper fee (up to 25% for 2 minutes).
+  chain.register(mint, { burnReserve: 30_000_000n, createdAt: nowSecs() - 10 })
+  const keeper = makeKeeper(chain, store)
+  await keeper.tick()
+  assert.deepEqual(chain.calls, [])
+  chain.coins.get(mint).createdAt = nowSecs() - 121
+  await keeper.tick()
+  assert.deepEqual(chain.calls, ['burn:30000000'])
+
+  const migrated = newMint()
+  chain.register(migrated, {
+    burnReserve: 30_000_000n,
+    createdAt: nowSecs() - 10,
+    dammPool: newMint(),
+  })
+  chain.venues.set(migrated, 'pool')
+  chain.calls.length = 0
+  await keeper.tick()
+  assert.ok(chain.calls.includes('burn:30000000'), chain.calls.join())
+})
+
+test('a migrated coin whose DAMM v2 pool is not recorded is synced before Fusion', async () => {
+  const chain = fakeChain()
+  const store = newStore()
+  const mint = newMint()
+  chain.register(mint, { fusionReserve: 80_000_000n })
+  chain.venue = 'pool'
+  const pool = newMint()
+  chain.quantum.buildSyncInstruction = async ({ mint: key }) => {
+    chain.calls.push('sync')
+    chain.next = () => {
+      chain.coins.get(key.toBase58()).dammPool = pool
+    }
+    return ix()
+  }
+  const keeper = makeKeeper(chain, store)
+  await keeper.tick()
+  assert.deepEqual(chain.calls, ['sync', 'fusion:50000000'])
+  assert.deepEqual(
+    (await keeper.log(mint)).map((r) => r.action),
+    ['fusion', 'sync'],
+  )
+  // Once recorded, no sync is sent again.
+  chain.calls.length = 0
+  chain.coins.get(mint).lastFusionAt = 0
+  await keeper.tick()
+  assert.deepEqual(chain.calls, ['fusion:50000000'])
+})
+
+test('the keeper migrates full curves of Quant Pad launches, at most two a tick', async () => {
+  const chain = fakeChain()
+  const store = newStore()
+  // The venue comes from each coin's DBC pool account (a Standard launch has no Quantum account).
+  const accounts = new Map([[CONFIG, await dbcConfigAccount()]])
+  const getAccountInfo = chain.connection.getAccountInfo
+  chain.connection.getAccountInfo = async (key) =>
+    accounts.get(key.toBase58()) ?? getAccountInfo(key)
+  const creator = newMint()
+  const poolOf = async (mint, state) => dbcPoolAccount(mint, { creator, ...state })
+  const mints = new Map() // DBC pool -> mint
+  async function coin({ complete = true, migrated = false, visible = true, ...listed } = {}) {
+    const mint = newMint()
+    mints.set(dbcPoolFor(mint), mint)
+    accounts.set(dbcPoolFor(mint), await poolOf(mint, { complete, migrated }))
+    if (migrated && visible) accounts.set(dammPoolFor(mint), await dammPoolAccount(mint, {}))
+    return {
+      mint,
+      dbcPool: dbcPoolFor(mint),
+      external: false,
+      complete,
+      migrated: false,
+      ...listed,
+    }
+  }
+  const moved = await coin({ migrated: true }) // migrated on-chain; the index has not caught up
+  // Marked migrated, though this RPC node does not show its DAMM v2 pool yet: done too.
+  const lagging = await coin({ migrated: true, visible: false })
+  const [first, second] = [await coin(), await coin()]
+  // Listed summaries carry no pool address: it comes from the stored record.
+  const unlisted = await coin({ dbcPool: undefined })
+  const others = [
+    await coin({ complete: false }), // still on its curve
+    await coin({ external: true }), // a tracked coin, not a Quant Pad launch
+  ]
+  chain.list.push(moved, lagging, first, unlisted, second, ...others)
+  const migratedState = new Map()
+  for (const pool of mints.keys())
+    migratedState.set(pool, await poolOf(mints.get(pool), { migrated: true }))
+  chain.quantum.dbcMigrationInstructions = async ({ payer, dbcPool }) => {
+    assert.ok(payer.equals(keeperKey.publicKey))
+    chain.migrations.push(dbcPool)
+    chain.next = () => accounts.set(dbcPool, migratedState.get(dbcPool))
+    // migration_damm_v2 is signed by the two new position NFT mints.
+    const nfts = [Keypair.generate(), Keypair.generate()]
+    return {
+      instructions: nfts.map((nft) =>
+        SystemProgram.transfer({
+          fromPubkey: nft.publicKey,
+          toPubkey: keeperKey.publicKey,
+          lamports: 1,
+        }),
+      ),
+      signers: nfts,
+    }
+  }
+  const synced = []
+  const keeper = createKeeper({
+    connection: chain.connection,
+    store,
+    quantum: chain.quantum,
+    keeper: keeperKey,
+    indexer: {
+      list: async () => chain.list,
+      coin: async (mint) => ({ mint, dbcPool: dbcPoolFor(mint) }),
+      syncCoin: async (mint) => synced.push(mint),
+    },
+    log: (m) => chain.logged.push(m),
+    pollMs: 1,
+  })
+  await keeper.tick()
+  // The coins Meteora already moved do not use up the tick's two migrations.
+  assert.deepEqual(chain.migrations, [first.dbcPool, dbcPoolFor(unlisted.mint)])
+  assert.deepEqual(synced, [first.mint, unlisted.mint], 'the indexer reads the new pool')
+  assert.equal((await keeper.log(first.mint))[0].action, 'migrate')
+
+  // Migrated now (the index still lists them as full curves): the last one gets its turn.
+  chain.migrations.length = 0
+  await keeper.tick()
+  assert.deepEqual(chain.migrations, [second.dbcPool])
+  chain.migrations.length = 0
+  await keeper.tick()
+  assert.deepEqual(chain.migrations, [])
+
+  // A failed migration is logged and the tick goes on.
+  accounts.set(second.dbcPool, await poolOf(second.mint, { complete: true }))
+  chain.quantum.dbcMigrationInstructions = async () => {
+    throw new Error('Not a DBC pool.')
+  }
+  await keeper.tick()
+  assert.ok(chain.logged.some((m) => m.startsWith(`migrate ${second.mint}: Not a DBC pool.`)))
 })
 
 test('claims skips claimed, expired and externally closed epochs, and builds no trees', async () => {
@@ -611,7 +811,7 @@ test("the holder snapshot reads the mint's own token program, SPL Token included
   const [legacy, modern] = [newMint(), newMint()]
   chain.register(legacy, { entangleReserve: 100_000_000n })
   chain.register(modern, { entangleReserve: 100_000_000n })
-  chain.mintOwners.set(legacy, SPL_TOKEN) // made with pump.fun's legacy `create`
+  chain.mintOwners.set(legacy, SPL_TOKEN) // as Quant Pad's DBC launches make them
   chain.holders = [[holders[0], 1_000n]] // a single holder: an empty proof
   const keeper = makeKeeper(chain, store)
   await keeper.tick()
@@ -748,7 +948,7 @@ test('free well lamports alone do not make the keeper pulse', async () => {
 
 test('loadQuantumClient logs why the client failed to load', async () => {
   const reported = []
-  const missing = Object.assign(new Error("Cannot find package '@pump-fun/pump-swap-sdk'"), {
+  const missing = Object.assign(new Error("Cannot find package '@meteora-ag/cp-amm-sdk'"), {
     code: 'ERR_MODULE_NOT_FOUND',
   })
   const client = await loadQuantumClient({
@@ -760,7 +960,7 @@ test('loadQuantumClient logs why the client failed to load', async () => {
   assert.equal(client, null)
   assert.equal(reported.length, 1)
   assert.match(reported[0], /ERR_MODULE_NOT_FOUND/)
-  assert.match(reported[0], /pump-swap-sdk/)
+  assert.match(reported[0], /cp-amm-sdk/)
   assert.equal(quantumClientError, 'ERR_MODULE_NOT_FOUND')
 
   assert.deepEqual(await loadQuantumClient({ load: async () => ({ ok: 1 }) }), { ok: 1 })

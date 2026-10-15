@@ -9,10 +9,11 @@ import HoloCard from '../components/HoloCard.jsx'
 import { api } from '../lib/api.js'
 import { MODULES, PRESETS, MAX_SPLITS, setAllocation } from '../lib/hooks.js'
 import { bps, formatUnits, parseUnits, sol, toSol } from '../lib/format.js'
-import { friendlyWalletError, packTransactions } from '../lib/solana.js'
+import { friendlyWalletError, isTransientRpcError, packTransactions } from '../lib/solana.js'
 import { platformFee } from '../lib/amounts.js'
 import { useChargedPlatformFee } from '../lib/useChargedFee.js'
 import {
+  assertLaunchInputs,
   assertQuantumOpen,
   devBuyQuote,
   grindMint,
@@ -99,7 +100,7 @@ export default function LaunchPage() {
   const navigate = useNavigate()
   const toast = useToast()
   const { connected, address, balance, openDialog, sendTransactions } = useWallet()
-  const { platform, quantum, lookupTable, dbcConfig } = usePlatform()
+  const { platform, quantum, lookupTable } = usePlatform()
   const [draft, setDraft] = useState(loadDraft)
   const [uploading, setUploading] = useState(false)
   const [errors, setErrors] = useState({})
@@ -164,6 +165,8 @@ export default function LaunchPage() {
     if (quantumMode) {
       draft.splits.forEach((s, i) => {
         if (!isAddress(s.wallet)) e[`split-${i}`] = 'Enter a valid Solana wallet address.'
+        else if (draft.splits.findIndex((x) => x.wallet === s.wallet) < i)
+          e[`split-${i}`] = 'This wallet is already listed. Each wallet can appear once.'
         if (!(Number(s.bps) > 0)) e[`split-${i}`] = 'Give this wallet a share above 0%.'
       })
       if (splitTotal > 10000)
@@ -173,6 +176,7 @@ export default function LaunchPage() {
           e.lock = 'Time Dilation locks part of your dev buy. Add a dev buy or turn the lock off.'
         if (Number(draft.lock.cliffDays) > Number(draft.lock.durationDays))
           e.lock = 'The cliff must end before vesting finishes.'
+        if (!(Number(draft.lock.durationDays) >= 1)) e.lock = 'Vesting must last at least a day.'
         if (Number(draft.lock.durationDays) > 1460) e.lock = 'Vesting can last at most four years.'
       }
     }
@@ -245,11 +249,18 @@ export default function LaunchPage() {
     let job = resume ? pendingLaunch.current : null
     try {
       if (!job) {
-        // check before publishing anything: a paused program would strand the metadata
+        // check before publishing anything: a paused program or inputs the builders refuse would
+        // strand the metadata
         if (quantumMode) {
           setProgress('Checking that Quantum launches are open')
-          await assertQuantumOpen()
+          await assertQuantumOpen(tier.config)
         }
+        setProgress('Checking the launch settings')
+        await assertLaunchInputs({
+          hooks: launchHooks(),
+          devBuyLamports: devLamports || 0n,
+          dbcConfig: tier.config,
+        })
         setProgress('Publishing metadata')
         const uri = await publishMetadata(draft, draft.image)
         setProgress(`Finding a mint address ending in ${MINT_SUFFIX}`)
@@ -287,7 +298,7 @@ export default function LaunchPage() {
       // minute old: read the config right before asking the wallet to sign.
       if (needsRegister(job)) {
         setProgress('Checking that Quantum launches are open')
-        await assertQuantumOpen()
+        await assertQuantumOpen(job.snapshot.dbcConfig)
       }
       // One pass for a normal launch. A resume after the coin was created may take one pass for a
       // dev buy rebuilt from the live curve and one for a lock sized from the tokens received.
@@ -356,8 +367,8 @@ export default function LaunchPage() {
       setFailure({
         message: friendlyWalletError(err),
         // Resumable: something landed or may have, or a retryable error (the lookup table did not
-        // load) before anything was sent, which the same job can simply retry.
-        partial: hasProgress(job) || (!!job && !!err?.retryable),
+        // load, the RPC was rate limited) before anything was sent, which the same job can retry.
+        partial: hasProgress(job) || (!!job && (!!err?.retryable || isTransientRpcError(err))),
         created: !!job?.done.launch,
         progressed: hasProgress(job),
         signature: err?.unknown ? err.failedSignature || err.signature : null,

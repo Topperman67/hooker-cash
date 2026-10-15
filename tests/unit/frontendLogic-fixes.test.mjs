@@ -1,7 +1,8 @@
 // Frontend logic fixes: launch grouping and resume bookkeeping, confirmation retries, lookup-table
-// loading, PumpSwap spend limits, platform-fee rent safety and error mapping.
+// loading, Meteora spend limits, platform-fee rent safety and error mapping.
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import BN from 'bn.js'
 import {
   AddressLookupTableAccount,
@@ -11,7 +12,7 @@ import {
   SystemProgram,
   TransactionInstruction,
 } from '@solana/web3.js'
-import { buyQuoteInput } from '@pump-fun/pump-swap-sdk'
+import { getAssociatedTokenAddressSync } from '@solana/spl-token'
 
 // src/lib/solana.js builds its Connection from window.location at import time.
 globalThis.window ??= { location: { origin: 'http://127.0.0.1:9' } }
@@ -33,6 +34,7 @@ const plan = await import('../../src/lib/launchPlan.js')
 const solana = await import('../../src/lib/solana.js')
 const launch = await import('../../src/lib/launch.js')
 const trade = await import('../../src/lib/trade.js')
+const { dbcPoolPda, dbcCoder, dammCoder } = await import('../../shared/meteora.mjs')
 // Installs the Quantum Hooks error table, as the app does whenever it builds a Quantum transaction.
 const quantumClient = await (await import('../../src/lib/quantum.js')).loadQuantum()
 
@@ -51,7 +53,7 @@ solana.connection.getRecentPrioritizationFees = async () => []
 // An instruction with `accounts` distinct non-signer keys and `data` bytes.
 const ix = (accounts, data = 8, keys = Array.from({ length: accounts }, key)) =>
   new TransactionInstruction({
-    programId: new PublicKey(PROGRAMS.pump),
+    programId: new PublicKey(PROGRAMS.dbc),
     keys: keys.map((pubkey) => ({ pubkey, isSigner: false, isWritable: true })),
     data: Buffer.alloc(data),
   })
@@ -85,7 +87,7 @@ test('packGroups merges whole groups greedily, keeps order and reports group ind
   assert.equal(tooBig.group, 1)
 })
 
-test('launch groups keep create_v2, the ATA, buy_v2 and the fee in one group (Quantum and standard)', () => {
+test('launch groups keep the DBC create, the dev buy and the fee in one group (Quantum and standard)', () => {
   const [register, create, ata, buy, fee, lock] = [
     'register',
     'create',
@@ -146,24 +148,53 @@ test('real packing never splits the create + dev buy group and fails loudly when
   assert.match(explained.message, /QUANTPAD_LOOKUP_TABLE/)
 })
 
-test('a Quantum launch without a dev buy builds [register], [create_v2] with matching stages', async () => {
-  const launcher = key()
-  const mint = key()
-  const built = await launch.launchInstructions({
-    launcher: launcher.toBase58(),
-    mint,
-    name: 'Cat',
-    symbol: 'CAT',
-    uri: 'https://example.invalid/m.json',
-    quantum: true,
-    hooks: { creatorBps: 3000, burnBps: 3000, entangleBps: 2000, fusionBps: 2000, splits: [] },
-    devBuyLamports: 0n,
-    slippagePct: 2,
-    platform: { treasury: key().toBase58(), feeBps: 50 },
-  })
-  assert.deepEqual(built.stages, [['register'], ['launch']])
-  assert.equal(built.groups[1].length, 1)
-  assert.equal(built.groups[1][0].programId.toBase58(), PROGRAMS.pump)
+test('a launch without a dev buy builds [register], [create, hand-over, sync] (Quantum) or [create]', async () => {
+  const { CONFIG, dbcConfigAccount } = await import('./meteora-chain.mjs')
+  const original = solana.connection.getAccountInfo
+  const config = await dbcConfigAccount()
+  solana.connection.getAccountInfo = async (address) =>
+    address.toBase58() === CONFIG ? config : null
+  try {
+    const args = {
+      launcher: key().toBase58(),
+      mint: key(),
+      name: 'Cat',
+      symbol: 'CAT',
+      uri: 'https://example.invalid/m.json',
+      devBuyLamports: 0n,
+      slippagePct: 2,
+      platform: { treasury: key().toBase58(), feeBps: 50 },
+      dbcConfig: CONFIG,
+    }
+    const built = await launch.launchInstructions({
+      ...args,
+      quantum: true,
+      hooks: { creatorBps: 3000, burnBps: 3000, entangleBps: 2000, fusionBps: 2000, splits: [] },
+    })
+    assert.deepEqual(built.stages, [['register'], ['launch']])
+    assert.deepEqual(
+      built.groups.map((g) => g.map((ix) => ix.programId.toBase58())),
+      [
+        [PROGRAMS.quantum],
+        // DBC create, transfer_pool_creator to the well, then sync records the binding before
+        // anyone can trade.
+        [PROGRAMS.dbc, PROGRAMS.dbc, PROGRAMS.quantum],
+      ],
+    )
+    assert.equal(built.dbcPool.toBase58(), dbcPoolPda(CONFIG, args.mint).toBase58())
+    const standard = await launch.launchInstructions({ ...args, quantum: false })
+    assert.deepEqual(standard.stages, [['launch']])
+    assert.deepEqual(
+      standard.groups.map((g) => g.map((ix) => ix.programId.toBase58())),
+      [[PROGRAMS.dbc]],
+    )
+    // No launch config, no launch.
+    await assert.rejects(launch.launchInstructions({ ...args, quantum: false, dbcConfig: null }), {
+      friendly: true,
+    })
+  } finally {
+    solana.connection.getAccountInfo = original
+  }
 })
 
 // ---------------------------------------------------------------------------------------------
@@ -618,66 +649,116 @@ test('a launch fails with a retryable error when the lookup table cannot be load
 })
 
 // ---------------------------------------------------------------------------------------------
-// PumpSwap buys spend at most the amount entered; Max and the balance check
+// Meteora buys spend at most the amount entered; Max and the balance check
 // ---------------------------------------------------------------------------------------------
 
-const BIG = 10n ** 18n
-const fakeSwap = ({ cashback }) => ({
+// Real mainnet accounts (tests/fixtures/meteora-accounts.json): Quant Pad's 1% launch config and a
+// launch's DBC pool on it, and a coin Meteora migrated with its DAMM v2 pool.
+const ACCOUNTS = JSON.parse(
+  readFileSync(new URL('../fixtures/meteora-accounts.json', import.meta.url), 'utf8'),
+)
+const MARKETS = {
+  curve: {
+    mint: 'CVmkkge8UBWfCpJJHB2GZ5CzrpHppaoJgs2Rn45r6sQP',
+    dbcPool: 'FHbTvBB7jRmY7FgQunGAji9NjcvrAcsXfyjokGiiXy2P',
+  },
   pool: {
-    virtualQuoteReserves: new BN(0),
-    coinCreator: key(),
-    creator: key(),
-    quoteMint: new PublicKey('So11111111111111111111111111111111111111112'),
-    isMayhemMode: false,
-    isCashbackCoin: cashback,
+    mint: 'JA4eXGb8kHSpaLSSTJSxpk1Yfp4JLvFrMAXgN59vDwaY',
+    dbcPool: 'A13LcotgbqqUkvMK94b7koZPrSUT7rXze4Hv7vFfHQL4',
   },
-  poolBaseAmount: new BN('206900000000000'),
-  poolQuoteAmount: new BN('84990359679'),
-  globalConfig: {
-    lpFeeBasisPoints: new BN(20),
-    protocolFeeBasisPoints: new BN(5),
-    coinCreatorFeeBasisPoints: new BN(5),
-  },
-  baseMintAccount: { supply: BIG / 1000n },
-  baseMint: key(),
-  feeConfig: null,
+}
+// Serves the fixture accounts, the coin mints as SPL Token mints, and a funded treasury.
+async function withMarkets(fn) {
+  const info = (address) => {
+    const a = ACCOUNTS[address]
+    if (a)
+      return {
+        owner: new PublicKey(a.owner),
+        lamports: a.lamports,
+        data: Buffer.from(a.data, 'base64'),
+        executable: false,
+      }
+    if (Object.values(MARKETS).some((m) => m.mint === address))
+      return {
+        owner: new PublicKey(PROGRAMS.token),
+        lamports: 1,
+        data: Buffer.alloc(82),
+        executable: false,
+      }
+    return null
+  }
+  const saved = { ...solana.connection }
+  solana.connection.getAccountInfo = async (k) => info(k.toBase58())
+  solana.connection.getMultipleAccountsInfo = async (keys) => keys.map((k) => info(k.toBase58()))
+  solana.connection.getBalance = async () => 1_000_000_000
+  try {
+    return await fn()
+  } finally {
+    for (const name of ['getAccountInfo', 'getMultipleAccountsInfo', 'getBalance'])
+      solana.connection[name] = saved[name]
+  }
+}
+const WSOL_MINT = 'So11111111111111111111111111111111111111112'
+// What a buy's instructions move: the SOL wrapped for the swap, the swap's arguments, the fee.
+function spending(instructions, user) {
+  const wsol = getAssociatedTokenAddressSync(new PublicKey(WSOL_MINT), new PublicKey(user), true)
+  const transfers = instructions
+    .filter((ix) => ix.programId.equals(SystemProgram.programId))
+    .map((ix) => ({ to: ix.keys[1].pubkey, lamports: ix.data.readBigUInt64LE(4) }))
+  const swap = instructions.find(
+    (ix) => ix.programId.toBase58() === PROGRAMS.dbc || ix.programId.toBase58() === PROGRAMS.damm,
+  )
+  const coder = swap.programId.toBase58() === PROGRAMS.dbc ? dbcCoder : dammCoder
+  const { params } = coder.instruction.decode(swap.data).data
+  return {
+    wrapped: transfers.filter((t) => t.to.equals(wsol)).reduce((sum, t) => sum + t.lamports, 0n),
+    fee: transfers.filter((t) => !t.to.equals(wsol)).reduce((sum, t) => sum + t.lamports, 0n),
+    amountIn: BigInt(params.amount0.toString()),
+    minOut: BigInt(params.amount1.toString()),
+    swapMode: params.swapMode,
+  }
+}
+
+test('a Meteora buy never spends or wraps more than the amount entered, on the curve or the pool', async () => {
+  await withMarkets(async () => {
+    const user = key().toBase58()
+    const platform = { feeBps: 50, treasury: key().toBase58() }
+    for (const [venue, market] of Object.entries(MARKETS))
+      for (const slippagePct of [1, 2, 5, 15])
+        for (const lamports of [1_000_000n, 250_000_000n, 1_980_000_000n]) {
+          const label = `${venue} ${lamports} @ ${slippagePct}%`
+          const state = await trade.marketState(market.mint, user, market.dbcPool)
+          assert.equal(state.venue, venue, label)
+          const quoted = trade.quoteBuy(state, lamports, slippagePct)
+          const built = await trade.buyInstructions({
+            mint: market.mint,
+            user,
+            lamports,
+            slippagePct,
+            platform,
+            dbcPool: market.dbcPool,
+          })
+          assert.equal(built.venue, venue)
+          const spent = spending(built.instructions, user)
+          assert.ok(spent.wrapped <= lamports, `${label}: wraps ${spent.wrapped}`)
+          assert.ok(spent.amountIn <= lamports, `${label}: swaps ${spent.amountIn}`)
+          // The minimum out is the quote less exactly the slippage tolerance picked: never more
+          // than quoted, and not a tighter limit that fails on any price move.
+          assert.ok(spent.minOut > 0n && spent.minOut <= quoted.tokens, label)
+          const expected = amounts.minimumOut(quoted.tokens, slippagePct)
+          assert.ok(
+            spent.minOut >= expected - 1n && spent.minOut <= expected + 1n,
+            `${label}: min ${spent.minOut} of ${quoted.tokens}, expected ${expected}`,
+          )
+          // A curve buy fills partially at the threshold instead of failing (the rest is refunded).
+          if (venue === 'curve') assert.equal(spent.swapMode, 1, label)
+          // The platform fee is its own transfer, at most feeBps of the amount entered.
+          assert.ok(spent.fee <= amounts.platformFee(lamports, platform.feeBps), label)
+        }
+  })
 })
 
-test('a PumpSwap buy never spends or wraps more than the amount entered', () => {
-  for (const slippage of [1, 2, 5, 15]) {
-    for (const lamports of [1_000_000n, 250_000_000n, 1_980_000_000n, 37_123_456_789n]) {
-      // As shipped, the v1 quote wrapped lamports × (1 + slippage).
-      const old = buyQuoteInput({ quote: new BN(lamports.toString()), slippage, ...poolArgs() })
-      assert.ok(BigInt(old.maxQuote.toString()) > lamports)
-
-      const v2 = trade.poolBuyPlan(fakeSwap({ cashback: false }), lamports, slippage)
-      assert.equal(v2.v2, true)
-      assert.equal(v2.maxSpend, lamports)
-      assert.equal(v2.minTokens, (v2.tokens * BigInt(10000 - slippage * 100)) / 10000n)
-
-      const v1 = trade.poolBuyPlan(fakeSwap({ cashback: true }), lamports, slippage)
-      assert.equal(v1.v2, false)
-      assert.ok(v1.maxSpend <= lamports, `${lamports} @ ${slippage}%: ${v1.maxSpend}`)
-      assert.equal(v1.maxSpend, amounts.sdkMaxQuote(v1.quote, slippage))
-      assert.ok(lamports - v1.maxSpend <= lamports / 10_000n + 2n)
-    }
-  }
-  function poolArgs() {
-    const s = fakeSwap({ cashback: false })
-    return {
-      baseReserve: s.poolBaseAmount,
-      quoteReserve: s.poolQuoteAmount,
-      globalConfig: s.globalConfig,
-      baseMintAccount: s.baseMintAccount,
-      baseMint: s.baseMint,
-      coinCreator: s.pool.coinCreator,
-      creator: s.pool.creator,
-      feeConfig: null,
-    }
-  }
-})
-
-test('Max and the insufficient-balance check include the fee, rent and network fees', () => {
+test('Max and the insufficient-balance check include the fee, rent and network fees', async () => {
   const balance = 2n * SOL
   for (const venue of ['curve', 'pool'])
     for (const feeBps of [0, 50, 100]) {
@@ -686,12 +767,23 @@ test('Max and the insufficient-balance check include the fee, rent and network f
       assert.equal(amounts.buyExceedsBalance(max, balance, { feeBps, venue }), false)
       assert.ok(amounts.buyCost(max, { feeBps, venue }) <= balance)
     }
-  // The finding's case: 2 SOL, 50 bps, 2% slippage, graduated coin. Max fits, and the swap
-  // (at most the amount entered) plus fee, WSOL and token account rent stays within the balance.
+  // 2 SOL, 50 bps, a graduated coin: Max fits, and the swap (at most the amount entered) plus the
+  // fee, the WSOL and token account rent and network fees stay within the balance.
   const max = amounts.maxBuy(balance, { feeBps: 50, venue: 'pool' })
-  const plan = trade.poolBuyPlan(fakeSwap({ cashback: false }), max, 2)
-  const rent = 2_039_280n + 2_074_080n
-  assert.ok(plan.maxSpend + amounts.platformFee(max, 50) + rent + 1_000_000n <= balance)
+  const user = key().toBase58()
+  const built = await withMarkets(() =>
+    trade.buyInstructions({
+      mint: MARKETS.pool.mint,
+      user,
+      lamports: max,
+      slippagePct: 2,
+      platform: { feeBps: 50, treasury: key().toBase58() },
+      dbcPool: MARKETS.pool.dbcPool,
+    }),
+  )
+  const spent = spending(built.instructions, user)
+  const rent = 2n * 2_039_280n // the WSOL and coin token accounts
+  assert.ok(spent.wrapped + spent.fee + rent + 1_000_000n <= balance)
   assert.equal(amounts.buyExceedsBalance(balance, balance, { venue: 'pool' }), true)
   assert.equal(amounts.maxBuy(1_000_000n, { venue: 'pool' }), 0n)
   assert.equal(amounts.buyExceedsBalance(1n, null), false)
@@ -775,23 +867,26 @@ test('custom errors are mapped by the program that raised them', () => {
   assert.match(friendlyWalletError(simulation(q, '177c')), /launcher/)
   assert.equal(friendlyWalletError(simulation(q, '177f')), 'Nothing new has vested yet.')
   assert.match(friendlyWalletError(simulation(q, '1780')), /0\.001 SOL/)
-  assert.equal(friendlyWalletError(simulation(q, '1794')), 'You already claimed this reward.')
-  const epoch = friendlyWalletError(simulation(q, '1791'))
+  assert.equal(friendlyWalletError(simulation(q, '178e')), 'You already claimed this reward.')
+  const epoch = friendlyWalletError(simulation(q, '178b'))
   assert.match(epoch, /epoch has expired/)
   assert.doesNotMatch(epoch, /transaction expired/)
-  // pump.fun and PumpSwap slippage and graduation.
-  assert.equal(friendlyWalletError(simulation(PROGRAMS.pump, '1772')), MESSAGES.slippage)
-  assert.equal(friendlyWalletError(simulation(PROGRAMS.pump, '179a')), MESSAGES.slippage)
-  assert.equal(friendlyWalletError(simulation(PROGRAMS.pump, '1775')), MESSAGES.graduated)
-  assert.equal(friendlyWalletError(simulation(PROGRAMS.pumpAmm, '1774')), MESSAGES.slippage)
-  assert.equal(friendlyWalletError(simulation(PROGRAMS.pumpAmm, '1798')), MESSAGES.slippage)
+  // Meteora DBC and DAMM v2: slippage, a full curve, a paused pool, dust.
+  assert.equal(friendlyWalletError(simulation(PROGRAMS.dbc, '1772')), MESSAGES.slippage)
+  assert.equal(friendlyWalletError(simulation(PROGRAMS.dbc, '177d')), MESSAGES.graduated)
+  assert.match(friendlyWalletError(simulation(PROGRAMS.dbc, '1775')), /too small to trade/)
+  assert.match(friendlyWalletError(simulation(PROGRAMS.dbc, '177c')), /Not enough tokens left/)
+  assert.equal(friendlyWalletError(simulation(PROGRAMS.damm, '1772')), MESSAGES.slippage)
+  assert.match(friendlyWalletError(simulation(PROGRAMS.damm, '1773')), /paused trading/)
+  // The same number from another program means something else: DBC's 6003 is not "paused".
+  assert.doesNotMatch(friendlyWalletError(simulation(PROGRAMS.dbc, '1773')), /paused/)
   // CPI failures: the innermost failing program decides.
   assert.equal(
-    friendlyWalletError(simulation(PROGRAMS.pump, '1', { inner: PROGRAMS.system })),
+    friendlyWalletError(simulation(PROGRAMS.dbc, '1', { inner: PROGRAMS.system })),
     MESSAGES.noSol,
   )
   assert.equal(
-    friendlyWalletError(simulation(PROGRAMS.pump, '1', { inner: PROGRAMS.token2022 })),
+    friendlyWalletError(simulation(PROGRAMS.dbc, '1', { inner: PROGRAMS.token })),
     MESSAGES.tokens,
   )
   // Unknown programs: a short message, never the raw logs.
@@ -852,7 +947,7 @@ test('rent, expiry, not-enough-SOL and wallet rejection messages', () => {
   const text = Error(
     'Transaction simulation failed: Error processing Instruction 3: custom program error: 0x1777',
   )
-  const programIds = ['c', 'c', PROGRAMS.pump, PROGRAMS.quantum]
+  const programIds = ['c', 'c', PROGRAMS.dbc, PROGRAMS.quantum]
   assert.match(friendlyWalletError(text, { programIds }), /paused/)
   // Mapped messages stay stable when mapped again (callers re-map errors from sendTransactions).
   for (const message of Object.values(MESSAGES))
@@ -860,9 +955,9 @@ test('rent, expiry, not-enough-SOL and wallet rejection messages', () => {
 })
 
 test('explainError maps status errors per program and rent by account', () => {
-  const ids = ['cb', 'cb', PROGRAMS.pump, PROGRAMS.quantum]
+  const ids = ['cb', 'cb', PROGRAMS.dbc, PROGRAMS.quantum]
   assert.equal(
-    explainError({ InstructionError: [2, { Custom: 6005 }] }, { programIds: ids }),
+    explainError({ InstructionError: [2, { Custom: 6013 }] }, { programIds: ids }),
     MESSAGES.graduated,
   )
   assert.match(
@@ -870,12 +965,12 @@ test('explainError maps status errors per program and rent by account', () => {
     /lock terms/i,
   )
   assert.match(
-    explainError({ InstructionError: [3, { Custom: 6020 }] }, { programIds: ids }),
+    explainError({ InstructionError: [3, { Custom: 6019 }] }, { programIds: ids }),
     /Too soon/,
   )
   assert.equal(
-    explainError({ InstructionError: [2, { Custom: 6020 }] }, { programIds: ids }),
-    'That amount is too small to buy any tokens.',
+    explainError({ InstructionError: [2, { Custom: 6005 }] }, { programIds: ids }),
+    'That amount is too small to trade.',
   )
   assert.equal(
     explainError({ InsufficientFundsForRent: { account_index: 0 } }),
@@ -1004,6 +1099,17 @@ test('the rpc proxy 429 and 502 answers are transient; its 400 for too many keys
   assert.equal(
     isTransientRpcError(Error('400 Bad Request: {"error":"Request at most 100 accounts."}')),
     false,
+  )
+})
+
+test('a rate-limited RPC reads as a busy network, never the raw 429 body', () => {
+  const e = Error(
+    'failed to get recent blockhash: Error: 429 Too Many Requests:  {"jsonrpc":"2.0","error":{"code": 429, "message":"Too many requests for a specific RPC call"}, "id": 1 }',
+  )
+  assert.equal(friendlyWalletError(e), MESSAGES.busy)
+  assert.equal(
+    friendlyWalletError(Object.assign(Error('rejected'), { code: 4001 })),
+    MESSAGES.declined,
   )
 })
 

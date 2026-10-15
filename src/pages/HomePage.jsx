@@ -152,8 +152,9 @@ export default function HomePage() {
         </ol>
         {!quantum.available && (
           <p className="notice" style={{ marginTop: 20 }}>
-            Quantum Hooks are being deployed. Standard Meteora launches work today; hooked launches
-            unlock once the program is live on mainnet.
+            {quantum.reason === 'paused'
+              ? 'Quantum launches are paused right now. Standard Meteora launches work as usual.'
+              : 'Quantum Hooks are being deployed. Standard Meteora launches work today; hooked launches unlock once the program is live on mainnet.'}
           </p>
         )}
       </section>

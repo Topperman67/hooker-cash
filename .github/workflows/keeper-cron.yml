@@ -1,0 +1,35 @@
+# Runs one Quantum Hooks keeper pass every 5 minutes (harvest + pulse, burns, Fusion, Entanglement
+# epochs, and migrating full curves to DAMM v2). Vercel's Hobby plan only allows daily crons, so
+# GitHub's scheduler calls the production endpoint instead. Needs the CRON_SECRET repository secret
+# (Settings → Secrets and variables → Actions), equal to CRON_SECRET in Vercel. Set the QUANTPAD_URL
+# repository variable to use another domain. GitHub may start scheduled runs a few minutes late.
+name: Keeper tick
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: keeper-tick
+  cancel-in-progress: false
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Run one keeper pass
+        env:
+          CRON_SECRET: ${{ secrets.CRON_SECRET }}
+          URL: ${{ vars.QUANTPAD_URL || 'https://quant-pad.vercel.app' }}
+        run: |
+          if [ -z "$CRON_SECRET" ]; then
+            echo "::error::Add the CRON_SECRET repository secret (the same value as CRON_SECRET in Vercel)."
+            exit 1
+          fi
+          curl -fsS --retry 2 --retry-delay 5 --max-time 90 \
+            -H "Authorization: Bearer $CRON_SECRET" "$URL/api/keeper/tick"
+          echo

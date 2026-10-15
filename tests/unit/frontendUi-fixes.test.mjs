@@ -250,11 +250,10 @@ test('chart labels candle times in the viewer time zone, not UTC', () => {
 test("market-cap mode counts the coin's real supply, the same way the server does", () => {
   const price = 4.2e-8 // SOL per whole token, as candles carry it
   for (const record of [
-    { supply: '2000000000000000', mayhem: true }, // mayhem: 2B minted
+    { supply: '2000000000000000' }, // a DBC coin minted with 2B
     { supply: '900000000000000' }, // 100M burned
     { supply: 1e15 }, // a number works too
-    { supply: null }, // not read yet: pump.fun's 1B
-    { supply: null, mayhem: true }, // not read yet, mayhem: 2B
+    { supply: null }, // not read yet: Quant Pad's fixed 1B
     { supply: '0' }, // never a zero market cap
     {},
   ]) {
@@ -265,7 +264,16 @@ test("market-cap mode counts the coin's real supply, the same way the server doe
   assert.equal(capTokens({ supply: '2000000000000000' }), 2e9)
   assert.equal(capTokens({ supply: '900000000000000' }), 9e8)
   assert.equal(capTokens(), 1e9)
-  assert.equal(capTokens({ mayhem: true }), 2e9)
+  // A 9-decimal coin (some Meteora launchpads) counts whole tokens at its own decimals, like capSupply.
+  for (const record of [
+    { supply: '1000000000000000000', decimals: 9 },
+    { supply: null, decimals: 9 },
+  ]) {
+    const chart = price * capTokens(record)
+    const server = marketCap(price, capSupply(record), record.decimals)
+    assert.ok(Math.abs(chart - server) < 1e-9)
+    assert.equal(capTokens(record), 1e9)
+  }
 })
 
 test('chart points scale every price by k and leave times alone', () => {
@@ -292,7 +300,7 @@ test('chart points scale every price by k and leave times alone', () => {
     'utf8',
   )
   assert.match(source, /function MarketChart\(\{[^}]*\bsupply\b[^}]*\}\)/)
-  assert.match(source, /capTokens\(\{ supply, mayhem \}\)/)
+  assert.match(source, /capTokens\(\{ supply\b/)
   assert.doesNotMatch(source, /1e9/)
 })
 

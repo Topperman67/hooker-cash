@@ -11,9 +11,11 @@ import {
 } from '@solana/spl-token'
 import { network, priceFromSqrtPrice, curveProgress } from '../shared/network.mjs'
 import * as meteora from '../shared/meteora.mjs'
+import quantumIdl from '../shared/idl/quantum_hooks.json' with { type: 'json' }
 
 export const DBC = network.dbcProgram
 export const DAMM = network.dammV2Program
+const QUANTUM = quantumIdl.address
 const SOL_QUOTE = new Set([network.wsolMint])
 
 // The events the indexer reads, by program. Anchor camel-cases the IDL's names; they are
@@ -90,8 +92,9 @@ function decodeInstruction(ix) {
 }
 
 // Meteora events from Anchor event-CPI inner instructions (robust to log truncation), each with the
-// instruction that emitted it (`emitter`, null when unknown), falling back to "Program data:" log
-// lines attributed to the program on top of the invoke stack.
+// instruction that emitted it (`emitter`) and the one that invoked that (`caller`, null for an
+// outer instruction), falling back to "Program data:" log lines attributed to the program on top
+// of the invoke stack (both null there).
 export function extractEvents(tx) {
   const out = []
   const parents = []
@@ -106,7 +109,12 @@ export function extractEvents(tx) {
     }
     if (data.length > 16 && data.subarray(0, 8).equals(EVENT_IX_TAG)) {
       const event = decode(ix.program, data.subarray(8))
-      if (event) out.push({ ...event, emitter: parents[ix.stackHeight - 1] || null })
+      if (event)
+        out.push({
+          ...event,
+          emitter: parents[ix.stackHeight - 1] || null,
+          caller: parents[ix.stackHeight - 2] || null,
+        })
     }
   }
   if (out.length) return out
@@ -124,7 +132,7 @@ export function extractEvents(tx) {
     const program = stack.at(-1)
     if (CODERS[program] && line.startsWith('Program data: ')) {
       const event = decode(program, Buffer.from(line.slice(14), 'base64'))
-      if (event) out.push({ ...event, emitter: null })
+      if (event) out.push({ ...event, emitter: null, caller: null })
     }
   }
   return out
@@ -147,11 +155,18 @@ const text = (v) =>
     .replace(/\0+$/, '')
     .trim()
 
-// Who signed for the instruction that emitted an event: its payer account, else the fee payer.
-function payerOf(tx, emitter) {
+// Who made a swap: the payer account of the instruction that emitted its event when that signed
+// the transaction. A payer that did not sign is a program's account: a router's (Titan, aggregator
+// bots), so the trade is the fee payer's, or the coin's well when Quantum Hooks swapped for it (a
+// burn or a fusion buy), which is kept. Without a known payer, the fee payer.
+function payerOf(tx, { emitter, caller }) {
   const name = emitter && decodeInstruction(emitter)?.name
   const index = name ? PAYER[emitter.program]?.[name] : undefined
-  return (index !== undefined && emitter.accounts[index]) || accountKeys(tx)[0] || null
+  const payer = index !== undefined ? emitter.accounts[index] : null
+  const keys = accountKeys(tx)
+  const signed = keys.slice(0, tx?.transaction?.message?.header?.numRequiredSignatures || 1)
+  if (payer && (signed.includes(payer) || caller?.program === QUANTUM)) return payer
+  return keys[0] || payer || null
 }
 
 /**
@@ -178,8 +193,16 @@ export function createFrom(tx, { signature, mint } = {}) {
   const params = ix?.data?.params || {}
   const t22 = ix?.name === 'initializeVirtualPoolWithToken2022'
   const accounts = init.emitter?.accounts || []
+  const baseMint = b58(init.event.baseMint)
+  // The pool's vaults as the transaction left them: the base vault gives the coin's decimals (DBC
+  // configs set them, 6 or 9) and token program, the quote vault the quote mint.
+  const vaults = (tx.meta?.postTokenBalances || []).filter(
+    (b) => b.owner === meteora.DBC_POOL_AUTHORITY.toBase58(),
+  )
+  const baseVault = vaults.find((b) => b.mint === baseMint)
+  const decimals = Number(baseVault?.uiTokenAmount?.decimals)
   return {
-    mint: b58(init.event.baseMint),
+    mint: baseMint,
     name: text(params.name),
     symbol: text(params.symbol),
     uri: text(params.uri),
@@ -187,10 +210,12 @@ export function createFrom(tx, { signature, mint } = {}) {
     launcher: b58(init.event.creator),
     dbcPool: pool,
     dbcConfig: b58(init.event.config),
+    decimals: Number.isInteger(decimals) ? decimals : null,
     tokenProgram:
       accounts[t22 ? 10 : 12] ||
+      baseVault?.programId ||
       (t22 ? TOKEN_2022_PROGRAM_ID.toBase58() : TOKEN_PROGRAM_ID.toBase58()),
-    quoteMint: accounts[4] || null,
+    quoteMint: accounts[4] || vaults.find((b) => b.mint !== baseMint)?.mint || null,
     createdAt: tx.blockTime || null,
     signature,
     slot: tx.slot,
@@ -211,7 +236,7 @@ export function tradesFrom(
   // DBC's legacy `swap` may emit EvtSwap next to EvtSwap2: each swap counts once.
   const swap2 = events.filter((e) => e.program === DBC && e.name === 'EvtSwap2')
   const swap2By = new Set(swap2.map((e) => e.emitter))
-  events.forEach(({ program, name, event, emitter }, index) => {
+  events.forEach(({ program, name, event, emitter, caller }, index) => {
     const base = {
       id: `${signature}:${index}`,
       signature,
@@ -229,7 +254,7 @@ export function tradesFrom(
         ...base,
         venue: 'curve',
         side: buy ? 'buy' : 'sell',
-        trader: payerOf(tx, emitter),
+        trader: payerOf(tx, { emitter, caller }),
         solAmount: str(buy ? input : r.outputAmount),
         tokenAmount: str(buy ? r.outputAmount : input),
         price: priceFromSqrtPrice(r.nextSqrtPrice, decimals),
@@ -248,7 +273,7 @@ export function tradesFrom(
         ...base,
         venue: 'pool',
         side: buy ? 'buy' : 'sell',
-        trader: payerOf(tx, emitter),
+        trader: payerOf(tx, { emitter, caller }),
         solAmount: str(buy ? r.includedFeeInputAmount : r.outputAmount),
         tokenAmount: str(buy ? r.outputAmount : r.includedFeeInputAmount),
         price: priceFromSqrtPrice(r.nextSqrtPrice, decimals),
@@ -392,7 +417,13 @@ const succeeded = (s) => !s.err
  * Otherwise a first read takes the newest `initial` signatures, and `historyFrom` says where the
  * history starts: 0 when complete, else the block time of the oldest signature read.
  *
- * Returns { window, anchor, reached, historyFrom? }; `reached` is false while still paging back.
+ * `last` is the newest signature of the window's range, failed or not. Failed transactions are
+ * never read, so once every signature in `window` is, the caller moves its cursor to `last`:
+ * otherwise failed signatures above the newest successful one would come back as an empty window
+ * under the same anchor on every call, and the address would never be read past them.
+ *
+ * Returns { window, anchor, reached, last, historyFrom? }; `reached` is false while still paging
+ * back.
  */
 export async function pendingSignatures(
   connection,
@@ -407,6 +438,7 @@ export async function pendingSignatures(
       window: page.filter(succeeded).reverse(),
       anchor: null,
       reached: true,
+      last: page[0]?.signature || null,
       historyFrom: page.length < initial ? 0 : (page.at(-1).blockTime ?? null),
     }
   }
@@ -414,6 +446,7 @@ export async function pendingSignatures(
     window: page.filter(succeeded).reverse(),
     anchor: above || null,
     reached: true,
+    last: page[0]?.signature || null,
     ...(cursor ? {} : { historyFrom: 0 }),
   })
   let before = anchor || undefined
@@ -431,7 +464,7 @@ export async function pendingSignatures(
     before = undefined // nothing left between the cursor and the anchor: back to the tip
   }
   // Resume above the last full page, so it is read again rather than assumed.
-  return { window: [], anchor: previous?.above || null, reached: false }
+  return { window: [], anchor: previous?.above || null, reached: false, last: null }
 }
 
 // The first successful signature of `address` (for a DBC pool, the coin's create transaction),

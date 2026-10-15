@@ -5,7 +5,12 @@ import { usePlatform } from '../context/PlatformContext.jsx'
 import { useToast } from './Toasts.jsx'
 import { Address, AllocationBar, Spinner } from './UI.jsx'
 import { api, useResource } from '../lib/api.js'
-import { connection, friendlyWalletError, packTransactions } from '../lib/solana.js'
+import {
+  connection,
+  friendlyWalletError,
+  isTransientRpcError,
+  packTransactions,
+} from '../lib/solana.js'
 import { loadQuantum } from '../lib/quantum.js'
 import { ago, bps, duration, formatUnits, sol, toSol } from '../lib/format.js'
 import { claimTiming, nextRefresh, upcomingEpochs } from '../lib/claims.js'
@@ -77,7 +82,13 @@ export default function QuantumPanel({ coin, onLoaded }) {
       setPending(waiting)
       setError('')
     } catch (e) {
-      setError(e.message)
+      // A failed read (often the public RPC's 429) keeps the last good state on screen; raw web3.js
+      // errors are never shown.
+      setError(
+        isTransientRpcError(e)
+          ? 'The Solana network is busy, so this coin’s Quantum Hooks could not be read. Retrying shortly.'
+          : 'Could not read this coin’s Quantum Hooks from Solana. Retrying shortly.',
+      )
     }
   }, [coin.mint])
   useEffect(() => {

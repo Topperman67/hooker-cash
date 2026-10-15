@@ -59,7 +59,8 @@ export default function MarketPage() {
       <header className="page-head">
         <h1>Market</h1>
         <p className="muted">
-          Coins launched through Quant Pad. Paste any Meteora bonding-curve mint to open and trade it here.
+          Coins launched through Quant Pad. Paste any Meteora bonding-curve mint to open and trade
+          it here.
         </p>
       </header>
       <div className="market-bar">

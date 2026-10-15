@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Keypair } from '@solana/web3.js'
 import { createIndexer, issuedUriKey, stats, summarize } from '../../server/indexer.mjs'
-import { extractEvents } from '../../server/solana.mjs'
+import { createFrom } from '../../server/solana.mjs'
 import { createFileStore } from '../../server/storage.mjs'
 import { candlesFor } from '../../server/market-math.mjs'
 
@@ -94,9 +94,9 @@ test('market filters, searches, hides and sorts the stored list', async () => {
   )
 })
 
-test('registerLaunch indexes a real create transaction and its dev buy', async () => {
+test('registerLaunch indexes a real Quant Pad launch and its dev buy', async () => {
   const { signature, tx } = JSON.parse(
-    readFileSync(new URL('../fixtures/pump-create.json', import.meta.url), 'utf8'),
+    readFileSync(new URL('../fixtures/dbc-create.json', import.meta.url), 'utf8'),
   )
   const store = createFileStore(mkdtempSync(join(tmpdir(), 'qp-launch-')))
   // A fake connection: the create transaction is served by the raw JSON-RPC fetch, and
@@ -117,9 +117,10 @@ test('registerLaunch indexes a real create transaction and its dev buy', async (
     rpcEndpoint,
     getSignaturesForAddress: async () => [{ signature, err: null }],
   }
-  // A plain pump.fun coin: native only because this server issued its metadata URI (C2).
+  // A standard launch (no Quantum Hooks): native only because this server issued its metadata URI
+  // (C2).
   const quantum = { wellPda: () => Keypair.generate().publicKey }
-  const create = extractEvents(tx).find((e) => e.name === 'CreateEvent').event
+  const create = createFrom(tx, { signature })
   try {
     const indexer = createIndexer({ connection, store, quantum })
     await assert.rejects(() => indexer.registerLaunch(signature), {
@@ -130,12 +131,25 @@ test('registerLaunch indexes a real create transaction and its dev buy', async (
     const coin = await indexer.registerLaunch(signature)
     assert.equal(coin.signature, signature)
     assert.equal(coin.external, false)
+    assert.deepEqual(
+      [coin.mint, coin.name, coin.symbol, coin.dbcPool, coin.dbcConfig, coin.quantum],
+      [create.mint, 'test1', 'TEST', create.dbcPool, create.dbcConfig, false],
+    )
+    assert.equal(coin.launcher, create.creator)
+    assert.equal(coin.provenance, 'issued-uri')
     const list = await indexer.list()
     assert.equal(list.length, 1)
     assert.equal(list[0].mint, coin.mint)
     const trades = await indexer.trades(coin.mint)
-    assert.ok(trades.total >= 1, 'the dev buy in the create transaction is indexed')
+    assert.equal(trades.total, 1, 'the dev buy in the create transaction is indexed')
+    assert.deepEqual(
+      [trades.items[0].side, trades.items[0].solAmount, trades.items[0].trader],
+      ['buy', '100000000', create.creator],
+    )
     assert.ok(list[0].price > 0)
+    // The curve's fill comes from the swap: 0.099 SOL of an 85 SOL threshold.
+    assert.ok(Math.abs(list[0].progress - (0.099 / 85) * 100) < 1e-9)
+    assert.equal(list[0].createdAt, tx.blockTime)
     // Registering twice is idempotent.
     assert.equal((await indexer.registerLaunch(signature)).mint, coin.mint)
     assert.equal((await indexer.list()).length, 1)
@@ -146,7 +160,7 @@ test('registerLaunch indexes a real create transaction and its dev buy', async (
 
 test('registerLaunch rejects signatures that are not coin creations', async () => {
   const { signature, tx } = JSON.parse(
-    readFileSync(new URL('../fixtures/pump-trade.json', import.meta.url), 'utf8'),
+    readFileSync(new URL('../fixtures/dbc-swap.json', import.meta.url), 'utf8'),
   )
   const store = createFileStore(mkdtempSync(join(tmpdir(), 'qp-launch-')))
   const originalFetch = globalThis.fetch
@@ -157,7 +171,11 @@ test('registerLaunch rejects signatures that are not coin creations', async () =
   }
   try {
     const indexer = createIndexer({ connection: { rpcEndpoint: 'http://x.invalid' }, store })
-    await assert.rejects(() => indexer.registerLaunch(signature), /did not create a pump\.fun coin/)
+    await assert.rejects(() => indexer.registerLaunch(signature), {
+      status: 400,
+      code: 'not_create',
+      message: 'That transaction did not create a Meteora coin.',
+    })
     await assert.rejects(() => indexer.registerLaunch('not-a-signature'), /signature/)
   } finally {
     globalThis.fetch = originalFetch

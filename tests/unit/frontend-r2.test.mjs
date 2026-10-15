@@ -1,6 +1,7 @@
 // Frontend round 2: Entanglement claims that open later (K1), the launch summary's platform fee,
 // tiny-price zero counts drawn in the brand font (and copied as the full decimal, rich text
-// included), unique search ids and labelled landmarks, coins that migrated off pump.fun.
+// included), unique search ids and labelled landmarks, coins whose curve filled (Meteora's migration
+// to DAMM v2).
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
@@ -639,7 +640,7 @@ test('empty states take the heading level of where they appear', () => {
   assert.doesNotMatch(source('src/styles/components.css'), /\.empty h3/)
 })
 
-// ---------- cross: coins that migrated off pump.fun (indexer poolMissing) ----------
+// ---------- cross: a full curve waits for Meteora's migration to DAMM v2 ----------
 
 // TradeTicket and CurveProgress, with the wallet and platform contexts replaced by plain values
 // and the lazily loaded trade module left out (it is only loaded in an effect).
@@ -682,48 +683,98 @@ const renderTicket = (coin, { connected }) => {
   return ticketUi.renderToStaticMarkup(ticketUi.createElement(ticketUi.TradeTicket, { coin }))
 }
 
-test('a coin with no PumpSwap pool closes the trade ticket with the reason', () => {
-  const coin = { mint: Keypair.generate().publicKey.toBase58(), symbol: 'ECAT', complete: true }
+test('the trade ticket waits for its market read, and closes while a full curve awaits migration', async () => {
+  const coin = { mint: Keypair.generate().publicKey.toBase58(), symbol: 'ECAT', complete: false }
+  // Before the first market read: the ordinary ticket, waiting (no market is read on the server).
   for (const connected of [false, true]) {
-    const html = renderTicket({ ...coin, poolMissing: true }, { connected })
+    const html = renderTicket(coin, { connected })
     const submit = /<button type="submit"[^>]*>(.*?)<\/button>/.exec(html)
-    assert.match(submit[0], /disabled=""/, `connected: ${connected}`)
-    assert.equal(submit[1], 'Migrated off pump.fun')
-    assert.match(html, /<input id="ticket-amount"[^>]*disabled=""/)
-    assert.match(html, /aria-describedby="ticket-migrated"/)
-    assert.match(text(html), /Migrated off pump\.fun\. This coin graduated before PumpSwap/)
-    // No market read is waited on or retried: no spinner, no "Could not read" message.
-    assert.doesNotMatch(html, /class="spinner"/)
-    assert.doesNotMatch(html, /Could not read/)
-    // The SOL presets cannot fill in an amount either.
-    for (const preset of html.match(/<button type="button" class="btn btn-sm"[^>]*>/g) || [])
-      assert.match(preset, /disabled=""/)
+    assert.equal(submit[1], connected ? 'Buy ECAT' : 'Connect wallet to trade')
+    assert.match(html, /class="spinner"/)
+    assert.doesNotMatch(html, /Graduating/)
+    assert.doesNotMatch(html, /<input id="ticket-amount"[^>]*disabled=""/)
   }
-  // A coin that still has a market keeps the ordinary ticket (waiting for the market read).
-  const open = renderTicket({ ...coin, complete: false, poolMissing: false }, { connected: true })
-  assert.match(open, /<button type="submit"[^>]*>Buy ECAT<\/button>/)
-  assert.doesNotMatch(open, /Migrated off pump\.fun/)
-  assert.match(open, /class="spinner"/)
-
+  // The market read says where the coin trades; 'migrating' (the curve is full and Meteora has not
+  // opened the DAMM v2 pool yet) closes the ticket until it does.
   const ticket = source('src/components/TradeTicket.jsx')
-  // The market poll does not run at all for such a coin.
-  assert.match(ticket, /useEffect\(\(\) => \{\s*if \(migrated\) return\s*refresh\(\)/)
+  assert.match(ticket, /const migrated = market\?\.venue === 'migrating'/)
   assert.match(ticket, /e\.preventDefault\(\)\s*if \(migrated\) return/)
+  assert.match(ticket, /disabled=\{migrated \|\| !!busy/)
+  assert.match(ticket, /<input[^>]*id="ticket-amount"[\s\S]*?disabled=\{migrated\}/)
+  assert.match(ticket, /migrated \? 'ticket-migrated'/)
+  assert.match(ticket, /'Graduating to DAMM v2'/)
+  // It keeps reading the market, faster, so trading opens with the pool.
+  assert.match(ticket, /setInterval\(refresh, migrated \? 5000 : 12000\)/)
+  assert.doesNotMatch(ticket, /poolMissing|pump\.fun|PumpSwap/)
+
+  // Nothing quotes on a migrating venue.
+  const trade = await import('../../src/lib/trade.js')
+  assert.deepEqual(trade.quoteBuy({ venue: 'migrating' }, 1_000_000_000n, 2), {
+    tokens: 0n,
+    minTokens: 0n,
+  })
+  assert.deepEqual(trade.quoteSell({ venue: 'migrating' }, 5_000_000n, 2), {
+    lamports: 0n,
+    minLamports: 0n,
+  })
 })
 
-test('graduated coins without a pool read "Migrated off pump.fun", not "Graduated to PumpSwap"', () => {
+test('fetchMeteoraVenue: the curve, then migrating once it fills, then the DAMM v2 pool', async () => {
+  const { fetchMeteoraVenue } = await import('../../shared/meteora.mjs')
+  const chain = await import('./meteora-chain.mjs')
+  const mint = Keypair.generate().publicKey.toBase58()
+  const creator = Keypair.generate().publicKey.toBase58()
+  const accounts = new Map([[chain.CONFIG, await chain.dbcConfigAccount()]])
+  const connection = { getAccountInfo: async (k) => accounts.get(k.toBase58()) ?? null }
+  const dbcPool = chain.dbcPoolFor(mint)
+  const venue = () => fetchMeteoraVenue(connection, mint, { dbcPool })
+  assert.equal((await venue()).kind, 'none', 'no pool yet')
+  accounts.set(dbcPool, await chain.dbcPoolAccount(mint, { creator }))
+  const curve = await venue()
+  assert.equal(curve.kind, 'curve')
+  assert.equal(curve.pool.baseMint, mint)
+  assert.equal(curve.config.quoteMint, chain.WSOL)
+  // Found from the config too, as the launch page does before the pool exists.
+  assert.equal(
+    (await fetchMeteoraVenue(connection, mint, { dbcConfig: chain.CONFIG })).kind,
+    'curve',
+  )
+  accounts.set(dbcPool, await chain.dbcPoolAccount(mint, { creator, complete: true }))
+  assert.equal((await venue()).kind, 'migrating')
+  // Meteora marked it migrated, but its pool is not visible yet: still nothing to trade on.
+  accounts.set(dbcPool, await chain.dbcPoolAccount(mint, { creator, migrated: true }))
+  assert.equal((await venue()).kind, 'migrating')
+  accounts.set(chain.dammPoolFor(mint), await chain.dammPoolAccount(mint, { price: 2e-7 }))
+  const pool = await venue()
+  assert.equal(pool.kind, 'pool')
+  assert.equal(pool.dammPool.toBase58(), chain.dammPoolFor(mint))
+  assert.equal(pool.damm.tokenAMint, mint)
+  // Another mint's pool at that address is no venue for this coin.
+  const other = Keypair.generate().publicKey.toBase58()
+  assert.equal((await fetchMeteoraVenue(connection, other, { dbcPool })).kind, 'none')
+})
+
+test('graduated coins read "Graduated to Meteora DAMM v2", a full curve "Graduating"', () => {
   const curve = (props) =>
     text(ticketUi.renderToStaticMarkup(ticketUi.createElement(ticketUi.CurveProgress, props)))
-  assert.match(curve({ progress: 100, complete: true, migrated: true }), /^Migrated off pump\.fun/)
-  assert.match(curve({ progress: 100, complete: true }), /^Graduated to PumpSwap/)
-  assert.match(curve({ progress: 40, complete: false, migrated: true }), /^Bonding curve/)
+  assert.match(
+    curve({ progress: 100, complete: true, migrated: true }),
+    /^Graduated to Meteora DAMM v2/,
+  )
+  assert.match(curve({ progress: 100, complete: true }), /^Graduating to Meteora DAMM v2/)
+  assert.match(curve({ progress: 40, complete: false, migrated: true }), /^Meteora bonding curve/)
 
+  // The coin page and both coin list layouts pass the indexer's `migrated` flag.
   const page = source('src/pages/CoinPage.jsx')
-  assert.match(page, /c\.poolMissing\s*\?\s*'Migrated off pump\.fun'\s*:\s*'Graduated to PumpSwap'/)
-  assert.match(page, /migrated=\{!!c\.poolMissing\}/)
+  assert.match(
+    page,
+    /c\.migrated\s*\?\s*'Graduated to Meteora DAMM v2'\s*:\s*'Graduating to Meteora DAMM v2'/,
+  )
+  assert.match(page, /migrated=\{!!c\.migrated\}/)
   const list = source('src/components/CoinList.jsx')
-  assert.match(list, /migrated=\{!!coin\.poolMissing\}/)
-  assert.match(list, /migrated=\{!!c\.poolMissing\}/)
+  assert.match(list, /migrated=\{!!coin\.migrated\}/)
+  assert.match(list, /migrated=\{!!c\.migrated\}/)
+  for (const file of [page, list]) assert.doesNotMatch(file, /poolMissing/)
 })
 
 test('the Quantum panel shows amounts owed to wallets below the rent minimum', () => {

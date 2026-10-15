@@ -20,9 +20,9 @@ const INTERVALS = [
   [86400, '1d'],
 ]
 
-// `supply` is the coin record's raw mint supply (2B for mayhem coins, lower after burns) and
-// `mayhem` its coin type, so market-cap mode matches the server's market cap.
-export default function MarketChart({ mint, symbol, supply, mayhem }) {
+// `supply` is the coin record's raw mint supply (lower after burns) and `decimals` its mint
+// decimals, so market-cap mode matches the server's market cap.
+export default function MarketChart({ mint, symbol, supply, decimals }) {
   const [interval, setInterval] = useState(60)
   const [mode, setMode] = useState('candles')
   const [unit, setUnit] = useState('price')
@@ -90,7 +90,7 @@ export default function MarketChart({ mint, symbol, supply, mayhem }) {
     }
   }, [mint, interval, mode, unit])
 
-  const k = unit === 'mcap' ? capTokens({ supply, mayhem }) : 1
+  const k = unit === 'mcap' ? capTokens({ supply, decimals }) : 1
   useEffect(() => {
     if (!series.current || !resource.data) return
     const items = resource.data.items

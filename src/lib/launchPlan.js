@@ -103,22 +103,25 @@ export const needsRegister = (job) =>
 
 /**
  * Why a Quantum launch must not be signed with this Quantum Hooks config (`fetchConfig`), or null.
- * `register` fails while the program is paused, so the wallet is never asked to sign then. The
- * error is retryable: the same job can be finished once launches reopen.
+ * `register` fails while the program is paused, or for a Meteora launch config (`dbcConfig`, when
+ * given) the program does not allow, so the wallet is never asked to sign then. The error is
+ * retryable: the same job can be finished once launches reopen.
  */
-export function quantumConfigError(config) {
-  const message = !config
-    ? 'Quantum Hooks is not set up on this network, so nothing was sent.'
+export function quantumConfigError(config, dbcConfig = null) {
+  const [message, code] = !config
+    ? ['Quantum Hooks is not set up on this network, so nothing was sent.', 'quantum_unavailable']
     : config.paused
-      ? 'Quantum launches are paused right now, so nothing was sent. Try again later.'
-      : null
-  return message
-    ? Object.assign(Error(message), {
-        friendly: true,
-        retryable: true,
-        code: config ? 'quantum_paused' : 'quantum_unavailable',
-      })
-    : null
+      ? [
+          'Quantum launches are paused right now, so nothing was sent. Try again later.',
+          'quantum_paused',
+        ]
+      : dbcConfig && config.launchConfigs && !config.launchConfigs.includes(dbcConfig)
+        ? [
+            'Quantum launches do not accept this trading tax right now, so nothing was sent. Pick another tax or try again later.',
+            'quantum_config_refused',
+          ]
+        : []
+  return message ? Object.assign(Error(message), { friendly: true, retryable: true, code }) : null
 }
 
 export function newJob({ mint, keypair = null, snapshot, now = Date.now() }) {

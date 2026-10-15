@@ -16,11 +16,13 @@ export function compareTrades(a, b) {
   )
 }
 
-// Raw supply the market cap counts: the mint's live supply when known (burns reduce it), else Quant
-// Pad's fixed 1B.
-export function capSupply({ supply } = {}) {
+// Raw supply the market cap counts: the mint's live supply when known (burns reduce it), else 1B
+// whole tokens at the coin's decimals (Quant Pad's fixed supply, network.totalSupply at 6; DBC
+// configs with 9 decimals, such as bags.fm's, mint 1B too).
+export function capSupply({ supply, decimals } = {}) {
   if (supply && Number(supply) > 0) return String(supply)
-  return network.totalSupply
+  if (!Number.isInteger(decimals) || decimals === network.tokenDecimals) return network.totalSupply
+  return (10n ** BigInt(9 + decimals)).toString()
 }
 
 // SOL value of `supply` raw units at `price` SOL per whole token.

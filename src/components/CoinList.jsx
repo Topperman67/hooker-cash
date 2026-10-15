@@ -54,11 +54,7 @@ export function CoinCard({ coin }) {
           <dd className="num">{ago(coin.createdAt)}</dd>
         </div>
       </dl>
-      <CurveProgress
-        progress={coin.progress}
-        complete={coin.complete}
-        migrated={!!coin.poolMissing}
-      />
+      <CurveProgress progress={coin.progress} complete={coin.complete} migrated={!!coin.migrated} />
       <div className="coin-card-badges">
         <Badges coin={coin} />
       </div>
@@ -124,7 +120,7 @@ export function CoinTable({ items }) {
                 <CurveProgress
                   progress={c.progress}
                   complete={c.complete}
-                  migrated={!!c.poolMissing}
+                  migrated={!!c.migrated}
                 />
               </td>
               <td className="right num">{ago(c.createdAt)}</td>

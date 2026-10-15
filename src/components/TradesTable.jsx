@@ -5,7 +5,7 @@ import { ago, formatUnits, short, sol, toSol } from '../lib/format.js'
 import { explorer } from '../../shared/network.mjs'
 import Price from './Price.js'
 
-export default function TradesTable({ mint, symbol, launcher }) {
+export default function TradesTable({ mint, symbol, launcher, decimals }) {
   const [side, setSide] = useState('')
   const trades = useResource(`/api/coins/${mint}/trades${side ? `?side=${side}` : ''}`, 8000)
   const items = trades.data?.items || []
@@ -48,7 +48,7 @@ export default function TradesTable({ mint, symbol, launcher }) {
                     {t.side === 'buy' ? 'Buy' : 'Sell'}
                   </td>
                   <td className="right num">{sol(toSol(t.solAmount), { unit: false })}</td>
-                  <td className="right num">{formatUnits(t.tokenAmount, 6, 0)}</td>
+                  <td className="right num">{formatUnits(t.tokenAmount, decimals ?? 6, 0)}</td>
                   <td className="right num">
                     <Price value={t.price} />
                   </td>
