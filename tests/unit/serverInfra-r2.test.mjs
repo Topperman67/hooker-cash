@@ -96,18 +96,20 @@ test('callers can set the /48 limit, and IPv4 visitors are never charged a prefi
 test('the store-backed limiter keeps the /64 key and adds a separate /48 key', async () => {
   const counts = new Map()
   const store = {
-    async incrementExpiring(key, ttl) {
+    async incrementExpiring(key, ttl, amount = 1) {
       assert.equal(ttl, 120000)
-      counts.set(key, (counts.get(key) || 0) + 1)
-      return counts.get(key)
-    },
-    async increment(key, by) {
-      counts.set(key, (counts.get(key) || 0) + by)
+      counts.set(key, (counts.get(key) || 0) + amount)
       return counts.get(key)
     },
   }
   const minute = Math.floor(1_700_000_000_000 / 60000)
-  const limit = createLimiter({ store, trustProxy: 1, now: () => 1_700_000_000_000 })
+  // batchShare: 0 sends every charge to the store (storage-outage.test.mjs covers batching).
+  const limit = createLimiter({
+    store,
+    trustProxy: 1,
+    now: () => 1_700_000_000_000,
+    batchShare: 0,
+  })
   await limit(viaProxy('2001:470:abcd:1::1'), { bucket: 'rpc', limit: 900, cost: 40 })
   await limit(viaProxy('198.51.100.7'), { bucket: 'rpc', limit: 900, cost: 2 })
   assert.deepEqual(Object.fromEntries(counts), {

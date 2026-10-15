@@ -126,37 +126,60 @@ export function sameOrigin(req) {
 // PREFIX_FACTOR times `limit` (or `prefixLimit`) in all, so rotating through the /64s of one routed
 // prefix does not multiply the budget. `shared: true` charges one bucket for everyone instead (a
 // deployment-wide budget).
+//
+// Every instance counts in memory. With a shared store (Redis on serverless) it adds its count to
+// the store's once it holds `batchShare` of a limit unsent (one command), and the store's total,
+// read back with it, carries what the other instances charged. A visitor well under a limit costs
+// no storage commands, and one spread over n instances gets past a limit by at most n times that
+// share. When the store fails, the limiter goes on with what it counted here (it fails open):
+// a storage outage must not also refuse every RPC call and read.
 export function createLimiter({
   store,
   vercel = false,
   trustProxy = trustedProxyHops(),
   now = Date.now,
+  batchShare = 0.1,
 }) {
   const local = new Map()
-  async function charge(key, minute, cost) {
-    if (store) {
-      const count = await store.incrementExpiring(key, 120000)
-      return cost > 1 ? store.increment(key, cost - 1) : count
+  let sweptMinute = null
+  async function charge(key, minute, cost, limit) {
+    let entry = local.get(key)
+    if (!entry) local.set(key, (entry = { minute, total: 0, unsent: 0 }))
+    entry.unsent += cost
+    if (store && entry.unsent >= Math.max(1, Math.floor(limit * batchShare))) {
+      const sent = entry.unsent
+      entry.unsent = 0
+      try {
+        entry.total = Math.max(
+          entry.total,
+          Number(await store.incrementExpiring(key, 120000, sent)),
+        )
+      } catch {
+        entry.unsent += sent
+      }
     }
-    const count = (local.get(key)?.count || 0) + cost
-    local.set(key, { minute, count })
-    return count
+    return entry.total + entry.unsent
   }
   return async (
     req,
     { bucket, limit, cost = 1, prefixLimit = limit * PREFIX_FACTOR, shared = false },
   ) => {
     const minute = Math.floor(now() / 60000)
-    if (!store) for (const [k, v] of local) if (v.minute !== minute) local.delete(k)
+    if (sweptMinute !== minute) {
+      sweptMinute = minute
+      for (const [k, v] of local) if (v.minute !== minute) local.delete(k)
+    }
     let count, prefixCount
     if (shared) {
-      count = await charge(`rate:${bucket}:all:${minute}`, minute, cost)
+      count = await charge(`rate:${bucket}:all:${minute}`, minute, cost, limit)
     } else {
       const ip = clientAddress(req, vercel, trustProxy)
       const prefix = clientPrefix(ip)
       ;[count, prefixCount] = await Promise.all([
-        charge(`rate:${bucket}:${hashed(clientSubject(ip))}:${minute}`, minute, cost),
-        prefix ? charge(`rate:${bucket}:p48:${hashed(prefix)}:${minute}`, minute, cost) : 0,
+        charge(`rate:${bucket}:${hashed(clientSubject(ip))}:${minute}`, minute, cost, limit),
+        prefix
+          ? charge(`rate:${bucket}:p48:${hashed(prefix)}:${minute}`, minute, cost, prefixLimit)
+          : 0,
       ])
     }
     if (count > limit || prefixCount > prefixLimit)

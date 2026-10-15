@@ -49,6 +49,12 @@ export const MEDIA_CACHE = 'public, max-age=31536000, s-maxage=31536000, immutab
 
 const { clientKey, createLimiter, createWriteGuard } = requestLimits
 
+// A whole number of milliseconds from the environment (0 allowed), else `fallback`.
+const envMs = (name, fallback) => {
+  const value = String(process.env[name] ?? '').trim()
+  return /^\d+$/.test(value) ? Number(value) : fallback
+}
+
 // Errors meant for API clients carry a 4xx status; anything else is logged and reported
 // generically.
 const clientError = (message, status = 400, code) =>
@@ -410,6 +416,31 @@ export async function createApplication(options = {}) {
         }
       : {}),
   }
+  // /api/status reports whether storage answers, not only whether it is configured. A Redis store
+  // tracks how its last command went; when none ran on this instance for STORAGE_CHECK_MS, the
+  // status read sends one check command (shared by concurrent status reads).
+  const STORAGE_CHECK_MS = 30_000
+  let storageCheck = null
+  async function storageStatus() {
+    if (!storage.ready || typeof store.health !== 'function') return storage
+    let health = store.health()
+    if (!(Date.now() - health.at < STORAGE_CHECK_MS) && typeof store.check === 'function') {
+      storageCheck ||= store
+        .check()
+        .catch(() => {})
+        .finally(() => (storageCheck = null))
+      await storageCheck
+      health = store.health()
+    }
+    if (health.healthy !== false) return { ...storage, healthy: true }
+    return {
+      ...storage,
+      ready: false,
+      healthy: false,
+      reason: health.reason,
+      error: 'Persistent storage is unavailable. Try again shortly.',
+    }
+  }
   const customRpc = !!(options.rpcUrl || process.env.QUANTPAD_RPC_URL)
   const rpcUrl = options.rpcUrl || process.env.QUANTPAD_RPC_URL || network.publicRpcUrl
   const connection = options.connection || createConnection(rpcUrl)
@@ -455,6 +486,14 @@ export async function createApplication(options = {}) {
   const TRACK_LIMIT = options.trackLimit || 10
   // Every serverless request schedules a background pass; one instance starts at most one per gap.
   const BACKGROUND_GAP_MS = options.backgroundGapMs ?? (serverless ? 5_000 : 0)
+  // With shared storage, request-driven passes are also spaced deployment-wide: at most one per
+  // BACKGROUND_SYNC_MS (QUANTPAD_BACKGROUND_SYNC_MS, default a minute; 0 turns the spacing off).
+  // An index pass costs about 15 storage commands per coin, so passes every few seconds on every
+  // busy instance used up an Upstash plan's monthly commands in hours. The keeper cron indexes on
+  // its own schedule, and a trade made in the app syncs its coin at once (/api/sync).
+  const BACKGROUND_SYNC_MS =
+    options.backgroundSyncMs ??
+    (serverless && redis ? envMs('QUANTPAD_BACKGROUND_SYNC_MS', 60_000) : 0)
   const vercel = serverless && process.env.VERCEL === '1'
   const trustProxy = requestLimits.trustedProxyHops?.() ?? 0
   const limiter = createLimiter({ store: redis, vercel })
@@ -598,9 +637,8 @@ export async function createApplication(options = {}) {
   // Adds `amount` to a counter that lives for the day and returns its new value.
   async function countDaily(key, amount) {
     if (redis && redis.mode !== 'filesystem') {
-      // INCR sets the expiry on first use; INCRBY keeps it.
-      const used = await redis.incrementExpiring(key, 2 * DAY_MS)
-      return amount > 1 ? redis.increment(key, amount - 1) : used
+      // One command: the expiry is set on first use and kept after.
+      return redis.incrementExpiring(key, 2 * DAY_MS, amount)
     }
     const day = today()
     for (const [k, v] of dailyUsage) if (v.day !== day) dailyUsage.delete(k)
@@ -1108,7 +1146,7 @@ export async function createApplication(options = {}) {
   const invalidMint = () => clientError('Enter a valid Solana mint address.', 400, 'invalid_mint')
 
   async function status() {
-    const [price, q] = await Promise.all([solUsd(), quantumStatus()])
+    const [price, q, storageNow] = await Promise.all([solUsd(), quantumStatus(), storageStatus()])
     return {
       brand,
       network: { cluster: network.cluster, explorerUrl: network.explorerUrl },
@@ -1122,7 +1160,7 @@ export async function createApplication(options = {}) {
         serverless && !customRpc
           ? { degraded: true, reason: 'public-rpc' }
           : { degraded: false, reason: null },
-      storage,
+      storage: storageNow,
       solUsd: price.usd,
       ipfs: !!pinataJwt,
       lookupTable: isAddress(process.env.QUANTPAD_LOOKUP_TABLE)
@@ -1482,22 +1520,36 @@ export async function createApplication(options = {}) {
   // Every serverless request schedules a pass, and even a pass that finds the index lease taken
   // costs store commands, so one instance runs one pass at a time and starts at most one per
   // BACKGROUND_GAP_MS; the index lease already keeps instances from duplicating work.
+  // The deployment-wide spacing is one SET NX per attempt; an instance that finds it taken waits
+  // half the spacing before asking again.
   let backgroundRunning = false
-  let backgroundAt = 0
+  let backgroundNext = 0
   async function background({ startedAt } = {}) {
     const started = startedAt ?? Date.now()
     const MIN_MS = 10_000
     if (serverless && timeLeft(started) < MIN_MS) return
-    if (backgroundRunning || Date.now() - backgroundAt < BACKGROUND_GAP_MS) return
+    if (backgroundRunning || Date.now() < backgroundNext) return
     backgroundRunning = true
-    backgroundAt = Date.now()
+    backgroundNext = Date.now() + BACKGROUND_GAP_MS
     try {
+      if (BACKGROUND_SYNC_MS > 0) {
+        const due = await store
+          .set('sync:background', 1, { nx: true, ttl: BACKGROUND_SYNC_MS })
+          .catch(() => false)
+        if (!due) {
+          backgroundNext = Date.now() + Math.max(BACKGROUND_GAP_MS, BACKGROUND_SYNC_MS / 2)
+          return
+        }
+      }
       const index = serverless
         ? { timeMs: Math.min(INDEX_MS.timeMs, timeLeft(started) - 5_000) }
         : INDEX_MS
       await indexer.sync({ budget: serverless ? 3 : 6, ...index }).catch(() => {})
       if (serverless && timeLeft(started) < MIN_MS) return
-      if (keeper.enabled && (await store.set('keeper:throttle', 1, { nx: true, ttl: 120000 })))
+      if (
+        keeper.enabled &&
+        (await store.set('keeper:throttle', 1, { nx: true, ttl: 120000 }).catch(() => false))
+      )
         await keeper
           .tick({ timeLimitMs: serverless ? timeLeft(started) - 3_000 : keeperBudget(started) })
           .catch((e) => console.error('[keeper]', e.message))
