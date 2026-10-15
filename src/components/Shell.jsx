@@ -149,6 +149,24 @@ export default function Shell({ children }) {
               </svg>
               @quantpadhook
             </a>
+            <a
+              href="https://t.me/+3wl4eNhZcaNkNmM5"
+              target="_blank"
+              rel="noreferrer"
+              className="built-on"
+              aria-label="Join the Quant Pad Telegram"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                aria-hidden="true"
+                fill="currentColor"
+              >
+                <path d="M2.4 11.4 20.3 4.5c.8-.3 1.6.2 1.4 1.5l-3 14.2c-.2 1-.8 1.3-1.6.8l-4.5-3.3-2.2 2.1c-.2.2-.5.5-.9.5l.3-4.6 8.4-7.6c.4-.3-.1-.5-.6-.2L7.2 14.4l-4.4-1.4c-1-.3-1-1 .2-1.6z" />
+              </svg>
+              Telegram
+            </a>
             <a href="https://www.meteora.ag" target="_blank" rel="noreferrer" className="built-on">
               Built on <MeteoraMark size={16} /> Meteora
             </a>
