@@ -1,5 +1,5 @@
 // Turns wallet, RPC and on-chain errors into short messages for people. Custom program errors are
-// mapped by the program that raised them (pump.fun, PumpSwap, Quantum Hooks, System, Token), never
+// mapped by the program that raised them (Meteora DBC, DAMM v2, Quantum Hooks, System, Token), never
 // by number alone, and raw simulation logs are never shown. Pure: no RPC, safe to unit test.
 
 // Quantum Hooks' error table comes from its IDL, registered when the Quantum client loads (see
@@ -8,8 +8,8 @@
 let quantumErrors = []
 
 export const PROGRAMS = {
-  pump: '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P',
-  pumpAmm: 'pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA',
+  dbc: 'dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN',
+  damm: 'cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG',
   quantum: 'FgAfzGavpUSkhRo1Z1CWuGRrcz1AgZVFrkPeji8DuvWK', // shared/idl/quantum_hooks.json address
   system: '11111111111111111111111111111111',
   token: 'TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA',
@@ -17,8 +17,8 @@ export const PROGRAMS = {
   associatedToken: 'ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL',
 }
 const PROGRAM_NAMES = {
-  [PROGRAMS.pump]: 'pump.fun',
-  [PROGRAMS.pumpAmm]: 'PumpSwap',
+  [PROGRAMS.dbc]: 'Meteora',
+  [PROGRAMS.damm]: 'Meteora DAMM v2',
   [PROGRAMS.quantum]: 'Quantum Hooks',
   [PROGRAMS.system]: 'the System Program',
   [PROGRAMS.token]: 'the Token Program',
@@ -28,7 +28,8 @@ const PROGRAM_NAMES = {
 
 export const MESSAGES = {
   slippage: 'Price moved beyond your slippage limit. Raise slippage or try a smaller amount.',
-  graduated: 'This coin has graduated to PumpSwap. Refresh to trade on the pool.',
+  graduated:
+    'The bonding curve is full. Trading resumes once Meteora opens the coin’s DAMM v2 pool.',
   noSol: 'Your wallet does not have enough SOL for this transaction and its fees.',
   walletRent:
     'This would leave your wallet below Solana’s minimum balance (about 0.0009 SOL). Use a slightly smaller amount.',
@@ -41,32 +42,18 @@ export const MESSAGES = {
   tokens: 'Your token balance is too low for this transaction.',
 }
 
-const PUMP_ERRORS = {
-  6002: MESSAGES.slippage, // TooMuchSolRequired
-  6003: MESSAGES.slippage, // TooLittleSolReceived
-  6042: MESSAGES.slippage, // BuySlippageBelowMinTokensOut
-  6005: MESSAGES.graduated, // BondingCurveComplete
-  6081: MESSAGES.graduated, // BondingCurveAlreadyMigrated
-  6020: 'That amount is too small to buy any tokens.',
-  6021: 'Not enough tokens left on the curve for that amount.',
-  6022: 'That amount is too small to sell.',
-  6023: 'You do not hold that many tokens to sell.',
-  6040: MESSAGES.noSol, // BuyNotEnoughSolToCoverRent
-  6041: 'That amount does not cover pump.fun’s fees. Try a larger amount.',
-  6043: 'The coin name is too long for pump.fun.',
-  6044: 'The ticker is too long for pump.fun.',
-  6045: 'The metadata link is too long for pump.fun.',
-  6046: 'pump.fun has paused coin creation. Try again later.',
+const DBC_ERRORS = {
+  6002: MESSAGES.slippage, // ExceededSlippage
+  6005: 'That amount is too small to trade.', // AmountIsZero
+  6012: 'Not enough tokens left on the curve for that amount.', // NotEnoughLiquidity
+  6013: MESSAGES.graduated, // PoolIsCompleted
+  6033: 'Not enough liquidity on the curve for that amount.', // InsufficientLiquidity
 }
-const PUMP_AMM_ERRORS = {
-  6004: MESSAGES.slippage, // ExceededSlippage
-  6040: MESSAGES.slippage, // BuySlippageBelowMinBaseAmountOut
-  6001: 'That amount is too small to trade.',
-  6002: 'That amount is too small to trade.',
-  6016: 'The pool does not hold that many tokens.',
-  6039: 'That amount does not cover PumpSwap’s fees. Try a larger amount.',
-  6020: 'PumpSwap has paused buying in this pool.',
-  6021: 'PumpSwap has paused selling in this pool.',
+const DAMM_ERRORS = {
+  6002: MESSAGES.slippage, // ExceededSlippage
+  6003: 'Meteora has paused trading in this pool.', // PoolDisabled
+  6006: 'That amount is too small to trade.', // AmountIsZero
+  6023: 'Not enough liquidity in the pool for that amount.', // InsufficientLiquidity
 }
 // Quantum Hooks: user-facing wording for the errors people can hit; the rest use the IDL message.
 const QUANTUM_MESSAGES = {
@@ -112,8 +99,8 @@ export function explainCustomError(programId, code) {
   code = Number(code)
   const name = programId ? PROGRAM_NAMES[programId] : null
   let message
-  if (programId === PROGRAMS.pump) message = PUMP_ERRORS[code]
-  else if (programId === PROGRAMS.pumpAmm) message = PUMP_AMM_ERRORS[code]
+  if (programId === PROGRAMS.dbc) message = DBC_ERRORS[code]
+  else if (programId === PROGRAMS.damm) message = DAMM_ERRORS[code]
   else if (programId === PROGRAMS.system) message = SYSTEM_ERRORS[code]
   else if (programId === PROGRAMS.token || programId === PROGRAMS.token2022)
     message = TOKEN_ERRORS[code]

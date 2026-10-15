@@ -49,7 +49,7 @@ const EMPTY = {
   website: '',
   twitter: '',
   telegram: '',
-  mode: 'quantum',
+  mode: 'standard',
   hooks: { creatorBps: 3000, burnBps: 3000, entangleBps: 2000, fusionBps: 2000 },
   splits: [],
   lock: { enabled: false, bps: 5000, cliffDays: 7, durationDays: 90 },
@@ -97,7 +97,7 @@ export default function LaunchPage() {
   const navigate = useNavigate()
   const toast = useToast()
   const { connected, address, balance, openDialog, sendTransactions } = useWallet()
-  const { platform, quantum, lookupTable } = usePlatform()
+  const { platform, quantum, lookupTable, dbcConfig } = usePlatform()
   const [draft, setDraft] = useState(loadDraft)
   const [uploading, setUploading] = useState(false)
   const [errors, setErrors] = useState({})
@@ -123,7 +123,7 @@ export default function LaunchPage() {
     let live = true
     if (!devLamports) return setDevTokens(0n)
     const t = setTimeout(() => {
-      devBuyQuote(devLamports)
+      devBuyQuote(devLamports, dbcConfig)
         .then((v) => live && setDevTokens(v))
         .catch(() => live && setDevTokens(0n))
     }, 250)
@@ -131,7 +131,7 @@ export default function LaunchPage() {
       live = false
       clearTimeout(t)
     }
-  }, [devLamports])
+  }, [devLamports, dbcConfig])
 
   const splitTotal = draft.splits.reduce((s, x) => s + Number(x.bps || 0), 0)
   // The balance check counts the full fee (a treasury funded before the launch is sent takes it);
@@ -143,7 +143,7 @@ export default function LaunchPage() {
   function validate() {
     const e = {}
     if (!draft.name.trim()) e.name = 'Give your coin a name.'
-    else if (bytes(draft.name.trim()) > 32) e.name = 'Names are limited to 32 bytes on pump.fun.'
+    else if (bytes(draft.name.trim()) > 32) e.name = 'Names are limited to 32 bytes on Meteora.'
     if (!draft.symbol.trim()) e.symbol = 'Choose a ticker.'
     else if (bytes(draft.symbol.trim()) > 10) e.symbol = 'Tickers are limited to 10 bytes.'
     if (draft.description.length > 500) e.description = 'Keep the description under 500 characters.'
@@ -152,7 +152,7 @@ export default function LaunchPage() {
       if (draft[key] && !/^https?:\/\/\S+$/i.test(draft[key]))
         e[key] = 'Use a full link starting with https:// or http://'
     if (devLamports === null) e.devBuy = 'Enter a SOL amount, or 0 to skip the dev buy.'
-    // create_v2 + dev buy only fit in one transaction with the lookup table, and they are never split.
+    // The create + dev buy only fit in one transaction with the lookup table, and are never split.
     else if (devLamports > 0n && !lookupTable)
       e.devBuy =
         'A dev buy must land in the same transaction as the create, which needs the Quant Pad lookup table. This site has none configured, so set the dev buy to 0.'
@@ -263,6 +263,7 @@ export default function LaunchPage() {
             slippagePct: draft.slippage,
             platform,
             lookupTable,
+            dbcConfig,
           }),
         })
         pendingLaunch.current = job
@@ -335,10 +336,10 @@ export default function LaunchPage() {
         title: `${job.snapshot.symbol} is live`,
         body:
           registration.status === 'failed'
-            ? 'Your coin is on pump.fun. Quant Pad is still indexing it.'
+            ? 'Your coin is live on Meteora. Quant Pad is still indexing it.'
             : registration.status === 'capped'
-              ? 'Your coin is on pump.fun. Quant Pad is not listing new launches right now.'
-              : 'Your coin is on pump.fun.',
+              ? 'Your coin is live on Meteora. Quant Pad is not listing new launches right now.'
+              : 'Your coin is live on Meteora.',
         tone: 'success',
         signature: createSignature(job) || undefined,
       })
@@ -378,8 +379,9 @@ export default function LaunchPage() {
       <header className="page-head">
         <h1>Launch a coin</h1>
         <p className="muted">
-          Your coin is created on pump.fun. Wire it to Quantum Hooks and its creator fees follow the
-          rules you set here, forever.
+          Your coin launches on Meteora’s Dynamic Bonding Curve and graduates to a DAMM v2 pool with
+          its liquidity locked. Wire it to Quantum Hooks and its creator fees follow the rules you
+          set here, forever.
         </p>
       </header>
 
@@ -508,14 +510,14 @@ export default function LaunchPage() {
               onChange={(mode) => set({ mode })}
               options={[
                 ['quantum', 'Quantum launch'],
-                ['standard', 'Standard pump.fun'],
+                ['standard', 'Standard Meteora'],
               ]}
             />
             {quantumBlocked && (
               <p className="notice notice-warn" style={{ marginTop: 14 }}>
                 {quantumPaused
-                  ? 'Quantum launches are paused right now. You can design your hooks now; to launch today, switch to a standard pump.fun launch.'
-                  : 'Quantum Hooks are not live on mainnet yet. You can design your hooks now; to launch today, switch to a standard pump.fun launch.'}
+                  ? 'Quantum launches are paused right now. You can design your hooks now; to launch today, switch to a standard Meteora launch.'
+                  : 'Quantum Hooks are not live on mainnet yet. You can design your hooks now; to launch today, switch to a standard Meteora launch.'}
               </p>
             )}
             {wantsQuantum ? (
@@ -727,8 +729,8 @@ export default function LaunchPage() {
               </>
             ) : (
               <p className="muted" style={{ marginTop: 14 }}>
-                A standard launch makes you the pump.fun creator. You collect creator fees yourself
-                on pump.fun and no hooks run.
+                A standard launch makes you the coin’s Meteora creator. You claim its creator fees
+                yourself on Meteora and no hooks run.
               </p>
             )}
           </section>
@@ -825,7 +827,7 @@ export default function LaunchPage() {
                 )}
               </>
             ) : (
-              <p className="muted summary-note">Standard pump.fun launch. You are the creator.</p>
+              <p className="muted summary-note">Standard Meteora launch. You are the creator.</p>
             )}
             <dl className="kv summary-costs">
               <dt>Dev buy</dt>
@@ -853,7 +855,7 @@ export default function LaunchPage() {
                   <>
                     <p className="faint">
                       {failure.created
-                        ? 'Your coin is already on pump.fun. '
+                        ? 'Your coin is already live on Meteora. '
                         : failure.progressed
                           ? 'Part of this launch may already be on-chain. '
                           : ''}

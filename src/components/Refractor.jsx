@@ -87,7 +87,7 @@ export default function Refractor({ symbol }) {
       </div>
       <div className="refractor-source">
         <span className="refractor-dot" />
-        pump.fun creator fee{symbol ? <strong className="num"> · ${symbol}</strong> : null}
+        Meteora creator fee{symbol ? <strong className="num"> · ${symbol}</strong> : null}
       </div>
       {paths.map((p) => (
         <div

@@ -34,7 +34,7 @@ jobs:
             import { nodeFileTrace } from '@vercel/nft'
             const { fileList } = await nodeFileTrace(['api/[[...path]].js'], { base: process.cwd(), mixedModules: true })
             const files = [...fileList]
-            for (const dep of ['@pump-fun/pump-sdk', '@pump-fun/pump-swap-sdk', '@noble/hashes', '@solana/web3.js'])
+            for (const dep of ['@meteora-ag/dynamic-bonding-curve-sdk', '@meteora-ag/cp-amm-sdk', '@noble/hashes', '@solana/web3.js'])
               if (!files.some((f) => f.startsWith('node_modules/' + dep + '/'))) throw new Error(dep + ' is missing from the traced function bundle')
             console.log(files.length + ' files traced')
           "

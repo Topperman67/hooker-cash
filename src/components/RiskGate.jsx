@@ -23,12 +23,13 @@ export default function RiskGate({ children }) {
         <h1>Before you enter</h1>
         <ul>
           <li>
-            Coins launched here are memecoins on pump.fun. Most go to zero. Only use SOL you can
-            afford to lose.
+            Coins launched here are memecoins on Meteora’s bonding curve. Most go to zero. Only use
+            SOL you can afford to lose.
           </li>
           <li>
-            Quantum Hooks route a coin's creator fees through an on-chain program. pump.fun's admins
-            can still reassign a coin's creator, which would stop its hooks.
+            Quantum Hooks route a coin's creator fees through an on-chain program. Meteora's
+            programs can be upgraded by Meteora, and its operators can change or pause a migrated
+            pool, which would affect trading and hooks.
           </li>
           <li>
             Every transaction is signed in your own wallet. Quant Pad never holds your keys or

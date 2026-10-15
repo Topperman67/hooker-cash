@@ -1,7 +1,7 @@
 import { network } from '../../shared/network.mjs'
 
 // Whole tokens a coin's market cap counts, matching the server's capSupply(): the mint's live raw
-// supply when the record has it (mayhem coins mint 2B, burns lower it), else pump.fun's 1B, or
+// supply when the record has it (burns lower it), else Quant Pad's fixed 1B, or
 // 2B for a mayhem coin. Candle prices are SOL per whole token, so price × this is the market cap.
 export function capTokens({ supply, mayhem } = {}) {
   const live = Number(supply)

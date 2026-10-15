@@ -24,7 +24,7 @@ export default function DocsPage() {
       <article className="prose">
         <h1>How Quant Pad works</h1>
         <p className="muted">
-          Quant Pad is a launch and trading front end for pump.fun on Solana, with an on-chain
+          Quant Pad is a launch and trading front end for Meteora on Solana, with an on-chain
           program that routes each coin’s creator fees.
         </p>
 
@@ -36,8 +36,8 @@ export default function DocsPage() {
             published by Quant Pad and its address is stored in your token forever.
           </li>
           <li>
-            Choose a Quantum launch (hooks) or a standard pump.fun launch (you are the creator and
-            collect fees yourself).
+            Choose a Quantum launch (hooks) or a standard Meteora launch (you are the creator and
+            claim fees yourself).
           </li>
           <li>
             Optionally make a dev buy. It executes in the same transaction that creates the coin, so
@@ -50,21 +50,22 @@ export default function DocsPage() {
           </li>
         </ol>
         <p>
-          Every coin is a real pump.fun coin: it appears on pump.fun, trades on the bonding curve,
-          and graduates to a PumpSwap pool when the curve sells out.
+          Every coin is a real Meteora coin: it trades on Meteora’s Dynamic Bonding Curve and
+          graduates to a Meteora DAMM v2 pool, with its liquidity permanently locked, when the curve
+          fills.
         </p>
 
         <h2 id="trading">Trading</h2>
         <p>
           Buy with SOL and sell for SOL from any coin page. Before graduation trades go to the
-          pump.fun bonding curve; after graduation they go to the coin’s canonical PumpSwap pool.
-          Your slippage limit is enforced on-chain, so a trade fails instead of filling at a worse
-          price. You can open any pump.fun coin by pasting its mint address in the search box.
+          coin’s Meteora bonding curve; after graduation they go to its Meteora DAMM v2 pool. Your
+          slippage limit is enforced on-chain, so a trade fails instead of filling at a worse price.
+          You can open any Meteora bonding-curve coin by pasting its mint address in the search box.
         </p>
 
         <h2 id="hooks">Quantum Hooks</h2>
         <p>
-          A Quantum coin’s pump.fun creator is a program-controlled address unique to that coin,
+          A Quantum coin’s Meteora creator is a program-controlled address unique to that coin,
           called its well. Creator fees accumulate for the well; a pulse collects them and splits
           them by the allocation fixed at launch. See <Link to="/hooks">Quantum Hooks</Link> for
           each module.
@@ -73,8 +74,9 @@ export default function DocsPage() {
         <h2 id="fees">Fees</h2>
         <ul>
           <li>
-            pump.fun charges its own trading fees, currently 1.25% on the bonding curve (0.95%
-            protocol, 0.30% creator), and a tiered schedule on PumpSwap.
+            Quant Pad coins pay a 1% trading fee on Meteora (higher for the first two minutes after
+            launch, to deter snipers). Meteora keeps its protocol share and the rest goes to the
+            coin’s creator.
           </li>
           <li>
             {platform.feeBps
@@ -99,8 +101,8 @@ export default function DocsPage() {
           </li>
           <li>Memecoins are extremely volatile and most lose all value.</li>
           <li>
-            pump.fun can change its programs or reassign a coin’s creator. Quantum Hooks depend on
-            pump.fun continuing to pay creator fees to the well.
+            Meteora can upgrade its programs, and its operators can change or pause a migrated pool.
+            Quantum Hooks depend on Meteora continuing to pay creator fees to the well.
           </li>
           <li>The Quantum Hooks program has not yet been independently audited.</li>
         </ul>

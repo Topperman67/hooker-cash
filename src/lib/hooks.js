@@ -12,7 +12,7 @@ export const MODULES = [
     name: 'Quantum Burn',
     color: 'var(--hook-burn)',
     short: 'Buys the coin and burns it',
-    body: 'Fees build a reserve that market-buys the coin on the curve or PumpSwap and burns every token bought, shrinking supply.',
+    body: 'Fees build a reserve that market-buys the coin on the Meteora curve or its DAMM v2 pool and burns every token bought, shrinking supply.',
   },
   {
     key: 'entangleBps',
@@ -26,7 +26,7 @@ export const MODULES = [
     name: 'Fusion',
     color: 'var(--hook-fusion)',
     short: 'Adds locked liquidity',
-    body: 'After graduation, fees are paired with bought tokens and deposited into the PumpSwap pool. The LP tokens can never be withdrawn.',
+    body: 'After graduation, fees buy the coin and both sides are added to the coin’s locked Meteora DAMM v2 position. That liquidity can never be withdrawn.',
   },
 ]
 

@@ -1,13 +1,9 @@
-// Launch flow: artwork → metadata → mint keypair → pump.fun create_v2 (+ dev buy), optionally
-// wired to Quantum Hooks. The mint keypair signs locally and never leaves the browser.
-import BN from 'bn.js'
+// Launch flow: artwork → metadata → mint keypair → Meteora Dynamic Bonding Curve create (+ dev
+// buy in the same transaction), optionally wired to Quantum Hooks. The mint keypair signs locally
+// and never leaves the browser.
 import { Keypair, PublicKey } from '@solana/web3.js'
-import {
-  TOKEN_2022_PROGRAM_ID,
-  getAssociatedTokenAddressSync,
-  unpackAccount,
-} from '@solana/spl-token'
-import { OnlinePumpSdk, PUMP_SDK, bondingCurvePda, getBuyTokenAmountFromSolAmount } from '#pump-sdk'
+import { TOKEN_PROGRAM_ID, getAssociatedTokenAddressSync, unpackAccount } from '@solana/spl-token'
+import { dbcPoolPda } from '../../shared/meteora.mjs'
 import { api } from './api.js'
 import { connection, platformFeeInstruction } from './solana.js'
 import { loadQuantum } from './quantum.js'
@@ -65,34 +61,29 @@ export async function grindMint({ suffix = MINT_SUFFIX, budgetMs = 6000, onProgr
   return { keypair: Keypair.generate(), tries, vanity: false }
 }
 
-let globals = null
-async function launchGlobals() {
-  if (globals && Date.now() - globals.at < 60000) return globals
-  const sdk = new OnlinePumpSdk(connection)
-  const [global, feeConfig] = await Promise.all([sdk.fetchGlobal(), sdk.fetchFeeConfig()])
-  return (globals = { at: Date.now(), global, feeConfig })
+// Quant Pad's Meteora launch config never changes once created: read once per page load.
+const configs = new Map()
+async function launchConfig(dbcConfig) {
+  if (!dbcConfig)
+    throw Object.assign(Error('Launches are not set up on this server yet.'), { friendly: true })
+  if (!configs.has(dbcConfig)) {
+    const client = await loadQuantum()
+    configs.set(dbcConfig, await client.fetchLaunchConfig(connection, dbcConfig))
+  }
+  return configs.get(dbcConfig)
 }
 
 // Tokens a fresh curve gives for a SOL budget (fees included).
-export async function devBuyQuote(lamports) {
+export async function devBuyQuote(lamports, dbcConfig) {
   if (!lamports || lamports <= 0n) return 0n
-  const { global, feeConfig } = await launchGlobals()
-  return BigInt(
-    getBuyTokenAmountFromSolAmount({
-      global,
-      feeConfig,
-      mintSupply: null,
-      bondingCurve: null,
-      amount: new BN(lamports.toString()),
-      quoteMint: PublicKey.default,
-    }).toString(),
-  )
+  const client = await loadQuantum()
+  return client.devBuyQuote(await launchConfig(dbcConfig), lamports).tokens
 }
 
 /**
  * Instruction groups for a fresh launch, with the stages each group completes:
- * [register] (Quantum only), [create_v2, ATA, buy_v2, fee?], [lock] (Quantum with a lock).
- * create_v2 and the dev buy are one indivisible group in both modes, so nobody can trade between
+ * [register] (Quantum only), [DBC create, dev buy, fee?], [lock] (Quantum with a lock).
+ * The create and the dev buy are one indivisible group in both modes, so nobody can trade between
  * them: if that group cannot fit in one transaction, packTransactions fails instead of splitting.
  * The packer merges register into it, and the lock after it, only when everything fits.
  */
@@ -107,8 +98,10 @@ export async function launchInstructions({
   devBuyLamports,
   slippagePct,
   platform,
+  dbcConfig,
 }) {
   const user = new PublicKey(launcher)
+  await launchConfig(dbcConfig)
   const devBuy = devBuyLamports > 0n ? { solLamports: devBuyLamports, slippagePct } : null
   const fee = await platformFeeInstruction(user, platform, devBuyLamports)
   if (quantum) {
@@ -122,40 +115,22 @@ export async function launchInstructions({
       uri,
       hooks,
       devBuy,
+      dbcConfig,
     })
     const { register, launch, lock } = built.stages
     return { ...built, ...launchGroups({ register, launch, fee, lock, devBuy: !!devBuy }) }
   }
-  let built
-  if (devBuy) {
-    const { global } = await launchGlobals()
-    const tokens = await devBuyQuote(devBuyLamports)
-    const instructions = await PUMP_SDK.createV2AndBuyV2Instructions({
-      global,
-      mint,
-      name,
-      symbol,
-      uri,
-      creator: user,
-      user,
-      amount: new BN(tokens.toString()),
-      quoteAmount: new BN(devBuyLamports.toString()),
-      mayhemMode: false,
-      slippage: slippagePct,
-    })
-    built = { instructions, devBuyTokens: tokens, lockAmount: 0n }
-  } else {
-    const ix = await PUMP_SDK.createV2Instruction({
-      mint,
-      name,
-      symbol,
-      uri,
-      creator: user,
-      user,
-      mayhemMode: false,
-    })
-    built = { instructions: [ix], devBuyTokens: 0n, lockAmount: 0n }
-  }
+  const client = await loadQuantum()
+  const built = await client.buildStandardLaunchInstructions({
+    connection,
+    launcher: user,
+    mint,
+    name,
+    symbol,
+    uri,
+    devBuy,
+    dbcConfig,
+  })
   return { ...built, ...launchGroups({ launch: built.instructions, fee, devBuy: !!devBuy }) }
 }
 
@@ -194,10 +169,11 @@ export async function launchProgress({ mint, snapshot }) {
   const mintKey = new PublicKey(mint)
   const launcher = new PublicKey(snapshot.launcher)
   const client = snapshot.quantum ? await loadQuantum() : null
-  const ata = getAssociatedTokenAddressSync(mintKey, launcher, true, TOKEN_2022_PROGRAM_ID)
-  const keys = [bondingCurvePda(mintKey), ata, ...(client ? [client.quantumPda(mintKey)] : [])]
+  const ata = getAssociatedTokenAddressSync(mintKey, launcher, true, TOKEN_PROGRAM_ID)
+  const pool = dbcPoolPda(snapshot.dbcConfig, mintKey)
+  const keys = [pool, ata, ...(client ? [client.quantumPda(mintKey)] : [])]
   const [curve, token, quantum] = await connection.getMultipleAccountsInfo(keys, 'confirmed')
-  const tokens = token ? unpackAccount(ata, token, TOKEN_2022_PROGRAM_ID).amount : 0n
+  const tokens = token ? unpackAccount(ata, token, TOKEN_PROGRAM_ID).amount : 0n
   const state = quantum ? client.decodeQuantum(quantum.data) : null
   return {
     registered: !!state,
@@ -230,8 +206,8 @@ export async function reconcileLaunch(job) {
 
 /**
  * The instruction groups still to send for `job`, rebuilt from its frozen snapshot:
- * - create_v2 not landed yet: the full launch (minus a register that already landed), quoted
- *   against a fresh curve, which is exact because the coin does not exist yet;
+ * - the DBC create not landed yet: the full launch (minus a register that already landed),
+ *   quoted against a fresh curve, which is exact because the coin does not exist yet;
  * - coin created without its dev buy: a dev buy quoted from the live bonding curve;
  * - only the lock left: the lock amount comes from the tokens the launcher actually received.
  */
@@ -256,6 +232,7 @@ export async function remainingLaunchGroups(job) {
       lamports: snapshot.devBuyLamports,
       slippagePct: snapshot.slippagePct,
       platform: snapshot.platform,
+      dbcPool: dbcPoolPda(snapshot.dbcConfig, mint).toBase58(),
     })
     // The lock is built on the next pass, from what this buy actually delivered.
     return planGroups([{ stages: ['buy'], instructions }])

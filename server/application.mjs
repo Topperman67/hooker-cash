@@ -1127,6 +1127,12 @@ export async function createApplication(options = {}) {
       lookupTable: isAddress(process.env.QUANTPAD_LOOKUP_TABLE)
         ? process.env.QUANTPAD_LOOKUP_TABLE
         : null,
+      // The Meteora DBC config new launches use: the first of QUANTPAD_DBC_CONFIG.
+      dbcConfig:
+        String(process.env.QUANTPAD_DBC_CONFIG || '')
+          .split(',')
+          .map((s) => s.trim())
+          .find(isAddress) || null,
     }
   }
 
@@ -1354,7 +1360,7 @@ export async function createApplication(options = {}) {
           data.description.length > 500
         )
           throw clientError(
-            'Name (32 bytes), ticker (10 bytes) and description (500 characters) must fit pump.fun limits.',
+            'Name (32 bytes), ticker (10 bytes) and description (500 characters) must fit Meteora token limits.',
           )
         const isWebLink = (v) => {
           try {

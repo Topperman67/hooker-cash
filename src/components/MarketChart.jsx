@@ -147,7 +147,7 @@ export default function MarketChart({ mint, symbol, supply, mayhem }) {
             </p>
             <p className="muted">
               {resource.error ||
-                'The chart builds from confirmed pump.fun trades as they are indexed.'}
+                'The chart builds from confirmed Meteora trades as they are indexed.'}
             </p>
           </div>
         )}

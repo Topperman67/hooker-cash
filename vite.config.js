@@ -96,7 +96,11 @@ export default defineConfig(({ mode }) => ({
       output: {
         manualChunks: {
           solana: ['@solana/web3.js', '@solana/spl-token', 'bn.js', 'buffer'],
-          pump: ['@pump-fun/pump-sdk', '@pump-fun/pump-swap-sdk', '@coral-xyz/anchor'],
+          meteora: [
+            '@meteora-ag/dynamic-bonding-curve-sdk',
+            '@meteora-ag/cp-amm-sdk',
+            '@coral-xyz/anchor',
+          ],
           charts: ['lightweight-charts'],
         },
       },

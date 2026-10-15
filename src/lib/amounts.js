@@ -26,21 +26,10 @@ export function chargedPlatformFee(platform, lamports, treasuryBalance) {
 /** `amount` reduced by the slippage tolerance: the least a trade may deliver. */
 export const minimumOut = (amount, slippagePct) => (amount * (BPS - slippageBps(slippagePct))) / BPS
 
-/**
- * The quote to price a PumpSwap v1 `buy` with when its cost cap (`quote × (1 + slippage)`, which is
- * also what gets wrapped into WSOL) must not exceed `budget`.
- */
-export const quoteForMaxSpend = (budget, slippagePct) =>
-  (budget * BPS) / (BPS + slippageBps(slippagePct))
-
-/** pump-swap-sdk's cost cap for a quote: `quote × floor((1 + s/100) × 1e9) / 1e9`. */
-export const sdkMaxQuote = (quote, slippagePct) =>
-  (quote * BigInt(Math.floor((1 + Number(slippagePct) / 100) * 1_000_000_000))) / 1_000_000_000n
-
 // SOL kept aside for network fees and the accounts a buy may open: the coin's token account
-// (~0.0021 SOL) on either venue, plus a temporary WSOL account (~0.002 SOL, refunded when it is
-// closed in the same transaction) for a PumpSwap pool, plus priority fees.
-export const BUY_RESERVE = { curve: 5_000_000n, pool: 7_000_000n }
+// (~0.0021 SOL) plus a temporary WSOL account (~0.002 SOL, refunded when it is closed in the same
+// transaction) on either Meteora venue, plus priority fees.
+export const BUY_RESERVE = { curve: 7_000_000n, pool: 7_000_000n }
 // "Max" leaves this much more on top, so the result does not sit exactly on the limit.
 export const MAX_HEADROOM = 5_000_000n
 

@@ -8,7 +8,7 @@ export default function TermsPage() {
         </p>
         <h2>What Quant Pad is</h2>
         <p>
-          Quant Pad is software that builds Solana transactions for pump.fun and for the Quantum
+          Quant Pad is software that builds Solana transactions for Meteora and for the Quantum
           Hooks program. You sign every transaction in your own wallet. Quant Pad does not custody
           funds, does not hold private keys and cannot reverse transactions.
         </p>
@@ -29,9 +29,9 @@ export default function TermsPage() {
         </ul>
         <h2>Third parties</h2>
         <p>
-          Coins are created and traded through pump.fun and PumpSwap, which are operated by third
-          parties with their own fees, rules and admin powers. Their changes can affect coins
-          launched here, including stopping Quantum Hooks.
+          Coins are created and traded through Meteora’s Dynamic Bonding Curve and DAMM v2, which
+          are operated by third parties with their own fees, rules and admin powers. Their changes
+          can affect coins launched here, including stopping Quantum Hooks.
         </p>
         <h2>No warranty</h2>
         <p>
@@ -42,7 +42,7 @@ export default function TermsPage() {
         <h2>Content</h2>
         <p>
           Quant Pad may hide coins from its own pages for any reason. Hidden coins remain on-chain
-          and on pump.fun.
+          and on Meteora.
         </p>
       </article>
     </div>

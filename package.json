@@ -27,8 +27,6 @@
     "@meteora-ag/cp-amm-sdk": "1.5.1",
     "@meteora-ag/dynamic-bonding-curve-sdk": "1.5.13",
     "@noble/hashes": "^1.8.0",
-    "@pump-fun/pump-sdk": "^4.0.0",
-    "@pump-fun/pump-swap-sdk": "^2.1.0",
     "@solana/spl-token": "^0.4.15",
     "@solana/wallet-standard-features": "^1.5.0",
     "@solana/web3.js": "^1.99.0",
@@ -52,16 +50,6 @@
   },
   "allowScripts": {
     "esbuild@0.25.12": true
-  },
-  "imports": {
-    "#pump-sdk": {
-      "node": "./shared/vendor/pump-sdk.node.mjs",
-      "default": "@pump-fun/pump-sdk"
-    },
-    "#pump-swap-sdk": {
-      "node": "./shared/vendor/pump-swap-sdk.node.mjs",
-      "default": "@pump-fun/pump-swap-sdk"
-    }
   },
   "overrides": {
     "rpc-websockets": {

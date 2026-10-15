@@ -994,7 +994,11 @@ export function createIndexer({
     let live = null
     if (
       Date.now() < deadline &&
-      (moved || behind || !record.syncedAt || !(record.price > 0) || supplyStale ||
+      (moved ||
+        behind ||
+        !record.syncedAt ||
+        !(record.price > 0) ||
+        supplyStale ||
         (complete && !migrated))
     )
       live = await readMarket(connection, mint, {
@@ -1036,7 +1040,8 @@ export function createIndexer({
       if (live?.curve) {
         // A DBC pool's creator can be handed on (to a Quantum well, for one): follow it.
         next.creator = live.curve.creator
-        if (!next.dbcPool) Object.assign(next, { dbcPool: live.curve.dbcPool, dbcConfig: live.curve.dbcConfig })
+        if (!next.dbcPool)
+          Object.assign(next, { dbcPool: live.curve.dbcPool, dbcConfig: live.curve.dbcConfig })
         if (next.decimals == null) next.decimals = live.curve.decimals
       }
       return { ...next, ...derive(next, trades, live) }

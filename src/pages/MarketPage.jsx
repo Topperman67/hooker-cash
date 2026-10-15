@@ -59,7 +59,7 @@ export default function MarketPage() {
       <header className="page-head">
         <h1>Market</h1>
         <p className="muted">
-          Coins launched through Quant Pad. Paste any pump.fun mint to open and trade it here.
+          Coins launched through Quant Pad. Paste any Meteora bonding-curve mint to open and trade it here.
         </p>
       </header>
       <div className="market-bar">
@@ -155,7 +155,7 @@ export default function MarketPage() {
       ) : (
         <Empty title={q ? `Nothing matches “${q}”` : 'No coins here yet'}>
           {q
-            ? 'Try a ticker, a name, or paste a pump.fun mint address.'
+            ? 'Try a ticker, a name, or paste a Meteora mint address.'
             : 'Launched coins appear here once their launch confirms.'}
         </Empty>
       )}

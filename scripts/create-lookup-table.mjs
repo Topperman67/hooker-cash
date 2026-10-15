@@ -50,7 +50,9 @@ const launchConfigs = String(args.config || process.env.QUANTPAD_DBC_CONFIG || '
   .filter(Boolean)
   .map((s) => new PublicKey(s))
 if (!launchConfigs.length)
-  console.warn('No DBC launch config given (--config or QUANTPAD_DBC_CONFIG); add it later with --table.')
+  console.warn(
+    'No DBC launch config given (--config or QUANTPAD_DBC_CONFIG); add it later with --table.',
+  )
 
 async function send(instructions) {
   const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash()

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Link, NavLink, useLocation } from 'react-router-dom'
 import { Menu, Wallet, X } from 'lucide-react'
 import Logo from './Logo.jsx'
+import { MeteoraMark } from './Meteora.jsx'
 import SearchBox from './SearchBox.jsx'
 import Tape from './Tape.jsx'
 import Glass from './Glass.jsx'
@@ -71,6 +72,15 @@ export default function Shell({ children }) {
               <Link to="/" className="brand" aria-label="Quant Pad home">
                 <Logo />
               </Link>
+              <a
+                href="https://www.meteora.ag"
+                target="_blank"
+                rel="noreferrer"
+                className="built-on built-on-top"
+                title="Coins launch and trade on Meteora"
+              >
+                <MeteoraMark size={16} /> <span>Built on Meteora</span>
+              </a>
               <nav className="nav" aria-label="Main">
                 {LINKS.map(([to, label]) => (
                   <NavLink key={to} to={to}>
@@ -111,9 +121,9 @@ export default function Shell({ children }) {
           <div>
             <Logo tone="dark" className="footer-lockup" />
             <p>
-              Quant Pad launches coins through pump.fun on Solana and routes their creator fees
-              through Quantum Hooks. Memecoins are extremely risky. Nothing here is financial
-              advice.
+              Quant Pad launches coins on Meteora’s Dynamic Bonding Curve on Solana and routes their
+              creator fees through Quantum Hooks. Memecoins are extremely risky. Nothing here is
+              financial advice.
               {solUsd ? <span className="num"> SOL {usd(solUsd)}.</span> : null}
             </p>
           </div>
@@ -121,8 +131,8 @@ export default function Shell({ children }) {
             <Link to="/hooks">Quantum Hooks</Link>
             <Link to="/docs">Docs</Link>
             <Link to="/terms">Terms</Link>
-            <a href="https://pump.fun" target="_blank" rel="noreferrer">
-              pump.fun
+            <a href="https://www.meteora.ag" target="_blank" rel="noreferrer" className="built-on">
+              Built on <MeteoraMark size={16} /> Meteora
             </a>
           </div>
         </div>

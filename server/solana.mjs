@@ -142,7 +142,10 @@ function accountKeys(tx) {
 
 const str = (v) => (v === undefined || v === null ? null : v.toString())
 const b58 = (v) => (v?.toBase58 ? v.toBase58() : str(v))
-const text = (v) => String(v || '').replace(/\0+$/, '').trim()
+const text = (v) =>
+  String(v || '')
+    .replace(/\0+$/, '')
+    .trim()
 
 // Who signed for the instruction that emitted an event: its payer account, else the fee payer.
 function payerOf(tx, emitter) {

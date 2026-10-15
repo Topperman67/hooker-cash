@@ -13,7 +13,8 @@ import { loadJob, registerOnce } from '../lib/launchPlan.js'
 import { usePlatform } from '../context/PlatformContext.jsx'
 import Price from '../components/Price.js'
 import { ago, pct, safeLink, sol, usd } from '../lib/format.js'
-import { explorer, isAddress, pumpFunUrl } from '../../shared/network.mjs'
+import { explorer, isAddress } from '../../shared/network.mjs'
+import { MeteoraMark } from '../components/Meteora.jsx'
 
 const storage = () => {
   try {
@@ -40,7 +41,7 @@ export default function CoinPage() {
   const refresh = coin.refresh
   const external = !!coin.data?.coin?.external
 
-  // Any pump.fun coin can be opened; untracked mints are added on first visit. A launch made from
+  // Any Meteora DBC coin can be opened; untracked mints are added on first visit. A launch made from
   // this browser is registered as a Quant Pad coin instead (with retries), never tracked as an
   // external coin unless the server says it is not one.
   useEffect(() => {
@@ -82,7 +83,7 @@ export default function CoinPage() {
           label={
             tracking && tracking !== 'pending' && tracking !== 'done'
               ? tracking
-              : 'Reading this coin from pump.fun'
+              : 'Reading this coin from Meteora'
           }
         />
       )
@@ -132,10 +133,10 @@ export default function CoinPage() {
           footer={
             <span>
               {c.complete
-                ? c.poolMissing
-                  ? 'Migrated off pump.fun'
-                  : 'Graduated to PumpSwap'
-                : `Bonding curve ${Math.round(c.progress || 0)}%`}
+                ? c.migrated
+                  ? 'Graduated to Meteora DAMM v2'
+                  : 'Graduating to Meteora DAMM v2'
+                : `Meteora curve ${Math.round(c.progress || 0)}%`}
             </span>
           }
         />
@@ -188,11 +189,11 @@ export default function CoinPage() {
         <aside className="coin-side">
           <TradeTicket coin={c} onTraded={coin.refresh} />
           <section className="panel">
-            <CurveProgress progress={c.progress} complete={c.complete} migrated={!!c.poolMissing} />
+            <CurveProgress progress={c.progress} complete={c.complete} migrated={!!c.migrated} />
             {!c.complete && (
               <p className="faint" style={{ marginTop: 10, fontSize: 'var(--t-xs)' }}>
-                When the curve sells out, the coin graduates to a PumpSwap pool and trading
-                continues there.
+                When the curve fills, Meteora graduates the coin to a DAMM v2 pool with its
+                liquidity locked, and trading continues there.
               </p>
             )}
           </section>
@@ -232,10 +233,16 @@ export default function CoinPage() {
                   </dd>
                 </>
               )}
-              <dt>pump.fun</dt>
+              <dt>
+                <MeteoraMark size={14} /> Meteora
+              </dt>
               <dd>
-                <a href={pumpFunUrl(c.mint)} target="_blank" rel="noreferrer">
-                  View on pump.fun
+                <a
+                  href={explorer.account(c.migrated && c.pool ? c.pool : c.dbcPool || c.mint)}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {c.migrated ? 'DAMM v2 pool' : 'Bonding curve pool'}
                 </a>
               </dd>
             </dl>

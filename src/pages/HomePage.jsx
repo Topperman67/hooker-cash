@@ -7,6 +7,7 @@ import { usePlatform } from '../context/PlatformContext.jsx'
 import { EXTRAS, MODULES } from '../lib/hooks.js'
 import Glass from '../components/Glass.jsx'
 import { compact, sol, usd } from '../lib/format.js'
+import { MeteoraMark } from '../components/Meteora.jsx'
 
 export default function HomePage() {
   const latest = useResource('/api/market?sort=newest', 15000)
@@ -22,12 +23,14 @@ export default function HomePage() {
         <div className="wrap hero-grid">
           <div className="hero-copy">
             <h1 className="hero-title">
-              <span>Launch on pump.fun.</span>
+              <span className="hero-venue">
+                Launch on <MeteoraMark size="0.9em" className="meteora-mark hero-mark" /> Meteora.
+              </span>
               <span>Route every fee through</span>
               <span className="hero-chrome chrome-text">Quantum Hooks.</span>
             </h1>
             <p className="hero-lede">
-              Quant Pad creates your coin on pump.fun and points its creator fees at an on-chain
+              Quant Pad creates your coin on Meteora and points its creator fees at an on-chain
               program. Every pulse of fees is split by rules you lock at launch:{' '}
               <b>buy back and burn</b>, <b>pay holders in SOL</b>, <b>lock liquidity</b>,{' '}
               <b>pay your team</b>.
@@ -128,10 +131,10 @@ export default function HomePage() {
             </p>
           </li>
           <li>
-            <h3>Launch on pump.fun</h3>
+            <h3>Launch on Meteora</h3>
             <p>
-              Your coin is created on pump.fun with its creator set to the coin’s own Quant Pad
-              well, with your dev buy in the same transaction.
+              Your coin is created on Meteora’s Dynamic Bonding Curve with its creator set to the
+              coin’s own Quant Pad well, with your dev buy in the same transaction.
             </p>
           </li>
           <li>
@@ -144,7 +147,7 @@ export default function HomePage() {
         </ol>
         {!quantum.available && (
           <p className="notice" style={{ marginTop: 20 }}>
-            Quantum Hooks are being deployed. Standard pump.fun launches work today; hooked launches
+            Quantum Hooks are being deployed. Standard Meteora launches work today; hooked launches
             unlock once the program is live on mainnet.
           </p>
         )}

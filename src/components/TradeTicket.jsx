@@ -30,10 +30,9 @@ export default function TradeTicket({ coin, onTraded }) {
   const [errorSignature, setErrorSignature] = useState(null)
   const [marketError, setMarketError] = useState('')
   const tabs = useRef({})
-  // Graduated without a PumpSwap pool: a legacy coin that migrated to Raydium (or a new graduate in
-  // the moments before its pool exists). There is no market here to read or trade; the coin page
-  // re-reads the coin, so trading opens if a pool turns up.
-  const migrated = !!coin.poolMissing
+  // The curve filled and Meteora has not opened the coin's DAMM v2 pool yet: nothing can trade
+  // until it does (usually moments). The market keeps refreshing, so trading opens with the pool.
+  const migrated = market?.venue === 'migrating'
 
   useEffect(() => {
     import('../lib/trade.js').then(setTrade)
@@ -54,7 +53,7 @@ export default function TradeTicket({ coin, onTraded }) {
     const requested = `${coin.mint}|${address || ''}`
     try {
       const [state, tokens] = await Promise.all([
-        trade.marketState(coin.mint, address),
+        trade.marketState(coin.mint, address, coin.dbcPool),
         address ? trade.tokenBalance(coin.mint, address) : Promise.resolve(0n),
       ])
       if (current.current !== requested) return
@@ -73,9 +72,8 @@ export default function TradeTicket({ coin, onTraded }) {
   }, [trade, coin.mint, address])
 
   useEffect(() => {
-    if (migrated) return
     refresh()
-    const timer = setInterval(refresh, 12000)
+    const timer = setInterval(refresh, migrated ? 5000 : 12000)
     return () => clearInterval(timer)
   }, [refresh, migrated])
 
@@ -156,6 +154,7 @@ export default function TradeTicket({ coin, onTraded }) {
         ...(side === 'buy' ? { lamports: raw } : { tokens: raw }),
         slippagePct: slippage,
         platform,
+        dbcPool: coin.dbcPool,
       })
       const { transactions, lastValidBlockHeight } = await packTransactions(
         address,
@@ -190,7 +189,7 @@ export default function TradeTicket({ coin, onTraded }) {
     }
   }
 
-  const venueLabel = market?.venue === 'pool' ? 'PumpSwap pool' : 'pump.fun bonding curve'
+  const venueLabel = market?.venue === 'pool' ? 'Meteora DAMM v2 pool' : 'Meteora bonding curve'
   const tabId = (s) => `ticket-tab-${s}`
   return (
     <form className="instrument ticket" onSubmit={submit} aria-label={`Trade ${coin.symbol}`}>
@@ -315,7 +314,7 @@ export default function TradeTicket({ coin, onTraded }) {
             </>
           )}
           <dt>Route</dt>
-          <dd>{migrated ? 'Migrated off pump.fun' : market ? venueLabel : '—'}</dd>
+          <dd>{migrated ? 'Moving to Meteora DAMM v2' : market ? venueLabel : '—'}</dd>
           {connected && (
             <>
               <dt>{side === 'buy' ? 'SOL balance' : `${coin.symbol} balance`}</dt>
@@ -334,9 +333,8 @@ export default function TradeTicket({ coin, onTraded }) {
         )}
         {migrated && (
           <p className="muted ticket-note" id="ticket-migrated">
-            <strong>Migrated off pump.fun.</strong> This coin graduated before PumpSwap pools and
-            trades on another exchange, so it cannot be traded here. A coin that graduated moments
-            ago opens for trading here once its PumpSwap pool exists.
+            <strong>Graduating.</strong> The bonding curve is full. Trading opens here as soon as
+            Meteora moves this coin to its DAMM v2 pool, usually within a minute.
           </p>
         )}
         {marketError && !error && !migrated && <p className="error-text">{marketError}</p>}
@@ -359,7 +357,7 @@ export default function TradeTicket({ coin, onTraded }) {
           disabled={migrated || !!busy || (connected && (!raw || insufficient || !market))}
         >
           {migrated ? (
-            'Migrated off pump.fun'
+            'Graduating to DAMM v2'
           ) : busy ? (
             <>
               <Spinner /> {busy}

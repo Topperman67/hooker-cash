@@ -2,3 +2,5 @@
 import { Buffer } from 'buffer'
 
 globalThis.Buffer ||= Buffer
+// Anchor (inside Meteora's SDKs) reads process.env when it loads, to tell a browser from Node.
+globalThis.process ||= { env: { ANCHOR_BROWSER: 'true' } }

@@ -9,7 +9,7 @@ import { Spinner } from './components/UI.jsx'
 import { lazyPage } from './components/recovery.js'
 import { useGlobalGlint } from './lib/glint.js'
 
-// Launch and coin pages pull in the pump.fun SDKs and charting; load them on demand. lazyPage lets
+// Launch and coin pages pull in the Meteora SDKs and charting; load them on demand. lazyPage lets
 // the ErrorBoundary retry a chunk that failed to load instead of caching the failure.
 const LaunchPage = lazyPage(() => import('./pages/LaunchPage.jsx'))
 const CoinPage = lazyPage(() => import('./pages/CoinPage.jsx'))

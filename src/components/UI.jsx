@@ -94,8 +94,8 @@ export function Stat({ label, children, className = '' }) {
   )
 }
 
-// `migrated`: graduated without a PumpSwap pool (the indexer's poolMissing), i.e. moved off
-// pump.fun to another exchange, or a new graduate whose pool does not exist yet.
+// `migrated`: Meteora moved the full curve into its DAMM v2 pool (until then a full curve is
+// graduating and cannot trade).
 export function CurveProgress({ progress = 0, complete, migrated = false }) {
   const value = complete ? 100 : Math.max(0, Math.min(100, progress || 0))
   return (
@@ -117,9 +117,9 @@ export function CurveProgress({ progress = 0, complete, migrated = false }) {
         <span>
           {complete
             ? migrated
-              ? 'Migrated off pump.fun'
-              : 'Graduated to PumpSwap'
-            : 'Bonding curve'}
+              ? 'Graduated to Meteora DAMM v2'
+              : 'Graduating to Meteora DAMM v2'
+            : 'Meteora bonding curve'}
         </span>
         <span className="num">{value.toFixed(value < 10 ? 1 : 0)}%</span>
       </div>

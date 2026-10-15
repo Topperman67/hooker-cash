@@ -17,6 +17,8 @@ export function PlatformProvider({ children }) {
     solUsd: data?.solUsd ?? null,
     storage: data?.storage,
     lookupTable: data?.lookupTable || null,
+    // Quant Pad's Meteora DBC launch config (null until the operator sets QUANTPAD_DBC_CONFIG).
+    dbcConfig: data?.dbcConfig || null,
     explorerUrl: data?.network?.explorerUrl || 'https://solscan.io',
     refresh: status.refresh,
   }

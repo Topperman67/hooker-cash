@@ -273,3 +273,34 @@
     height: 22px;
   }
 }
+
+/* "Built on Meteora": the venue every coin launches and trades on. */
+.built-on {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+.built-on .meteora-mark {
+  display: block;
+  flex: none;
+}
+.built-on-top {
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: var(--t-xs);
+  color: var(--ink-2, inherit);
+  border: 1px solid var(--line, rgba(127, 127, 127, 0.25));
+  text-decoration: none;
+}
+.built-on-top:hover {
+  border-color: currentColor;
+}
+@media (max-width: 1100px) {
+  .built-on-top span {
+    display: none;
+  }
+  .built-on-top {
+    padding: 4px;
+  }
+}

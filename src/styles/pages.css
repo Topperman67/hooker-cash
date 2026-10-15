@@ -682,7 +682,7 @@
 .ticket-quote .segmented {
   min-width: 0;
 }
-/* Why the ticket is closed (a coin that migrated off pump.fun). */
+/* Why the ticket is closed (a full curve graduating to DAMM v2). */
 .ticket-note {
   font-size: var(--t-sm);
   overflow-wrap: anywhere;
@@ -1217,4 +1217,17 @@
   .refractor-caption {
     display: none;
   }
+}
+
+/* Home hero: "Launch on [Meteora symbol] Meteora." */
+.hero-venue {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.22em;
+}
+.hero-mark {
+  width: 0.9em;
+  height: 0.9em;
+  display: inline-block;
+  transform: translateY(0.04em);
 }

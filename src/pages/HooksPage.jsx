@@ -20,11 +20,11 @@ const DETAIL = {
   creatorBps:
     'Sent to the launcher wallet in the same pulse that collects the fees. If Superposition wallets are set, they are paid their fixed share of this slice first.',
   burnBps:
-    'Accumulates in the coin’s burn reserve. The keeper spends it in capped buys (on the bonding curve before graduation, on PumpSwap after) and burns every token bought in the same transaction. If the keeper stalls, anyone can run the burn after a grace period.',
+    'Accumulates in the coin’s burn reserve. The keeper spends it in capped buys (on the Meteora bonding curve before graduation, on its DAMM v2 pool after) and burns every token bought in the same transaction. If the keeper stalls, anyone can run the burn after a grace period.',
   entangleBps:
     'Accumulates in the holder reserve. About once a day (never more often than every 20 hours) the keeper snapshots wallet balances and posts a merkle root for the epoch on-chain. Its claims open after a short delay, and holders then claim their SOL from the coin page until the epoch expires 30 days after posting. Unclaimed SOL rolls into the next epoch.',
   fusionBps:
-    'Before graduation it simply accumulates. After graduation the reserve buys tokens and deposits both sides into the coin’s canonical PumpSwap pool. The LP tokens stay in the coin’s well; the program has no instruction to withdraw them.',
+    'Before graduation it simply accumulates. After graduation the reserve buys tokens and adds both sides to the well’s Meteora DAMM v2 position, permanently locked; the program has no instruction to withdraw them.',
 }
 
 export default function HooksPage() {
@@ -34,21 +34,21 @@ export default function HooksPage() {
       <header className="page-head">
         <h1>Quantum Hooks</h1>
         <p className="muted">
-          pump.fun does not let anyone hook into trades directly, so Quantum Hooks work on the one
-          stream every coin has: its creator fees. A Quant Pad coin’s pump.fun creator is the coin’s
-          own well, a program-controlled address, and the hooks decide where every lamport goes.
+          Quantum Hooks work on the one stream every coin has: its creator fees. A Quant Pad coin’s
+          Meteora creator is the coin’s own well, a program-controlled address, and the hooks decide
+          where every lamport goes.
         </p>
       </header>
 
       <section className="flow" aria-label="Fee flow">
         <div className="flow-node">
           <strong>Trades</strong>
-          <span className="faint">on the bonding curve or PumpSwap</span>
+          <span className="faint">on the Meteora curve or DAMM v2 pool</span>
         </div>
         <div className="flow-arrow" aria-hidden="true" />
         <div className="flow-node">
           <strong>Creator fee</strong>
-          <span className="faint">paid by pump.fun into the well</span>
+          <span className="faint">claimed from Meteora into the well</span>
         </div>
         <div className="flow-arrow" aria-hidden="true" />
         <div className="flow-node">
@@ -115,13 +115,12 @@ export default function HooksPage() {
             apart. {claimWindowText(quantum.claimDelay)}
           </li>
           <li>
-            pump.fun’s admins can reassign a coin’s creator (their community takeover feature). If
-            that happens, future creator fees stop flowing into the well. Quant Pad cannot prevent
-            it.
+            Meteora can upgrade its programs, and its operators can change a migrated pool’s fees or
+            pause it. No Meteora admin can reassign a coin’s creator away from its well.
           </li>
           <li>
-            Creator fees are a small share of volume, currently 0.30% on the curve and 0.05–0.95% on
-            PumpSwap, so hooks scale with trading activity.
+            Creator fees are a share of volume (the 1% trading fee less Meteora’s protocol share),
+            so hooks scale with trading activity.
           </li>
           <li>
             Buybacks are market orders and can be front-run. Each burn is capped in size to limit

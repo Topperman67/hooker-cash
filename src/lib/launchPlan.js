@@ -70,6 +70,7 @@ export function launchSnapshot({
   slippagePct,
   platform,
   lookupTable,
+  dbcConfig,
 }) {
   return deepFreeze({
     launcher,
@@ -82,6 +83,7 @@ export function launchSnapshot({
     slippagePct: Number(slippagePct),
     platform: { treasury: platform?.treasury || null, feeBps: Number(platform?.feeBps || 0) },
     lookupTable: lookupTable || null,
+    dbcConfig: dbcConfig || null,
   })
 }
 

@@ -4,7 +4,12 @@
 // Static = identical across launches: Meteora's DBC accounts, the launch configs, token programs
 // and sysvars, and Quantum Hooks' config. A program a transaction invokes still takes a static
 // key, so its table entry only helps where it is passed as a plain account (DBC's event CPI).
-import { PublicKey, SystemProgram, SYSVAR_INSTRUCTIONS_PUBKEY, SYSVAR_RENT_PUBKEY } from '@solana/web3.js'
+import {
+  PublicKey,
+  SystemProgram,
+  SYSVAR_INSTRUCTIONS_PUBKEY,
+  SYSVAR_RENT_PUBKEY,
+} from '@solana/web3.js'
 import {
   ASSOCIATED_TOKEN_PROGRAM_ID,
   NATIVE_MINT,
