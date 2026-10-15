@@ -30,11 +30,71 @@ const mediaFull = () =>
     expose: true,
   })
 
-export function createRedisStore({ url, token, prefix = storageNamespace, request = fetch }) {
+// Why a Redis command failed, as a short code that is safe to log and show: Upstash's own error
+// text can echo request details, so only these codes leave this module. Upstash answers a used-up
+// plan with "ERR max requests limit exceeded" (commands), "... bandwidth ..." or "... size ...".
+export function failureReason({ status = 0, text = '', error = null } = {}) {
+  if (error?.name === 'TimeoutError' || error?.name === 'AbortError') return 'timeout'
+  const message = String(text)
+  if (/bandwidth/i.test(message)) return 'quota-bandwidth'
+  if (/(db|database|data) size|maxmemory|\bOOM\b/i.test(message)) return 'quota-size'
+  if (/(request|command)s? limit/i.test(message)) return 'quota-requests'
+  if (status === 401 || status === 403 || /WRONGPASS|NOAUTH|NOPERM|unauthori[sz]ed/i.test(message))
+    return 'auth'
+  if (status && (status < 200 || status >= 300)) return `http-${status}`
+  if (status) return 'bad-response'
+  return error ? 'unreachable' : 'error'
+}
+
+export function createRedisStore({
+  url,
+  token,
+  prefix = storageNamespace,
+  request = fetch,
+  log = (message) => console.error(message),
+  now = Date.now,
+}) {
   if (!url?.startsWith('https://') || !token) throw Error('Configure both Redis REST credentials.')
   const key = (name) => `${prefix}:${name}`
   let syncToken
+  // How the last command went, for /api/status: healthy is null until a command has run.
+  const health = { healthy: null, reason: null, at: 0 }
+  // After two failures in a row, commands fail at once for a while (1 s, doubling up to 30 s)
+  // instead of each waiting on Upstash: a used-up plan is not asked again on every request, and
+  // callers that can go on without storage (rate limits) do so without a 10 s timeout first.
+  let failures = 0
+  let retryAt = 0
+  let loggedReason = null
+  let loggedAt = 0
+  function recordSuccess() {
+    if (health.healthy === false) log('[storage] Redis is answering again.')
+    failures = 0
+    retryAt = 0
+    Object.assign(health, { healthy: true, reason: null, at: now() })
+  }
+  function recordFailure(reason, status) {
+    const at = now()
+    failures++
+    if (failures >= 2) retryAt = at + Math.min(30_000, 1000 * 2 ** (failures - 2))
+    Object.assign(health, { healthy: false, reason, at })
+    // Once per cause, then at most once a minute.
+    if (reason !== loggedReason || at - loggedAt >= 60_000) {
+      loggedReason = reason
+      loggedAt = at
+      log(`[storage] Redis command failed: ${reason}${status ? ` (HTTP ${status})` : ''}.`)
+    }
+  }
+  // This message is written for users, so the API may show it (`expose`).
+  const unavailable = () =>
+    Object.assign(Error('Persistent storage is unavailable. Try again shortly.'), {
+      status: 503,
+      code: 'STORAGE_UNAVAILABLE',
+      expose: true,
+    })
   async function command(...args) {
+    if (now() < retryAt) throw unavailable()
+    let status = 0,
+      text = ''
     try {
       const response = await request(url.replace(/\/$/, ''), {
         method: 'POST',
@@ -46,30 +106,39 @@ export function createRedisStore({ url, token, prefix = storageNamespace, reques
         body: JSON.stringify(args),
         signal: AbortSignal.timeout(10000),
       })
-      const data = await response.json()
-      if (!response.ok || !data || data.error || !Object.hasOwn(data, 'result')) throw Error()
+      status = response.status
+      text = await response.text()
+      const data = JSON.parse(text)
+      if (!response.ok || !data || data.error || !Object.hasOwn(data, 'result')) {
+        if (data?.error) text = String(data.error)
+        throw Error()
+      }
       syncToken = response.headers.get('upstash-sync-token') || syncToken
+      recordSuccess()
       return data.result
-    } catch {
-      // Transport and JSON errors can contain upstream URLs or echoed credentials. This message is
-      // written for users, so the API may show it (`expose`).
-      throw Object.assign(Error('Persistent storage is unavailable. Try again shortly.'), {
-        status: 503,
-        code: 'STORAGE_UNAVAILABLE',
-        expose: true,
-      })
+    } catch (error) {
+      // Transport and JSON errors can contain upstream URLs or echoed credentials: only the
+      // reason code is kept.
+      recordFailure(failureReason({ status, text, error }), status)
+      throw unavailable()
     }
   }
   return {
     mode: 'redis',
-    async incrementExpiring(name, ttl) {
+    health: () => ({ ...health }),
+    async ping() {
+      await command('PING')
+    },
+    // One command: INCRBY, and the expiry when the key is new.
+    async incrementExpiring(name, ttl, amount = 1) {
       return Number(
         await command(
           'EVAL',
-          "local n = redis.call('INCR', KEYS[1]); if n == 1 then redis.call('PEXPIRE', KEYS[1], ARGV[1]) end; return n",
+          "local n = redis.call('INCRBY', KEYS[1], ARGV[2]); if redis.call('PTTL', KEYS[1]) < 0 then redis.call('PEXPIRE', KEYS[1], ARGV[1]) end; return n",
           1,
           key(name),
           ttl,
+          amount,
         ),
       )
     },
@@ -382,11 +451,11 @@ export function createFileStore(dir) {
   }
   return {
     mode: 'filesystem',
-    async incrementExpiring(name, ttl) {
+    async incrementExpiring(name, ttl, amount = 1) {
       const now = Date.now()
       for (const [k, v] of counters) if (v.expires < now) counters.delete(k)
       const entry = counters.get(name) || { count: 0, expires: now + ttl }
-      entry.count++
+      entry.count += amount
       counters.set(name, entry)
       return entry.count
     },
