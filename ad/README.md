@@ -16,6 +16,8 @@ npm run render   # soundtrack + out/quantpad-ad-30s.mp4 + out/poster.png
 - `src/scene/`: the 3D. The logo is extruded from `public/brand/*.svg` (`npm run logo` refreshes
   `logo-data.js` after a brand change).
 - `src/overlays/`: supers, hook chips, the holographic card, titles and the end card.
+- `public/meteora-mark.png` is cut from the Meteora badge with
+  `node scripts/key-meteora.mjs <badge.png>`.
 - `scripts/make-audio.mjs`: the soundtrack. Put a licensed track at `public/music.wav` to replace
   the synthesized bed; the sound effects stay.
 - Renders use the headless Chromium from Playwright if it is installed (`REMOTION_BROWSER`

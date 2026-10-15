@@ -28,7 +28,7 @@
    - 11.0 **Entanglement** (green): the line splits into dozens of fine filaments that light up a constellation of holder nodes. "Shares SOL with holders."
    - 12.5 **Fusion** (yellow): light pours into a glass liquidity vault, which seals with a lock ring. "Adds locked liquidity."
 4. **14.0–20.0 The pulse.** Pull back to a wide hero of the whole Refractor. On every bar a white pulse travels the beam and splits into the four lines. A graphite holographic launch card (chrome-framed art, silver ticker, hook loadout as four coloured bars at 30/30/20/20, captioned "Example split") rises into the foreground and tilts, with light lines sliding across its foil. Super: "Rules locked at launch. Enforced on-chain."
-5. **20.0–25.0 Headline run.** Fast, beat-cut kinetic type over a fly-through of the Q's counter, like a chrome tunnel. "Launch on pump.fun." at 20.0, "Route every fee through" at 21.5, then "Quantum Hooks." at 23.0 in chrome lettering with the four lines sweeping across it, held to 25.0.
+5. **20.0–25.0 Headline run.** Fast, beat-cut kinetic type over a fly-through of the Q's counter, like a chrome tunnel. "Launch on [Meteora mark] Meteora." at 20.0, with the Meteora logo just left of the word, "Route every fee through" at 21.5, then "Quantum Hooks." at 23.0 in chrome lettering with the four lines sweeping across it, held to 25.0.
 6. **25.0–30.0 End card.** At 25.0, half a beat of hard silence. At 25.5 the 3D Q drops into place with a heavy impact, the four lines rake across it at 45°, and the QUANT PAD wordmark resolves beside it. A cobalt CTA reads "Launch a coin", with the URL below it. Fine print in Mona Sans, steel: "Memecoins are extremely risky. Only use SOL you can afford to lose." The frame holds clean for the last 2 s.
 
 **Sound design** (all original and synthesized; no stock or downloaded audio)
@@ -50,7 +50,7 @@
 **Guardrails**
 - Use only the app's own claims. No price talk, "guaranteed", "passive income", "safe" or "100x".
 - Label split percentages as an example.
-- No third-party logos. pump.fun appears as text only.
+- The only third-party logo is the Meteora mark in the 20.0 title, taken from the supplied badge (`scripts/key-meteora.mjs`).
 - Every super stays on screen for at least 1.5 s, inside a 5% safe margin.
 
 **Acceptance checklist**

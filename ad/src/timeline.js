@@ -105,7 +105,8 @@ export const SUPERS = [
 ]
 
 export const TITLES = [
-  { text: 'Launch on pump.fun.', from: 20.0, to: 21.5 },
+  // `mark`: the logo shown just before the word `before`
+  { text: 'Launch on Meteora.', from: 20.0, to: 21.5, mark: { src: 'meteora-mark.png', before: 'Meteora' } },
   { text: 'Route every fee through', from: 21.5, to: 23.0 },
   { text: 'Quantum Hooks.', from: 23.0, to: 25.0, chrome: true },
 ]

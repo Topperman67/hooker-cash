@@ -130,6 +130,18 @@ function Titles({ t }) {
       </div>
     )
   }
+  if (title.mark) {
+    const at = title.text.indexOf(title.mark.before)
+    return (
+      <div className="title" style={style}>
+        <span className="title-line">
+          {title.text.slice(0, at).trim()}
+          <img className="title-mark" src={staticFile(title.mark.src)} alt="" />
+          {title.text.slice(at)}
+        </span>
+      </div>
+    )
+  }
   return (
     <div className="title" style={style}>
       {title.text}

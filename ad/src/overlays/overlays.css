@@ -312,6 +312,18 @@
   z-index: -1;
   background: radial-gradient(48% 34% at 50% 50%, rgba(0, 0, 0, 0.62), transparent 100%);
 }
+.title-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.24em;
+}
+.title-mark {
+  height: 1.04em;
+  width: auto;
+  margin-right: -0.02em;
+  transform: translateY(0.03em);
+  filter: drop-shadow(0 6px 30px rgba(0, 0, 0, 0.6));
+}
 .title-chrome {
   font-stretch: 125%;
   font-weight: 900;
