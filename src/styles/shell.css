@@ -66,6 +66,49 @@
   border-radius: 2px;
   background: var(--blue);
 }
+/* Docs opens the GitBook site. Every 3 s a blue light sweeps across the word with a soft glow, so
+   it is easy to find (header and menu). Reduced motion stops it (base.css). */
+.topbar a.nav-docs {
+  color: transparent;
+  background: linear-gradient(
+      100deg,
+      var(--ink-2) 0 32%,
+      var(--blue) 41%,
+      var(--blue-tint) 50%,
+      var(--blue) 59%,
+      var(--ink-2) 68% 100%
+    )
+    100% 0 / 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: docs-shimmer 3s ease-in-out infinite;
+}
+.topbar a.nav-docs:hover {
+  color: var(--blue);
+  background: none;
+  animation: none;
+}
+@keyframes docs-shimmer {
+  0% {
+    background-position: 100% 0;
+    filter: none;
+  }
+  17% {
+    filter: drop-shadow(0 0 8px rgb(46 75 255 / 0.6));
+  }
+  35%,
+  100% {
+    background-position: 0 0;
+    filter: none;
+  }
+}
+@media (forced-colors: active) {
+  .topbar a.nav-docs {
+    color: LinkText;
+    background: none;
+    animation: none;
+  }
+}
 .topbar-search {
   margin-left: auto;
   position: relative;

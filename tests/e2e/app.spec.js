@@ -534,12 +534,28 @@ test('mobile menu opens and navigates', async ({ page }) => {
   await enter(page)
   await page.goto('/')
   await page.getByRole('button', { name: 'Open menu' }).click()
-  await page.locator('#mobile-nav').getByRole('link', { name: 'Docs' }).click()
-  await expect(page).toHaveURL(/\/docs$/)
+  await page.locator('#mobile-nav').getByRole('link', { name: 'Market' }).click()
+  await expect(page).toHaveURL(/\/market$/)
   await expect(page.getByRole('button', { name: 'Open menu' })).toHaveAttribute(
     'aria-expanded',
     'false',
   )
+})
+
+test('Docs links open the GitBook site in a new tab, and the header one shimmers', async ({
+  page,
+}) => {
+  await stubApi(page)
+  await enter(page)
+  await page.goto('/')
+  const docs = page.getByRole('link', { name: 'Docs', exact: true })
+  await expect(docs).toHaveCount(2) // header and footer; the menu copy is hidden on desktop
+  for (const link of await docs.all()) {
+    await expect(link).toHaveAttribute('href', 'https://docs.quantpad.company/')
+    await expect(link).toHaveAttribute('target', '_blank')
+  }
+  await expect(page.locator('.nav a.nav-docs')).toHaveCSS('animation-name', 'docs-shimmer')
+  await expect(page.locator('.nav a.nav-docs')).toHaveCSS('animation-duration', '3s')
 })
 
 test('Escape closes the mobile menu and returns focus to its toggle', async ({ page }) => {

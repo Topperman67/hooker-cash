@@ -17,8 +17,17 @@ const LINKS = [
   ['/market', 'Market'],
   ['/hooks', 'Quantum Hooks'],
   ['/portfolio', 'Portfolio'],
-  ['/docs', 'Docs'],
 ]
+const DOCS_URL = 'https://docs.quantpad.company/'
+
+// The docs live on GitBook. In the header the link shimmers blue every 3 s (shell.css).
+function DocsLink({ onClick }) {
+  return (
+    <a href={DOCS_URL} target="_blank" rel="noreferrer" className="nav-docs" onClick={onClick}>
+      Docs
+    </a>
+  )
+}
 
 function WalletButton() {
   const { connected, address, balance, openDialog, wallet } = useWallet()
@@ -87,6 +96,7 @@ export default function Shell({ children }) {
                     {label}
                   </NavLink>
                 ))}
+                <DocsLink />
               </nav>
               <SearchBox />
               <div className="topbar-actions">
@@ -110,6 +120,7 @@ export default function Shell({ children }) {
                   {label}
                 </NavLink>
               ))}
+              <DocsLink onClick={() => setMenu(false)} />
             </nav>
           </Glass>
         </div>
@@ -129,7 +140,9 @@ export default function Shell({ children }) {
           </div>
           <div className="footer-links">
             <Link to="/hooks">Quantum Hooks</Link>
-            <Link to="/docs">Docs</Link>
+            <a href={DOCS_URL} target="_blank" rel="noreferrer">
+              Docs
+            </a>
             <Link to="/terms">Terms</Link>
             <a
               href="https://x.com/quantpadhook"
