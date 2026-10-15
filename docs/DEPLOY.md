@@ -161,6 +161,14 @@ and pin budgets included), so a host with a routed /56 or /48 (a home connection
 cannot multiply its budget by rotating through its /64s. Self-hosted servers behind a proxy need
 `QUANTPAD_TRUST_PROXY` (see below). Over a limit, the API answers 429.
 
+With Redis, each instance counts in memory and adds its count to Redis once it holds a tenth of a
+limit (one command), so ordinary visitors cost no Redis commands for rate limiting, and a visitor
+spread over several instances can exceed a limit by up to a tenth per instance. When Redis fails,
+limits go on with each instance's own count instead of refusing requests, so `/api/rpc` keeps
+working; reads of stored data answer 503 `STORAGE_UNAVAILABLE`, and `/api/status` reports
+`storage.healthy: false` with a `reason` (`quota-requests`, `quota-bandwidth`, `auth`, `timeout`,
+...). The function logs the same reason as `[storage] Redis command failed: <reason>`.
+
 | Route                                                                                                     | Limit per visitor                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `POST /api/rpc`                                                                                           | 900 calls per minute, 1 to 25 per request. `getMultipleAccounts` counts each account (at most 100), and every full MiB of response counts as one more call. Responses over 16 MiB are refused.                                                                                                                                                                                                                                      |
@@ -209,6 +217,11 @@ Settings:
   elsewhere. The pass's lease lasts this long plus 45 s. On Vercel the request, the index pass and the
   keeper share the function's 60 s: the background pass after a response gets what the request left
   (it is skipped under 10 s), so keep this well under 60 s.
+- `QUANTPAD_BACKGROUND_SYNC_MS` (default 60 000 on Vercel, `0` turns it off): with Redis, the
+  request-driven index passes run at most once per this many ms across all instances. A pass costs
+  about 15 Redis commands per coin it syncs, and Upstash plans are billed or capped by commands
+  (the free plan stops answering after 500K a month). The keeper cron indexes on its own schedule,
+  and a trade made in the app syncs its coin at once.
 - `QUANTPAD_MAX_LAUNCHES` (default 2 000): the most native Quant Pad launches kept in the coin list.
   Hidden mints (`QUANTPAD_HIDDEN_MINTS`) do not count. At the cap, up to 10 stale launches are evicted
   to make room: launches that are not Quantum, were created on-chain more than 7 days ago, and in the
