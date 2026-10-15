@@ -1,0 +1,58 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<!-- The X/Twitter banner: the liquid-glass plate (ad/src/social/Glass.jsx, BannerPlate, rendered to
+     plate.png at 3000×1000) with the copy set over it. Everything that must be read sits in the
+     middle: phones crop ~140 px off each side, put the status bar over the top ~125 px and the
+     back/search buttons at y ≈ 250 near each edge; desktop puts the avatar over the bottom left.
+     Render: node social/render.mjs social/banner/banner.html 1500 500 social/quantpad-banner.png --banner -->
+<style>
+  @font-face { font-family: 'Hubot Sans'; src: url('../../node_modules/@fontsource-variable/hubot-sans/files/hubot-sans-latin-wdth-normal.woff2') format('woff2'); font-weight: 200 900; font-stretch: 75% 125%; }
+  @font-face { font-family: 'Martian Mono'; src: url('../../node_modules/@fontsource-variable/martian-mono/files/martian-mono-latin-wght-normal.woff2') format('woff2'); font-weight: 100 800; }
+  html, body { margin: 0; width: 1500px; height: 500px; overflow: hidden; background: #04061a; }
+  .plate { position: absolute; inset: 0; width: 1500px; height: 500px; }
+
+  .copy {
+    position: absolute; left: 0; right: 0; top: 150px;
+    display: flex; flex-direction: column; align-items: center; color: #fff; text-align: center;
+  }
+  .lockup { height: 30px; display: block; filter: drop-shadow(0 4px 12px rgba(2,6,40,.55)); }
+  h1 {
+    margin: 22px 0 0; font-family: 'Hubot Sans'; font-weight: 900; font-stretch: 116%;
+    font-size: 66px; line-height: 1; letter-spacing: -0.01em;
+    display: flex; align-items: center; gap: 16px; white-space: nowrap;
+    text-shadow: 0 6px 28px rgba(2,6,40,.6);
+  }
+  h1 img { width: 56px; height: 56px; filter: drop-shadow(0 6px 14px rgba(2,6,40,.55)); }
+  h2 {
+    margin: 18px 0 0; font-family: 'Hubot Sans'; font-weight: 700; font-stretch: 110%;
+    font-size: 31px; line-height: 1.1; color: #DCE2FF; white-space: nowrap;
+    text-shadow: 0 4px 18px rgba(2,6,40,.6);
+  }
+  h2 b {
+    font-weight: 900; font-stretch: 125%;
+    background: linear-gradient(180deg, #FFFFFF 0%, #FFFFFF 30%, #C9D2DE 50%, #9FAABA 56%, #E8ECF2 72%, #FFFFFF 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent; text-shadow: none;
+    filter: drop-shadow(0 3px 6px rgba(2,6,40,.55));
+  }
+  .url {
+    margin-top: 26px; font-family: 'Martian Mono'; font-weight: 500; font-size: 17px; color: #E6EAFF;
+    letter-spacing: .02em; padding: 8px 18px 8px 16px; border-radius: 999px;
+    background: linear-gradient(180deg, rgba(255,255,255,.16), rgba(255,255,255,.06));
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.45), inset 0 -1px 0 rgba(255,255,255,.08), 0 8px 24px rgba(2,6,40,.35);
+    backdrop-filter: blur(10px);
+  }
+  .url i { font-style: normal; display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #12C26E; margin-right: 11px; box-shadow: 0 0 10px #12C26E; transform: translateY(-1px); }
+</style>
+</head>
+<body>
+<img class="plate" src="plate.png" alt="">
+<div class="copy">
+  <img class="lockup" src="../../public/brand/lockup-dark.svg" alt="Quant Pad">
+  <h1>Launch on <img src="../../public/partners/meteora/symbol.svg" alt=""> Meteora.</h1>
+  <h2>Route every fee through <b>Quantum Hooks.</b></h2>
+  <div class="url"><i></i>quantpad.company</div>
+</div>
+</body>
+</html>

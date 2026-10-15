@@ -64,14 +64,14 @@ function toShapes(multi) {
   })
 }
 
-function extrude(multi, { depth, bevel, offset = [0, 0] }) {
+function extrude(multi, { depth, bevel, offset = [0, 0], segments = 8 }) {
   const g = new THREE.ExtrudeGeometry(toShapes(multi), {
     depth,
     bevelEnabled: true,
     bevelThickness: bevel,
     bevelSize: bevel * 0.8,
     bevelOffset: -bevel * 0.8,
-    bevelSegments: 8,
+    bevelSegments: segments,
     curveSegments: 24,
   })
   g.translate(-offset[0], -offset[1], -depth / 2)
@@ -111,6 +111,13 @@ export function markGeometry() {
   const opts = { depth: 64, bevel: 10, offset: COUNTER }
   markCache = { body: extrude(body, opts), tail: extrude([[markTailRing]], opts) }
   return markCache
+}
+
+/** the mark with a deeper, rounder bevel (the liquid-glass stills), same units as markGeometry */
+export function puffyMarkGeometry({ depth = 60, bevel = 24, segments = 16 } = {}) {
+  const body = clip.difference(fill(LOGO.mark.body, 'evenodd'), [grow(markTailRing, LOGO.mark.gap / 2)])
+  const opts = { depth, bevel, segments, offset: COUNTER }
+  return { body: extrude(body, opts), tail: extrude([[markTailRing]], opts) }
 }
 
 // ---- the wordmark --------------------------------------------------------------------------

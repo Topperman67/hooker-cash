@@ -8,6 +8,7 @@ import { EXTRAS, MODULES } from '../lib/hooks.js'
 import Glass from '../components/Glass.jsx'
 import { compact, sol, usd } from '../lib/format.js'
 import { MeteoraMark } from '../components/Meteora.jsx'
+import Flywheel from '../components/Flywheel.jsx'
 
 export default function HomePage() {
   const latest = useResource('/api/market?sort=newest', 15000)
@@ -70,6 +71,10 @@ export default function HomePage() {
           </div>
           <Refractor symbol={newest?.symbol} />
         </div>
+      </section>
+
+      <section className="wrap section">
+        <Flywheel />
       </section>
 
       <section className="wrap section">
