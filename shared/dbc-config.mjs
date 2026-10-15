@@ -69,7 +69,11 @@ export function launchConfigParameters(overrides = {}) {
     migration: {
       migrationOption: MigrationOption.MET_DAMM_V2,
       migrationFeeOption: MigrationFeeOption.Customizable,
-      migrationFee: { feePercentage: c.migrationFeePercentage, creatorFeePercentage: 100 },
+      // The creator takes all of a migration fee; with none, the SDK requires a 0 share.
+      migrationFee: {
+        feePercentage: c.migrationFeePercentage,
+        creatorFeePercentage: c.migrationFeePercentage > 0 ? 100 : 0,
+      },
       migratedPoolFee: {
         collectFeeMode: MigratedCollectFeeMode.QuoteToken,
         dynamicFee: DammV2DynamicFeeMode.Disabled,
