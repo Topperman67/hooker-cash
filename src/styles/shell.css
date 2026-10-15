@@ -67,8 +67,10 @@
   background: var(--blue);
 }
 /* Docs opens the GitBook site. Every 3 s a blue light sweeps across the word with a soft glow, so
-   it is easy to find (header and menu). Reduced motion stops it (base.css). */
+   it is easy to find (header and menu). A faint blue halo sits behind it all the time and turns
+   green for about a second every 9 s. Reduced motion stops the sweep and the green (base.css). */
 .topbar a.nav-docs {
+  isolation: isolate;
   color: transparent;
   background: linear-gradient(
       100deg,
@@ -94,7 +96,7 @@
     filter: none;
   }
   17% {
-    filter: drop-shadow(0 0 8px rgb(46 75 255 / 0.6));
+    filter: drop-shadow(0 0 10px rgb(46 75 255 / 0.85));
   }
   35%,
   100% {
@@ -102,11 +104,77 @@
     filter: none;
   }
 }
+/* the halo: blue, swapping to green and back (the two never show together: no blended teal) */
+.topbar a.nav-docs::before,
+.topbar a.nav-docs::after {
+  content: '';
+  position: absolute;
+  inset: 0 -4px;
+  z-index: -1;
+  border-radius: var(--r-pill);
+  pointer-events: none;
+  filter: blur(5px);
+}
+.topbar a.nav-docs::before {
+  background: radial-gradient(
+    closest-side,
+    rgb(46 75 255 / 0.3),
+    rgb(46 75 255 / 0.1) 70%,
+    transparent
+  );
+  animation: docs-halo-blue 9s ease-in-out infinite;
+}
+.topbar a.nav-docs::after {
+  background: radial-gradient(
+    closest-side,
+    rgb(18 194 110 / 0.42),
+    rgb(18 194 110 / 0.14) 70%,
+    transparent
+  );
+  opacity: 0;
+  animation: docs-halo-green 9s ease-in-out infinite;
+}
+.topbar a.nav-docs:hover::before {
+  background: radial-gradient(
+    closest-side,
+    rgb(46 75 255 / 0.4),
+    rgb(46 75 255 / 0.14) 70%,
+    transparent
+  );
+}
+@keyframes docs-halo-green {
+  0%,
+  80%,
+  97%,
+  100% {
+    opacity: 0;
+  }
+  85%,
+  92% {
+    opacity: 1;
+  }
+}
+@keyframes docs-halo-blue {
+  0%,
+  80%,
+  97%,
+  100% {
+    opacity: 1;
+  }
+  85%,
+  92% {
+    opacity: 0;
+  }
+}
 @media (forced-colors: active) {
   .topbar a.nav-docs {
     color: LinkText;
     background: none;
     animation: none;
+  }
+  .topbar a.nav-docs::before,
+  .topbar a.nav-docs::after {
+    display: none;
   }
 }
 .topbar-search {
