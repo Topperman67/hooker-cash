@@ -17,7 +17,8 @@
     "format:check": "prettier --check src server shared tests api vite.config.js playwright.config.js index.html README.md DESIGN.md \"docs/*.md\"",
     "program:build": "bash scripts/anchor-docker.sh build",
     "program:test": "node programs/quantum-hooks/tests/run-local.mjs",
-    "program:unit": "bash scripts/anchor-docker.sh unit"
+    "program:unit": "bash scripts/anchor-docker.sh unit",
+    "meteora:check": "node scripts/meteora-upgrade-check.mjs"
   },
   "dependencies": {
     "@coral-xyz/anchor": "^0.31.1",
