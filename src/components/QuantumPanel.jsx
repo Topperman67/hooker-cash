@@ -142,6 +142,8 @@ export default function QuantumPanel({ coin, onLoaded }) {
       </section>
     )
 
+  // Below 0.001 SOL waiting (and nothing owed) the program refuses a pulse, so don't offer one.
+  const canPulse = state.client.pulseHasWork(pending, q)
   const vested = state.client.vestedAmount ? state.client.vestedAmount(q, now) : 0n
   const releasable = vested > q.releasedAmount ? vested - q.releasedAmount : 0n
   const isLauncher = address && address === q.launcher
@@ -221,7 +223,7 @@ export default function QuantumPanel({ coin, onLoaded }) {
 
       <button
         className="btn btn-block"
-        disabled={!!busy}
+        disabled={!!busy || !canPulse}
         onClick={() =>
           run('Pulse', (client, payer, mint) =>
             client.buildPulseInstructions({ connection, payer, mint }),
@@ -231,6 +233,9 @@ export default function QuantumPanel({ coin, onLoaded }) {
         {busy === 'Pulse' ? <Spinner /> : null} Pulse fees now
       </button>
       <p className="faint quantum-note">
+        {canPulse
+          ? null
+          : 'Less than 0.001 SOL of creator fees is waiting, so a pulse has nothing to route yet. '}
         A pulse collects this coin's waiting creator fees and routes them by the rules above. Anyone
         can send one; the keeper also does it automatically.
       </p>

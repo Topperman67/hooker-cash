@@ -429,6 +429,17 @@ export async function pendingCreatorFees(connection, mint, programId) {
 }
 
 /**
+ * Whether a pulse has anything to do; pulse.rs refuses it with NothingToPulse otherwise. That is at
+ * least MIN_PULSE_LAMPORTS of creator fees waiting (`waiting`, from pendingCreatorFees), or an
+ * amount owed from earlier pulses (paid once its wallet can hold it). An unread `waiting` (null)
+ * counts as yes and leaves it to the simulation before the wallet prompt.
+ */
+export function pulseHasWork(waiting, quantum) {
+  if (waiting == null) return true
+  return BigInt(waiting) >= MIN_PULSE_LAMPORTS || (quantum?.owedTotal ?? 0n) > 0n
+}
+
+/**
  * The binding clients check: `mint` is registered, its DBC pool exists and pays the well (the well
  * is the pool's creator), and whether that happened before the first trade (`birthBound`, recorded
  * by `sync`). `complete` is true once the curve has filled.

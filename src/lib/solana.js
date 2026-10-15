@@ -10,13 +10,14 @@ import {
   RENT_EXEMPT_MINIMUM,
   confirmWith,
   createLookupTableLoader,
+  instructionPrograms,
   isTransientRpcError,
   packGroups,
 } from './txflow.js'
 import { explainError, friendlyWalletError } from './txerrors.js'
 import { chargedPlatformFee } from './amounts.js'
 
-export { explainError, friendlyWalletError, isTransientRpcError }
+export { explainError, friendlyWalletError, instructionPrograms, isTransientRpcError }
 
 // All browser RPC goes through the server proxy; provider keys never reach the page.
 export const connection = new Connection(new URL('/api/rpc', window.location.origin).href, {
@@ -183,18 +184,6 @@ export async function platformFeeInstruction(from, platform, lamports) {
     toPubkey: new PublicKey(platform.treasury),
     lamports: fee,
   })
-}
-
-/** Program id (base58) of each compiled instruction, to map custom errors by program. */
-export function instructionPrograms(transaction) {
-  try {
-    const message = transaction.message
-    return message.compiledInstructions.map((ix) =>
-      message.staticAccountKeys[ix.programIdIndex]?.toBase58(),
-    )
-  } catch {
-    return []
-  }
 }
 
 export async function solBalance(owner) {

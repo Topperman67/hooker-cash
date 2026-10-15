@@ -278,6 +278,6 @@ TLS proxy for anything public.
 
 1. Do a standard launch with a 0.01 SOL dev buy. It should appear in the market within seconds and on pump.fun.
 2. Buy and sell from a second wallet. Confirm the trades, chart and platform fee transfer.
-3. Do a Quantum launch with all four modules and a lock. Trade, then press **Pulse fees now**. Confirm the reserves and creator payout on Solscan.
+3. Do a Quantum launch with all four modules and a lock. Trade until at least 0.001 SOL of creator fees is waiting (the button stays off below that, since the program would refuse the pulse), then press **Pulse fees now**. Confirm the reserves and creator payout on Solscan.
 4. Wait for the keeper to run a burn and an Entanglement epoch. The coin page shows when claims open (after the claim delay, 6 hours by default); then claim from a holder wallet.
 5. Release vested tokens from the launcher wallet after the cliff (use a short cliff for the test coin).

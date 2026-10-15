@@ -330,12 +330,17 @@ export default function LaunchPage() {
           const signatures = await sendTransactions(transactions, {
             lastValidBlockHeight,
             signers: job.keypair ? [job.keypair] : [],
-            onStatus: ({ phase, index, total }) =>
+            // One wallet prompt per transaction: a later one (the lock) waits for the one before it.
+            onStatus: ({ phase, index, total }) => {
+              const which = total > 1 ? `transaction ${index + 1} of ${total}` : 'the transaction'
               setProgress(
-                phase === 'sign'
-                  ? `Approve ${total > 1 ? `${total} transactions` : 'the transaction'} in your wallet`
-                  : `${phase === 'send' ? 'Sending' : 'Confirming'} ${total > 1 ? `${index + 1} of ${total}` : 'launch'}`,
-              ),
+                phase === 'check'
+                  ? `Checking ${which}`
+                  : phase === 'sign'
+                    ? `Approve ${which} in your wallet`
+                    : `${phase === 'send' ? 'Sending' : 'Confirming'} ${total > 1 ? `${index + 1} of ${total}` : 'launch'}`,
+              )
+            },
           })
           recordConfirmed(job, txStages, signatures)
         } catch (err) {
@@ -955,8 +960,10 @@ export default function LaunchPage() {
             </button>
             <p className="faint summary-note">
               You sign{' '}
-              {quantumMode ? 'up to three transactions in one wallet prompt' : 'one transaction'}.
-              Nothing is sent until you approve.
+              {quantumMode
+                ? 'up to three transactions, each in its own wallet prompt'
+                : 'one transaction'}
+              . Nothing is sent until you approve.
             </p>
           </Glass>
         </aside>

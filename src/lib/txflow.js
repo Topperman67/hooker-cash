@@ -1,7 +1,15 @@
 // Transaction plumbing without module-level RPC, shared by solana.js, WalletContext and the unit
 // tests: packing instruction groups, classifying RPC failures, polling for confirmation, loading
-// lookup tables and the send-then-confirm loop.
-import { MESSAGES, explainError, isTransientRpcError } from './txerrors.js'
+// lookup tables, the wallet approval flow and the send-then-confirm loop.
+import { VersionedTransaction } from '@solana/web3.js'
+import bs58 from 'bs58'
+import {
+  MESSAGES,
+  explainError,
+  explainSimulation,
+  friendlyWalletError,
+  isTransientRpcError,
+} from './txerrors.js'
 
 // Lives in txerrors.js (friendlyWalletError uses it too); re-exported for solana.js and tests.
 export { isTransientRpcError }
@@ -188,18 +196,26 @@ export function transferKeepsRentExempt(balance, amount) {
 }
 
 /**
- * Sends already-signed transactions in order, confirming each before the next. Resolves to the
- * signatures, all confirmed. On failure it throws with `completed` = only the signatures that
- * confirmed, plus `failedIndex` and `failedSignature` for the one that did not; `unknown` is set
- * when that transaction may still land.
+ * Sends transactions in order, confirming each before the next. `prepare(index)` (simulate it, have
+ * the wallet sign it) runs only once the transaction before it confirmed, and its result is passed
+ * to `send(index, prepared)`. Resolves to the signatures, all confirmed. On failure it throws with
+ * `completed` = only the signatures that confirmed, plus `failedIndex` and, for one that was sent,
+ * `failedSignature`; `unknown` is set when that transaction may still land.
  */
-export async function sendAndConfirmAll(count, { send, confirm, onStatus }) {
+export async function sendAndConfirmAll(count, { prepare, send, confirm, onStatus }) {
   const confirmed = []
   for (let index = 0; index < count; index++) {
+    let prepared
+    if (prepare)
+      try {
+        prepared = await prepare(index)
+      } catch (e) {
+        throw Object.assign(e, { completed: [...confirmed], failedIndex: index })
+      }
     onStatus?.({ phase: 'send', index, total: count })
     let signature
     try {
-      signature = await send(index)
+      signature = await send(index, prepared)
     } catch (e) {
       throw Object.assign(e, {
         completed: [...confirmed],
@@ -273,4 +289,138 @@ export async function sendSigned(
     if (isTransientRpcError(e)) throw unknownStatusError(signature, e)
     throw Object.assign(Error(explain(e)), { friendly: true, cause: e })
   }
+}
+
+/** Program id (base58) of each compiled instruction, to map custom errors by program. */
+export function instructionPrograms(transaction) {
+  try {
+    const message = transaction.message
+    return message.compiledInstructions.map((ix) =>
+      message.staticAccountKeys[ix.programIdIndex]?.toBase58(),
+    )
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Adds the signatures `transaction` needs from `signers` (a launch's mint key) after the wallet has
+ * signed it. They sign the message the wallet returned, so anything the wallet added to it (Phantom's
+ * Lighthouse guard instructions) is covered, and the wallet's own signature is kept.
+ */
+export function cosign(transaction, signers = []) {
+  const { header, staticAccountKeys } = transaction.message
+  const needed = staticAccountKeys.slice(0, header.numRequiredSignatures).map((k) => k.toBase58())
+  const local = signers.filter((s) => needed.includes(s.publicKey.toBase58()))
+  if (local.length) transaction.sign(local)
+  return transaction
+}
+
+/**
+ * Simulates a transaction before the wallet sees it (`simulate()` resolves to
+ * `simulateTransaction(...).value`) and throws `{ friendly, simulated }` when it would fail: Phantom
+ * answers a transaction that fails its own simulation with a red "could be malicious" warning. A
+ * simulation that cannot run (the RPC is busy or down) does not block, since the wallet simulates
+ * it again anyway. With `attempts` > 1 a failure is simulated again after `delayMs`: the
+ * transaction after one that just confirmed can reach an RPC node that has not seen it yet.
+ */
+export async function assertSimulates(
+  simulate,
+  { programIds, attempts = 1, delayMs = 1500, sleep = pause } = {},
+) {
+  for (let attempt = 1; ; attempt++) {
+    let result
+    try {
+      result = await simulate()
+    } catch {
+      return null
+    }
+    if (!result?.err) return result
+    if (attempt >= attempts)
+      throw Object.assign(Error(explainSimulation(result, { programIds })), {
+        friendly: true,
+        simulated: true,
+        logs: result.logs,
+      })
+    await sleep(delayMs)
+  }
+}
+
+/**
+ * Asks a Wallet Standard `wallet` to approve `transactions` one at a time, in order. Each one gets
+ * its own prompt, shown only after the one before it confirmed (a later transaction may depend on
+ * an earlier one, so it can only simulate once that landed):
+ * 1. after the first, a fresh blockhash: nothing is signed before its prompt, so a later
+ *    transaction cannot expire while earlier ones are approved and confirmed;
+ * 2. a simulation (assertSimulates): one that would fail never reaches the wallet;
+ * 3. the wallet signs first and `signers` add their signatures after it (cosign), the order Phantom
+ *    asks dApps to use; a wallet that can only sign and send gets it already co-signed;
+ * 4. send and confirm.
+ * `rpc` is `{ simulate(tx), sendRaw(bytes), latestBlockhash(), confirm(signature,
+ * lastValidBlockHeight, { programIds }) }`. Resolves to the confirmed signatures; a failure carries
+ * `completed`, `failedIndex` and `failedSignature` (sendAndConfirmAll).
+ */
+export async function walletSendAll(
+  transactions,
+  { wallet, account, chain, signers = [], lastValidBlockHeight, rpc, onStatus, sleep = pause },
+) {
+  const total = transactions.length
+  const programs = transactions.map(instructionPrograms)
+  const expiry = transactions.map(() => lastValidBlockHeight)
+  const signFeature = wallet.features['solana:signTransaction']
+  const signAndSendFeature = wallet.features['solana:signAndSendTransaction']
+  const friendly = (e, index) =>
+    Object.assign(Error(friendlyWalletError(e, { programIds: programs[index] })), {
+      friendly: true,
+      cause: e,
+    })
+  return sendAndConfirmAll(total, {
+    onStatus,
+    prepare: async (index) => {
+      const transaction = transactions[index]
+      if (index > 0)
+        try {
+          const latest = await rpc.latestBlockhash()
+          transaction.message.recentBlockhash = latest.blockhash
+          expiry[index] = latest.lastValidBlockHeight
+        } catch {}
+      onStatus?.({ phase: 'check', index, total })
+      await assertSimulates(() => rpc.simulate(transaction), {
+        programIds: programs[index],
+        attempts: index > 0 ? 3 : 1,
+        sleep,
+      })
+      onStatus?.({ phase: 'sign', index, total })
+      try {
+        if (!signFeature) {
+          const [output] = await signAndSendFeature.signAndSendTransaction({
+            account,
+            chain,
+            transaction: cosign(transaction, signers).serialize(),
+          })
+          return bs58.encode(output.signature)
+        }
+        const [output] = await signFeature.signTransaction({
+          account,
+          chain,
+          transaction: transaction.serialize(),
+        })
+        return cosign(VersionedTransaction.deserialize(output.signedTransaction), signers)
+      } catch (e) {
+        throw friendly(e, index)
+      }
+    },
+    // The signature is known before sending, so a send whose outcome is unclear can still be looked
+    // up; re-sending the same bytes cannot execute twice, and a re-send refused as "already
+    // processed" is confirmed by polling like any other send (sendSigned). A wallet that signed and
+    // sent hands back only the signature.
+    send: (index, signed) =>
+      typeof signed === 'string'
+        ? signed
+        : sendSigned(bs58.encode(signed.signatures[0]), () => rpc.sendRaw(signed.serialize()), {
+            explain: (e) => friendlyWalletError(e, { programIds: programs[index] }),
+          }),
+    confirm: (signature, index) =>
+      rpc.confirm(signature, expiry[index], { programIds: programs[index] }),
+  })
 }

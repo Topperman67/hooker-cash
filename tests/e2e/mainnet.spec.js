@@ -86,9 +86,9 @@ for (const launch of [
     await expect(page.locator('.field:has(#dev-buy) .hint')).toContainText('About', {
       timeout: 30_000,
     })
-    // The wallet is asked once; the send is refused and the page says so. A launch that fails
-    // before the wallet is asked shows its reason in the same notice: one the public RPC rate
-    // limited is tried again after a pause.
+    // The launch simulates in the app before the wallet is asked, and the wallet is asked once; the
+    // send is refused and the page says so. A launch that fails before the wallet is asked shows its
+    // reason in the same notice: one the public RPC rate limited is tried again after a pause.
     const notice = page.locator('.launch-summary [role=alert]')
     for (let attempt = 1; ; attempt++) {
       await page.getByRole('button', { name: 'Launch $ECAT' }).click()
@@ -108,6 +108,9 @@ for (const launch of [
     const tx = VersionedTransaction.deserialize(Buffer.from(transactions[0], 'base64'))
     const [payer, mint] = tx.message.staticAccountKeys
     expect(payer.toBase58()).toBe(LAUNCHER)
+    // The wallet signs first (Phantom's order): the mint key adds its signature only afterwards.
+    expect(tx.message.header.numRequiredSignatures).toBe(2)
+    expect(tx.signatures[1].every((byte) => byte === 0)).toBe(true)
     // The coin's pool is made under the launch config of the tax chosen.
     const pool = dbcPoolPda(configFor(launch.feeBps), mint).toBase58()
     expect(tx.message.staticAccountKeys.map((k) => k.toBase58())).toContain(pool)

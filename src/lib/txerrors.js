@@ -180,6 +180,18 @@ export function explainError(err, { programIds } = {}) {
   return `The transaction failed on-chain (${Object.keys(err)[0] || 'unknown error'}).`
 }
 
+/**
+ * Message for a simulation that failed (`simulateTransaction(...).value` with `err` set): the
+ * innermost failing program from the logs when there is one, else the status error. A stale
+ * blockhash here means the transaction was built too long ago, not that it expired after sending.
+ */
+export function explainSimulation({ err, logs } = {}, { programIds } = {}) {
+  const failure = failingProgram(logs)
+  if (failure) return explainFailure(failure)
+  if (err === 'BlockhashNotFound') return MESSAGES.sendExpired
+  return explainError(err, { programIds })
+}
+
 function logsOf(e, message) {
   for (const key of ['logs', 'transactionLogs'])
     try {

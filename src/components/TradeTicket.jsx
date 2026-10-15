@@ -177,7 +177,13 @@ export default function TradeTicket({ coin, onTraded }) {
         lastValidBlockHeight,
         onStatus: ({ phase }) =>
           setBusy(
-            phase === 'sign' ? 'Approve in wallet' : phase === 'send' ? 'Sending' : 'Confirming',
+            phase === 'check'
+              ? 'Checking'
+              : phase === 'sign'
+                ? 'Approve in wallet'
+                : phase === 'send'
+                  ? 'Sending'
+                  : 'Confirming',
           ),
       })
       toast({

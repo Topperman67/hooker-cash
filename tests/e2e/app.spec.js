@@ -417,7 +417,9 @@ test('launch studio: standard launches have a fixed 1% tax, Quantum launches pic
   await expect(devBuyHint).toContainText(devBuy(500, 'ECAT'))
   await expect(summary.getByRole('heading', { name: 'Fee routing' })).toBeVisible()
   await expect(page.getByText(/after the 5% Quant Pad protocol share/)).toBeVisible()
-  await expect(summary).toContainText('You sign up to three transactions in one wallet prompt.')
+  await expect(summary).toContainText(
+    'You sign up to three transactions, each in its own wallet prompt.',
+  )
   await expect(page.getByRole('button', { name: 'Launch $ECAT' })).toBeEnabled()
 
   // Allocation sliders always total 100%.
