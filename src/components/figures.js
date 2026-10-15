@@ -7,3 +7,25 @@ export function lowerBound(value, text, partial) {
   if (!partial) return text
   return Number(value) > 0 ? `≥ ${text}` : '—'
 }
+
+// What a keeper log row (server/keeper.mjs `record`) reads as in a coin's hook activity.
+export const ACTIVITY_LABELS = {
+  pulse: 'Pulse',
+  burn: 'Quantum Burn',
+  fusion: 'Fusion',
+  entangle: 'Entanglement epoch',
+  'cancel-epoch': 'Epoch cancelled',
+  'close-epoch': 'Epoch closed',
+  // The keeper ran Meteora's migration of a full curve into its DAMM v2 pool.
+  migrate: 'Graduated to DAMM v2',
+  // `sync` recorded that pool and the well's position, so the hooks now run on DAMM v2.
+  sync: 'Hooks moved to DAMM v2',
+}
+
+export function activityLabel(action) {
+  if (Object.hasOwn(ACTIVITY_LABELS, action)) return ACTIVITY_LABELS[action]
+  const words = String(action ?? '')
+    .replace(/[-_]+/g, ' ')
+    .trim()
+  return words ? words[0].toUpperCase() + words.slice(1) : 'Hook action'
+}

@@ -19,6 +19,7 @@ import { chargedPlatformFee, platformFee } from '../../src/lib/amounts.js'
 import { RENT_EXEMPT_MINIMUM } from '../../src/lib/txflow.js'
 import { explainCustomError, PROGRAMS, registerQuantumIdl } from '../../src/lib/txerrors.js'
 import Price from '../../src/components/Price.js'
+import { ACTIVITY_LABELS, activityLabel } from '../../src/components/figures.js'
 import {
   installPriceCopy,
   selectedHtml,
@@ -508,7 +509,7 @@ test('the Quantum panel takes its claims through EntanglementClaims and re-reads
   assert.match(panel, /<EntanglementClaims/)
   assert.match(panel, /upcomingEpochs\(history\.data\?\.epochs, now\)/)
   assert.match(panel, /nextRefresh\(/)
-  assert.match(panel, /'cancel-epoch': 'Epoch cancelled'/)
+  assert.equal(activityLabel('cancel-epoch'), 'Epoch cancelled')
   // The only Claim button lives in EntanglementClaims, behind the open check.
   assert.doesNotMatch(panel, />\s*Claim\s*</)
 })
@@ -775,6 +776,81 @@ test('graduated coins read "Graduated to Meteora DAMM v2", a full curve "Graduat
   assert.match(list, /migrated=\{!!coin\.migrated\}/)
   assert.match(list, /migrated=\{!!c\.migrated\}/)
   for (const file of [page, list]) assert.doesNotMatch(file, /poolMissing/)
+})
+
+const listUi = await loadJsx(
+  `
+  export { renderToStaticMarkup } from 'react-dom/server'
+  export { createElement } from 'react'
+  export { MemoryRouter } from 'react-router-dom'
+  export { CoinCard, CoinTable } from './src/components/CoinList.jsx'
+`,
+  [
+    {
+      name: 'stub-platform',
+      setup(b) {
+        b.onResolve({ filter: /PlatformContext\.jsx$/ }, (args) => ({
+          path: args.path,
+          namespace: 'stub',
+        }))
+        b.onLoad({ filter: /.*/, namespace: 'stub' }, () => ({
+          loader: 'js',
+          contents: 'export const usePlatform = () => ({ solUsd: 150 })',
+        }))
+      },
+    },
+  ],
+)
+
+test('coin cards and the market table say Graduating until the coin has migrated', () => {
+  const coin = (over) => ({
+    mint: Keypair.generate().publicKey.toBase58(),
+    name: 'Entangled Cats',
+    symbol: 'ECAT',
+    price: 4.2e-7,
+    change24h: 12,
+    marketCap: 420,
+    volume24h: 85,
+    trades24h: 900,
+    createdAt: Math.floor(Date.now() / 1000) - 3600,
+    progress: 100,
+    complete: true,
+    migrated: false,
+    ...over,
+  })
+  const inRouter = (Component, props) =>
+    listUi.renderToStaticMarkup(
+      listUi.createElement(listUi.MemoryRouter, null, listUi.createElement(Component, props)),
+    )
+  const badges = (html) => [...html.matchAll(/class="chip chip-grad">([^<]*)</g)].map((m) => m[1])
+  for (const [over, want] of [
+    [{}, ['Graduating']], // the curve is full; Meteora has not opened the DAMM v2 pool yet
+    [{ migrated: true }, ['Graduated']],
+    [{ complete: false, progress: 40 }, []],
+  ]) {
+    const c = coin(over)
+    assert.deepEqual(badges(inRouter(listUi.CoinCard, { coin: c })), want, 'card')
+    assert.deepEqual(badges(inRouter(listUi.CoinTable, { items: [c] })), want, 'table')
+  }
+})
+
+test('every keeper action reads as words in the Quantum panel’s hook activity', () => {
+  // Each action server/keeper.mjs records has a label of its own.
+  const recorded = new Set(
+    [...source('server/keeper.mjs').matchAll(/record\([^,]+,\s*'([a-z-]+)'/g)].map((m) => m[1]),
+  )
+  assert.deepEqual([...recorded].sort(), Object.keys(ACTIVITY_LABELS).sort())
+  assert.equal(activityLabel('migrate'), 'Graduated to DAMM v2')
+  assert.equal(activityLabel('sync'), 'Hooks moved to DAMM v2')
+  assert.equal(activityLabel('burn'), 'Quantum Burn')
+  assert.equal(activityLabel('close-epoch'), 'Epoch closed')
+  // An action the panel does not know yet still reads as words, never as the raw key.
+  assert.equal(activityLabel('top-up_well'), 'Top up well')
+  assert.equal(activityLabel('constructor'), 'Constructor')
+  assert.equal(activityLabel(undefined), 'Hook action')
+  const panel = source('src/components/QuantumPanel.jsx')
+  assert.match(panel, /<span>\{activityLabel\(row\.action\)\}<\/span>/)
+  assert.doesNotMatch(panel, /\|\| row\.action/)
 })
 
 test('the Quantum panel shows amounts owed to wallets below the rent minimum', () => {

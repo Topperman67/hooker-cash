@@ -13,7 +13,9 @@ function Badges({ coin }) {
   return (
     <>
       {coin.quantum && <span className="chip chip-quantum">Quantum</span>}
-      {coin.complete && <span className="chip chip-grad">Graduated</span>}
+      {coin.complete && (
+        <span className="chip chip-grad">{coin.migrated ? 'Graduated' : 'Graduating'}</span>
+      )}
     </>
   )
 }

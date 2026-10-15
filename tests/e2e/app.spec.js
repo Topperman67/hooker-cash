@@ -272,6 +272,10 @@ test('a full curve waiting on its DAMM v2 pool says so and cannot be traded yet'
   await expect(page.locator('.coin-card .curve-meta').first()).toContainText(
     'Graduating to Meteora DAMM v2',
   )
+  // Its badge says the same until Meteora opens the pool, on the card and in the table.
+  await expect(page.locator('.coin-card .chip-grad').first()).toHaveText('Graduating')
+  await page.getByRole('button', { name: 'Table view' }).click()
+  await expect(page.locator('.table .chip-grad').first()).toHaveText('Graduating')
 })
 
 test('a coin Meteora moved into its DAMM v2 pool shows as graduated', async ({ page }) => {
@@ -290,6 +294,7 @@ test('a coin Meteora moved into its DAMM v2 pool shows as graduated', async ({ p
   await expect(page.locator('.coin-card .curve-meta').first()).toContainText(
     'Graduated to Meteora DAMM v2',
   )
+  await expect(page.locator('.coin-card .chip-grad').first()).toHaveText('Graduated')
 })
 
 test('the trade ticket quotes a buy from the coin’s Meteora curve', async ({ page }) => {
@@ -484,6 +489,24 @@ test('coin page shows the trade ticket and hook state for a Quantum coin', async
   await expect(value('Paid to creator')).toHaveText('0.3375 SOL')
   await expect(panel.getByRole('button', { name: 'Pulse fees now' })).toBeEnabled()
   await expect(panel.getByRole('alert')).toHaveCount(0)
+})
+
+test('recent hook activity names every keeper action in words', async ({ page }) => {
+  await stubApi(page)
+  const at = Math.floor(Date.now() / 1000)
+  const log = [
+    { action: 'sync', at: at - 60, signature: 'sync-signature' },
+    { action: 'migrate', at: at - 120, signature: 'migrate-signature' },
+    { action: 'pulse', at: at - 600, signature: 'pulse-signature' },
+  ]
+  // Registered after stubApi, so it answers first (the claims route is not read while signed out).
+  await page.route(`**/api/quantum/${MINT}`, (route) =>
+    route.fulfill({ json: { epochs: [], log } }),
+  )
+  await enter(page)
+  await page.goto(`/coin/${MINT}`)
+  const rows = page.locator('.activity li > span:first-child')
+  await expect(rows).toHaveText(['Hooks moved to DAMM v2', 'Graduated to DAMM v2', 'Pulse'])
 })
 
 // The launch page twice: a Quantum launch adds the trading-tax picker and the hook dials.

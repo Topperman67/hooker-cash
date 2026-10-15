@@ -16,15 +16,7 @@ import { ago, bps, duration, formatUnits, sol, toSol } from '../lib/format.js'
 import { claimTiming, nextRefresh, upcomingEpochs } from '../lib/claims.js'
 import EntanglementClaims from './EntanglementClaims.jsx'
 import { explorer } from '../../shared/network.mjs'
-
-const ACTION_LABELS = {
-  pulse: 'Pulse',
-  burn: 'Quantum Burn',
-  fusion: 'Fusion',
-  entangle: 'Entanglement epoch',
-  'cancel-epoch': 'Epoch cancelled',
-  'close-epoch': 'Epoch closed',
-}
+import { activityLabel } from './figures.js'
 
 export default function QuantumPanel({ coin, onLoaded }) {
   const { address, connected, openDialog, sendTransactions } = useWallet()
@@ -311,7 +303,7 @@ export default function QuantumPanel({ coin, onLoaded }) {
           <ul className="activity">
             {history.data.log.slice(0, 8).map((row, i) => (
               <li key={i}>
-                <span>{ACTION_LABELS[row.action] || row.action}</span>
+                <span>{activityLabel(row.action)}</span>
                 <span className="faint num">{ago(row.at)} ago</span>
                 {row.signature && (
                   <a href={explorer.tx(row.signature)} target="_blank" rel="noreferrer">
