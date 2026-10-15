@@ -38,7 +38,7 @@ import {
   saveJob,
   stagesPerTransaction,
 } from '../lib/launchPlan.js'
-import { explorer, isAddress, launchTiers } from '../../shared/network.mjs'
+import { TAX_OPTIONS, explorer, isAddress, tierFor } from '../../shared/network.mjs'
 import Glass from '../components/Glass.jsx'
 
 const DRAFT_KEY = 'quantpad:launch-draft:v1'
@@ -58,6 +58,8 @@ const EMPTY = {
   slippage: 2,
   // Trading tax in bps: picks the Meteora launch config (shared/network.mjs launchTiers).
   tax: 100,
+  // Opt-in: 25% at launch, falling to the tax over the first 2 minutes. Standard launches only.
+  antiSniper: false,
 }
 const bytes = (s) => new TextEncoder().encode(s).length
 const storage = () => {
@@ -115,9 +117,15 @@ export default function LaunchPage() {
   const quantumBlocked = wantsQuantum && !quantum.available
   const quantumPaused = quantumBlocked && !!quantum.paused
   const set = (patch) => setDraft((d) => ({ ...d, ...patch }))
-  // Standard launches have a fixed 1% tax (the first tier); Quantum launches pick theirs.
+  // Standard launches have a fixed 1% tax and may opt into the anti-sniper tax; Quantum launches
+  // pick their tax, without it (Quantum Hooks allows only those configs).
+  const sniper = !wantsQuantum && !!draft.antiSniper
   const tier =
-    (wantsQuantum && launchTiers.find((t) => t.feeBps === Number(draft.tax))) || launchTiers[0]
+    tierFor(wantsQuantum ? Number(draft.tax) : 100, sniper) ||
+    tierFor(
+      wantsQuantum && TAX_OPTIONS.includes(Number(draft.tax)) ? Number(draft.tax) : 100,
+      false,
+    )
   useEffect(() => {
     try {
       localStorage.setItem(DRAFT_KEY, JSON.stringify(draft))
@@ -537,15 +545,34 @@ export default function LaunchPage() {
                   label="Trading tax"
                   value={tier.feeBps}
                   onChange={(tax) => set({ tax })}
-                  options={launchTiers.map((t) => [t.feeBps, `${t.feeBps / 100}% tax`])}
+                  options={TAX_OPTIONS.map((t) => [t, `${t / 100}% tax`])}
                 />
               )}
               <p className="faint" style={{ margin: '8px 0 0', fontSize: 'var(--t-xs)' }}>
                 {wantsQuantum ? '' : 'Standard Meteora launches have a fixed 1% trading tax. '}
                 Every buy and sell pays {tier.feeBps / 100}% to the coin’s creator (less Meteora’s
-                protocol share), before and after graduation. For the first 2 minutes it starts at
-                25% and falls to {tier.feeBps / 100}%, to stop snipers.
+                protocol share), before and after graduation.
+                {tier.antiSniper
+                  ? ` With the anti-sniper tax it starts at 25% and falls to ${tier.feeBps / 100}% over the first 2 minutes.`
+                  : ''}
               </p>
+              <label className="toggle" style={{ marginTop: 12 }}>
+                <input
+                  type="checkbox"
+                  checked={sniper}
+                  disabled={wantsQuantum}
+                  onChange={(e) => set({ antiSniper: e.target.checked })}
+                />
+                <span>
+                  Anti-sniper tax: start at 25% and fall to {tier.feeBps / 100}% over the first 2
+                  minutes
+                </span>
+              </label>
+              {wantsQuantum && (
+                <p className="faint" style={{ margin: '6px 0 0', fontSize: 'var(--t-xs)' }}>
+                  The anti-sniper tax is available on Standard Meteora launches.
+                </p>
+              )}
             </div>
             {wantsQuantum ? (
               <>
@@ -859,6 +886,8 @@ export default function LaunchPage() {
             <dl className="kv summary-costs">
               <dt>Trading tax</dt>
               <dd className="num">{tier.feeBps / 100}%</dd>
+              <dt>Anti-sniper tax</dt>
+              <dd>{tier.antiSniper ? 'On (25% at launch)' : 'Off'}</dd>
               <dt>Dev buy</dt>
               <dd className="num">{sol(toSol(devLamports || 0n))}</dd>
               {feeCharged > 0n && (

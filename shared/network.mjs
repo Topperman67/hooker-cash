@@ -25,17 +25,59 @@ export const brand = Object.freeze({
   tagline: 'Launch on Meteora. Wire it with Quantum Hooks.',
 })
 
-// Quant Pad's Meteora launch configs on mainnet, one per trading tax a launcher can pick
-// (scripts/create-dbc-config.mjs --fee N --pool-fee N). Each starts at 25% and falls to its tax over
-// the first 2 minutes (anti-sniper), and the coin's DAMM v2 pool keeps that tax after graduation.
-// The coin's creator receives the tax, less Meteora's protocol share.
+// Quant Pad's Meteora launch configs on mainnet, one per trading tax a launcher can pick, with and
+// without the opt-in anti-sniper tax (scripts/create-dbc-config.mjs --fee N --pool-fee N, plus
+// --launch-fee 0 for the ones without). With it, the tax starts at 25% and falls to the chosen tax
+// over the first 2 minutes; without it, the chosen tax applies from the first trade. The coin's
+// DAMM v2 pool keeps the tax after graduation. The coin's creator receives the tax, less Meteora's
+// protocol share. Quantum Hooks allows at most 4 configs: the ones without the anti-sniper tax.
 export const launchTiers = Object.freeze([
-  Object.freeze({ feeBps: 100, config: '8pm3TA69VqTstQGdDkkivEaujoaG64XqRMAMK8hWBFJ9' }),
-  Object.freeze({ feeBps: 200, config: 'CZmoBruAVTGKAo2sp8ziLvzpENuwgZk9nybvXsKhcPfn' }),
-  Object.freeze({ feeBps: 300, config: 'EaBVGcoSKhXLQvUJj8XYFDSUHsohYMheQS5Dgfac2tCT' }),
-  Object.freeze({ feeBps: 500, config: 'J25Zk92d9DBJJ5eWggmQN3yBe8tC6iuxs61FsefFSHNd' }),
+  Object.freeze({
+    feeBps: 100,
+    antiSniper: true,
+    config: '8pm3TA69VqTstQGdDkkivEaujoaG64XqRMAMK8hWBFJ9',
+  }),
+  Object.freeze({
+    feeBps: 200,
+    antiSniper: true,
+    config: 'CZmoBruAVTGKAo2sp8ziLvzpENuwgZk9nybvXsKhcPfn',
+  }),
+  Object.freeze({
+    feeBps: 300,
+    antiSniper: true,
+    config: 'EaBVGcoSKhXLQvUJj8XYFDSUHsohYMheQS5Dgfac2tCT',
+  }),
+  Object.freeze({
+    feeBps: 500,
+    antiSniper: true,
+    config: 'J25Zk92d9DBJJ5eWggmQN3yBe8tC6iuxs61FsefFSHNd',
+  }),
+  Object.freeze({
+    feeBps: 100,
+    antiSniper: false,
+    config: '3e4MpnHbsDiWqh2kRLj82URFAWoNm4p3cmKeqvsB76KH',
+  }),
+  Object.freeze({
+    feeBps: 200,
+    antiSniper: false,
+    config: 'G6u6dfAKPqMJEpvPAQ7kpHskDn3RE1KXUWbWjRuKrzQi',
+  }),
+  Object.freeze({
+    feeBps: 300,
+    antiSniper: false,
+    config: '23w793vBTPB8HNNhjpczhyGvLtSi5LNwjRcYZh4Mmjgs',
+  }),
+  Object.freeze({
+    feeBps: 500,
+    antiSniper: false,
+    config: 'Cu9rMFJotxnXXHcGehx9BzJFps1MJLGBgcgAvqPQdPNi',
+  }),
 ])
+/** The trading taxes a launcher can pick, in bps. */
+export const TAX_OPTIONS = Object.freeze([100, 200, 300, 500])
 export const tierForConfig = (config) => launchTiers.find((t) => t.config === config) || null
+export const tierFor = (feeBps, antiSniper) =>
+  launchTiers.find((t) => t.feeBps === Number(feeBps) && t.antiSniper === !!antiSniper) || null
 
 // v2: the Meteora index (pump.fun records under v1 are left behind, not migrated).
 export const storageNamespace = 'quantpad:solana:v2'

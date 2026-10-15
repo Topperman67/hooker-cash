@@ -326,7 +326,9 @@ export default function TradeTicket({ coin, onTraded }) {
             <>
               <dt>Trading tax</dt>
               <dd className="num">
-                {taxNow > tier.feeBps
+                {/* The settled fee reads a hair above the tax (on-chain rounding): only a whole
+                    basis point or more above it is still the anti-sniper window. */}
+                {taxNow != null && taxNow - tier.feeBps >= 1
                   ? `${bps(taxNow)} now, falling to ${bps(tier.feeBps)}`
                   : bps(tier.feeBps)}
               </dd>

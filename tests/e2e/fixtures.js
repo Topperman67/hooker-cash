@@ -15,7 +15,7 @@ import {
   decodeDbcPool,
   migratedPoolFor,
 } from '../../shared/meteora.mjs'
-import { launchTiers } from '../../shared/network.mjs'
+import { launchTiers, tierFor } from '../../shared/network.mjs'
 import { quantumPda } from '../../shared/quantum.mjs'
 
 export const WALLET_ADDRESS = '7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU'
@@ -27,7 +27,8 @@ export const LOOKUP_TABLE = 'BovnvpXNbhHRaCxT3BCfpdSnT5PA5uSLgrUgmbzyj4eS'
 
 // The four mainnet launch configs, one per trading tax (read from mainnet; they never change).
 const CONFIGS = JSON.parse(readFileSync(new URL('./dbc-configs.json', import.meta.url), 'utf8'))
-export const configFor = (feeBps) => launchTiers.find((t) => t.feeBps === feeBps).config
+// Launches default to the configs without the anti-sniper tax (the ones Quantum Hooks allows).
+export const configFor = (feeBps, antiSniper = false) => tierFor(feeBps, antiSniper).config
 export const launchConfig = (address) =>
   decodeDbcConfig(Buffer.from(CONFIGS[address].data, 'base64'))
 // The test coin trades on the 1% config, like every standard launch.
