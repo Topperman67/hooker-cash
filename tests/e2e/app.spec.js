@@ -51,7 +51,7 @@ test('home shows live coins, hook catalog and navigates', async ({ page }) => {
   await stubApi(page)
   await enter(page)
   await page.goto('/')
-  await expect(page.locator('.refractor img')).toBeVisible()
+  await expect(page.locator('.refractor-q img')).toBeVisible()
   await expect(page.getByRole('banner').getByRole('img', { name: 'Quant Pad' })).toBeVisible()
   await expect(page.getByText('Entangled Cats').first()).toBeVisible()
   await expect(page.locator('.hero-stats')).toContainText('Coins launched')

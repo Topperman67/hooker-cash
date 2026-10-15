@@ -7,6 +7,7 @@ import SearchBox from './SearchBox.jsx'
 import Tape from './Tape.jsx'
 import Glass from './Glass.jsx'
 import StudioLights from './StudioLights.jsx'
+import ThemeToggle from './ThemeToggle.jsx'
 import WalletDialog from './WalletDialog.jsx'
 import { useWallet } from '../context/WalletContext.jsx'
 import { usePlatform } from '../context/PlatformContext.jsx'
@@ -33,16 +34,18 @@ function WalletButton() {
   const { connected, address, balance, openDialog, wallet } = useWallet()
   if (!connected)
     return (
-      <button className="btn btn-primary" onClick={openDialog}>
-        <Wallet size={16} aria-hidden="true" /> Connect
+      <button className="btn btn-primary wallet-btn" onClick={openDialog}>
+        <Wallet size={16} aria-hidden="true" /> <span className="wallet-label">Connect</span>
       </button>
     )
   return (
-    <button className="btn" onClick={openDialog} aria-label="Wallet details">
-      {wallet?.icon && (
+    <button className="btn wallet-btn" onClick={openDialog} aria-label="Wallet details">
+      {wallet?.icon ? (
         <img src={wallet.icon} alt="" width="18" height="18" style={{ borderRadius: 5 }} />
+      ) : (
+        <Wallet size={16} aria-hidden="true" />
       )}
-      <span className="num">
+      <span className="num wallet-label">
         {balance == null ? short(address) : sol(toSol(balance), { digits: 3 })}
       </span>
     </button>
@@ -100,6 +103,7 @@ export default function Shell({ children }) {
               </nav>
               <SearchBox />
               <div className="topbar-actions">
+                <ThemeToggle />
                 <WalletButton />
                 <button
                   ref={toggle}

@@ -1,112 +1,223 @@
+import {
+  Component,
+  lazy,
+  memo,
+  Suspense,
+  useCallback,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react'
+import { Flame, LockKeyhole, UsersRound, Wallet } from 'lucide-react'
 import { MODULES } from '../lib/hooks.js'
+import { useTheme } from '../lib/theme.js'
+import { MeteoraMark } from './Meteora.jsx'
+import { supportsWebGL, useInView, usePageVisible, useReducedMotion } from '../three/support.js'
+import { EXAMPLE, LOOP, T, arrival, measure, pathData, routes } from '../three/heroLayout.js'
 
-// "The Refractor": a white beam of creator fees enters the chrome Q and leaves its cobalt tail as
-// four coloured lines, one per hook. Geometry lives in a 600×560 box; the Q image sits at
-// (150,100) and is 300 wide, so its counter is at ≈(288,236) and its tail end at ≈(425,372).
-const TAIL = [425, 372]
-const COUNTER = [288, 236]
-const SOURCE = [150, 40]
-const ROUTES = [
-  { key: 'creatorBps', end: [590, 286], c1: [500, 360], c2: [540, 300] },
-  { key: 'burnBps', end: [590, 368], c1: [500, 380], c2: [540, 370] },
-  { key: 'entangleBps', end: [560, 456], c1: [470, 410], c2: [520, 450] },
-  { key: 'fusionBps', end: [470, 528], c1: [440, 420], c2: [460, 500] },
-]
-const EXAMPLE = { creatorBps: 3000, burnBps: 3000, entangleBps: 2000, fusionBps: 2000 }
+// "The Refractor": a white beam of creator fees enters the liquid-glass Q and leaves its cobalt
+// tail as four coloured lines, one per hook, each lighting its readout as the pulse arrives. The
+// page first paints a static version (the chrome mark and SVG lines); where WebGL works and motion
+// is welcome, the live glass scene loads on demand and fades in over it once its first frame is
+// drawn. CSS places everything; both versions draw their lines from the same measured anchors.
+const HeroScene = lazy(() => import('../three/HeroScene.jsx'))
 
-export default function Refractor({ symbol }) {
-  const reduce =
-    typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
-  const paths = ROUTES.map((r) => ({
-    ...r,
-    module: MODULES.find((m) => m.key === r.key),
-    d: `M${TAIL[0]} ${TAIL[1]} C${r.c1.join(' ')} ${r.c2.join(' ')} ${r.end.join(' ')}`,
-  }))
-  const beam = `M${SOURCE.join(' ')} L${COUNTER.join(' ')}`
+const ICONS = {
+  creatorBps: Wallet,
+  burnBps: Flame,
+  entangleBps: UsersRound,
+  fusionBps: LockKeyhole,
+}
+
+const same = (a, b) => a && b && JSON.stringify(a) === JSON.stringify(b)
+
+/** A scene that throws or fails to load must not take the page with it: the static hero stays. */
+class SceneGuard extends Component {
+  state = { failed: false }
+  static getDerivedStateFromError() {
+    return { failed: true }
+  }
+  componentDidCatch() {
+    this.props.onError?.()
+  }
+  render() {
+    return this.state.failed ? null : this.props.children
+  }
+}
+
+// Memoised: the home page re-renders on every data poll, and only the symbol matters here.
+export default memo(function Refractor({ symbol }) {
+  const stage = useRef(null)
+  const reduce = useReducedMotion()
+  const [theme] = useTheme()
+  const inView = useInView(stage)
+  const visible = usePageVisible()
+  const [layout, setLayout] = useState(null)
+  // decided before the first paint, so the no-WebGL loop never flashes where the scene will load;
+  // a scene that fails (or loses its GPU context) hands back to that loop
+  const [webgl, setWebgl] = useState(supportsWebGL)
+  const [live, setLive] = useState(false)
+
+  useLayoutEffect(() => {
+    const el = stage.current
+    let alive = true
+    const update = () => {
+      if (!alive) return
+      const next = measure(el)
+      setLayout((prev) => (same(prev, next) ? prev : next))
+    }
+    update()
+    const ro = new ResizeObserver(update)
+    ro.observe(el)
+    // card heights settle once the web fonts arrive
+    document.fonts?.ready.then(update)
+    return () => {
+      alive = false
+      ro.disconnect()
+    }
+  }, [])
+
+  const ready = useCallback(() => setLive(true), [])
+  const fail = useCallback(() => {
+    setLive(false)
+    setWebgl(false)
+  }, [])
+  const loop = !reduce && !webgl
+
   return (
     <figure
-      className="refractor"
+      className={`refractor${live ? ' is-live' : ''}${loop ? ' is-loop' : ''}`}
       aria-label="Creator fees enter the Q and leave as four hook lines"
+      style={{ '--loop': `${LOOP}s` }}
     >
-      <svg className="refractor-lines" viewBox="0 0 600 560" aria-hidden="true">
-        <defs>
-          <linearGradient id="beam" x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0" stopColor="#fff" stopOpacity="0" />
-            <stop offset=".35" stopColor="#fff" />
-            <stop offset="1" stopColor="#fff" />
-          </linearGradient>
-          <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
-            <feGaussianBlur stdDeviation="3" />
-          </filter>
-        </defs>
-        {/* incoming white fee light, edged in steel so it reads on pearl */}
-        <path d={beam} stroke="#6b7482" strokeWidth="5" opacity=".35" />
-        <path d={beam} stroke="url(#beam)" strokeWidth="9" filter="url(#glow)" opacity=".9" />
-        <path d={beam} stroke="#fff" strokeWidth="2.5" />
-        {/* outgoing hook lines */}
-        {paths.map((p) => (
-          <g key={p.key}>
-            <path
-              d={p.d}
-              fill="none"
-              style={{ stroke: p.module.color }}
-              strokeWidth="7"
-              opacity=".28"
-              filter="url(#glow)"
-            />
-            <path
-              d={p.d}
-              fill="none"
-              style={{ stroke: p.module.color }}
-              strokeWidth="2.5"
-              strokeLinecap="round"
-            />
-          </g>
-        ))}
-        {!reduce && (
-          <g>
-            <circle r="5" fill="#fff" filter="url(#glow)">
-              <animateMotion dur="2.4s" repeatCount="indefinite" path={beam} />
-            </circle>
-            {paths.map((p, i) => (
-              <circle key={p.key} r="4" style={{ fill: p.module.color }}>
-                <animateMotion
-                  dur="2.4s"
-                  begin={`${1.1 + i * 0.12}s`}
-                  repeatCount="indefinite"
-                  path={p.d}
-                />
-              </circle>
-            ))}
-          </g>
-        )}
-      </svg>
-      <div className="refractor-q">
-        <img src="/brand/mark.svg" alt="" />
-        <span className="refractor-glint" aria-hidden="true" />
-      </div>
-      <div className="refractor-source">
-        <span className="refractor-dot" />
-        Meteora creator fee{symbol ? <strong className="num"> · ${symbol}</strong> : null}
-      </div>
-      {paths.map((p) => (
-        <div
-          key={p.key}
-          className="refractor-chip"
-          style={{
-            left: `${(p.end[0] / 600) * 100}%`,
-            top: `${(p.end[1] / 560) * 100}%`,
-            '--c': p.module.color,
-          }}
-        >
-          <span className="chip-dot" />
-          {p.module.name}
-          <span className="num">{EXAMPLE[p.key] / 100}%</span>
+      <div className="refractor-stage" ref={stage}>
+        {layout && <Lines layout={layout} animate={loop} />}
+        <div className="refractor-q" aria-hidden="true">
+          <img src="/brand/mark.svg" alt="" />
+          <span className="refractor-glint" />
         </div>
-      ))}
+        {webgl && layout && (
+          <SceneGuard onError={fail}>
+            <Suspense fallback={null}>
+              <HeroScene
+                stage={stage}
+                layout={layout}
+                active={inView && visible}
+                still={reduce}
+                theme={theme}
+                onReady={ready}
+                onLost={fail}
+              />
+            </Suspense>
+          </SceneGuard>
+        )}
+        <p className="refractor-feed">
+          <span className="feed-mark" aria-hidden="true">
+            <MeteoraMark size={16} className="meteora-mark" />
+          </span>
+          <span className="feed-label">Meteora creator fee</span>
+          {symbol ? <strong className="num feed-symbol">${symbol}</strong> : null}
+          <span className="feed-node" aria-hidden="true" />
+        </p>
+        <ul className="refractor-readouts">
+          {MODULES.map((m, i) => {
+            const Icon = ICONS[m.key]
+            const pct = EXAMPLE[m.key] / 100
+            return (
+              <li
+                key={m.key}
+                className={`readout readout-${m.key.replace('Bps', '')}`}
+                style={{ '--c': m.color, '--p': `${pct}%`, '--at': `${arrival(i)}s` }}
+              >
+                <span className="readout-node" aria-hidden="true" />
+                <span className="readout-icon" aria-hidden="true">
+                  <Icon size={16} strokeWidth={2.25} />
+                </span>
+                <span className="readout-name">{m.name}</span>
+                <span className="readout-pct num">{pct}%</span>
+                <span className="readout-effect">{m.short}</span>
+                <span className="readout-bar" aria-hidden="true">
+                  <i />
+                </span>
+              </li>
+            )
+          })}
+        </ul>
+      </div>
       <figcaption className="refractor-caption">
         Example split. Every coin sets its own at launch.
       </figcaption>
     </figure>
+  )
+})
+
+/** The static lines: the beam and the four hook lines, with SVG pulses when there is no scene. */
+function Lines({ layout, animate }) {
+  const r = routes(layout)
+  const beam = `${pathData(r.inbound)}${pathData(r.through).replace(/^M[^C]+/, '')}`
+  const hooks = r.hooks.map(pathData)
+  // a pulse runs from `from` to `to` seconds into the loop and hides the rest of it
+  const span = (from, to) => ({ a: (from / LOOP).toFixed(4), b: (to / LOOP).toFixed(4) })
+  return (
+    <svg
+      className="refractor-lines"
+      viewBox={`0 0 ${layout.w} ${layout.h}`}
+      width={layout.w}
+      height={layout.h}
+      aria-hidden="true"
+    >
+      <defs>
+        <filter id="refractor-glow" x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur stdDeviation="4" />
+        </filter>
+      </defs>
+      <path className="line-beam-edge" d={beam} />
+      <path className="line-beam-glow" d={beam} filter="url(#refractor-glow)" />
+      <path className="line-beam" d={beam} />
+      {hooks.map((d, i) => (
+        <g key={MODULES[i].key} style={{ '--c': MODULES[i].color }}>
+          <path className="line-hook-glow" d={d} filter="url(#refractor-glow)" />
+          <path className="line-hook" d={d} />
+        </g>
+      ))}
+      {animate && (
+        <g>
+          <Pulse d={beam} r={5} fill="#fff" {...span(0, T.exit)} />
+          {hooks.map((d, i) => (
+            <Pulse
+              key={MODULES[i].key}
+              d={d}
+              r={4}
+              fill={MODULES[i].color}
+              {...span(T.exit + i * T.spread, arrival(i))}
+            />
+          ))}
+        </g>
+      )}
+    </svg>
+  )
+}
+
+function Pulse({ d, r, fill, a, b }) {
+  const dur = `${LOOP}s`
+  return (
+    <circle r={r} style={{ fill }} filter="url(#refractor-glow)" opacity="0">
+      <animateMotion
+        dur={dur}
+        repeatCount="indefinite"
+        path={d}
+        keyPoints="0;0;1;1"
+        keyTimes={`0;${a};${b};1`}
+        calcMode="linear"
+      />
+      <animate
+        attributeName="opacity"
+        dur={dur}
+        repeatCount="indefinite"
+        values="0;1;0"
+        keyTimes={`0;${a};${b}`}
+        calcMode="discrete"
+      />
+    </circle>
   )
 }

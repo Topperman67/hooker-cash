@@ -44,6 +44,29 @@ always crisp separate lines, never a rainbow blend.
 - On graphite they use full brightness (`--buy-bright`, `--sell-bright`).
 - Yellow is never used for text on pearl. It appears as lines, dots and fills next to ink labels.
 
+### Night studio (dark theme)
+
+The same studio with the lights down. Light is the default, even when the OS prefers dark. The
+round glass switch in the header (sun to moon) stores the choice, and `public/theme-init.js`
+applies it before first paint as `<html data-theme>`. Every night rule lives in
+`src/styles/theme-dark.css`, scoped to `:root[data-theme='dark']`, so light never changes by
+accident.
+
+| Role                    | Token               | Night value           |
+| ----------------------- | ------------------- | --------------------- |
+| Page                    | `--pearl`           | `#07080C`             |
+| Plates                  | `--plate`           | `#12151B`             |
+| Text / secondary text   | `--ink` / `--steel` | `#F1F4F8` / `#BCC4CF` |
+| Instruments             | `--graphite`        | `#191D25`             |
+| Buy / sell              | `--buy` / `--sell`  | `#18D47A` / `#FF92CE` |
+| Focus ring              | `--focus`           | `#8FA4FF`             |
+| Lettering, step numbers | `--night-chrome`    | silver chrome         |
+
+- The four colour pools stay and are dimmer. The 45° lines glow, but fade out before the reading column.
+- Panels become smoked glass with a lit top-left rim. The header and hero lenses turn dark in the same render as the switch.
+- The lockup swaps to `lockup-dark.svg`. The flywheel card stays cobalt, with a faint rim.
+- Muted text keeps 4.5:1 on the page and on smoked glass under the brightest pool (`tests/unit/theme.test.mjs`).
+
 ## Materials
 
 - **Chrome.** `--chrome`, `--black-chrome` and `--silver-chrome` gradients for the mark, the "Quantum Hooks." headline, avatars and step numerals.
@@ -62,7 +85,9 @@ always crisp separate lines, never a rainbow blend.
 
 ## Signature moments
 
-- **The Refractor** (homepage hero). A white fee beam enters the chrome Q, and four coloured hook lines fan out of its tail to labelled readouts. Pulses travel the lines, the Q sways gently, and the glint follows the cursor. The split shown is labelled as an example.
+- **The Refractor** (homepage hero). The Q is live liquid glass: clear faces, dark defined bevels, a cobalt glass tail. A white fee beam drops from the Meteora source pill into the Q, and four coloured hook lines fan out of its tail to glass readout cards. On a 7.2 s loop, the pulse strikes and ripples the glass, crosses inside it, flashes the tail, then runs down each line and lights its card as it arrives. The glass floats, sways and follows the pointer. The split shown is labelled as an example.
+- **The fee flywheel** (homepage card). The 60/40 donut is live 3D glass on its cobalt stage: green holders, pink burn. The arrow ring turns clockwise, with pulses running its arcs. On a 7 s loop, trades flow into the hub, the 7% fee rolls out, and a green and a pink stream land in their slices. The labels and the copy's step chips pulse with each beat.
+- **Live scenes, static first.** Both scenes (`src/three/`) load lazily, only where WebGL works, and keep three.js out of the main bundle. The page first paints the static version: the chrome mark and SVG lines, and the flywheel still. The live scene fades in over it on its first frame, with no layout shift. Scenes pause off-screen and in hidden tabs, and step quality down on slow GPUs. If a scene fails or loses its GPU context, the static version comes back.
 - **Holographic launch card.** Every coin page and the launch studio preview show the coin as a graphite trading card: chrome-framed art, silver ticker, and the hook loadout as coloured bars.
 - **Live tape.** A graphite rail of real trending coins under the header. It is hidden when there is no data and pauses on hover.
 
@@ -70,4 +95,5 @@ always crisp separate lines, never a rainbow blend.
 
 - Visible cobalt focus rings, labelled controls, `aria-pressed` segmented controls and dialog focus return.
 - Everything works at 320 px wide.
-- Reduced motion stops the sway, pulses, tape, glint and card tilt.
+- Reduced motion stops the sway, pulses, tape, glint and card tilt. The hero shows a still glass frame, the flywheel shows its still image, and the theme switches instantly.
+- 3D canvases are decoration (`aria-hidden`). Every label, percentage and caption is real text.

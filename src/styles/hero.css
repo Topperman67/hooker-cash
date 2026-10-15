@@ -1,0 +1,624 @@
+/* The home hero: the liquid-glass Q (components/Refractor.jsx, three/HeroScene.jsx) and its
+   four hook readouts. CSS places the mark, the source pill and the readouts; the fallback lines
+   and the live scene measure those boxes and draw the light between them. */
+
+/* one flash per fee pulse, driven by the scene (data-hit) or, without it, by a CSS loop */
+@property --hit {
+  syntax: '<number>';
+  inherits: true;
+  initial-value: 0;
+}
+
+.hero {
+  /* the scene bleeds past its column; never let it widen the page */
+  overflow-x: clip;
+}
+.hero-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.02fr);
+  gap: 36px;
+  align-items: center;
+}
+
+/* ---------- the stage ---------- */
+.refractor {
+  position: relative;
+  margin: 0;
+  container-type: inline-size;
+}
+.refractor-stage {
+  /* the mark's box and where it sits; the readouts stack is centred on the tail, where the lines
+     leave (the tail's outer edge is 89% of the way down the box) */
+  --q: 61cqw;
+  /* not left of the column: on wide screens the headline runs right up to it */
+  --q-x: 0cqw;
+  --q-y: 70px;
+  --card-h: 76px;
+  --card-gap: 10px;
+  --bleed: 64px;
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  padding-bottom: 8px;
+}
+.refractor-q {
+  grid-area: 1 / 1;
+  position: relative;
+  z-index: 1;
+  width: var(--q);
+  aspect-ratio: 1;
+  margin: var(--q-y) 0 0 var(--q-x);
+  filter: drop-shadow(0 26px 30px rgba(21, 24, 29, 0.2));
+}
+.refractor-q img {
+  width: 100%;
+  height: 100%;
+  animation: refractor-sway 9s ease-in-out infinite;
+  transition: opacity 0.9s ease;
+}
+/* the four-line glint on the static chrome mark, slid by the pointer (useGlobalGlint) */
+.refractor-glint {
+  position: absolute;
+  inset: 0;
+  background: var(--lines);
+  background-size: 260% 100%;
+  background-position: var(--lx, 70%) 0;
+  -webkit-mask: url('/brand/mark-mono.svg') center / contain no-repeat;
+  mask: url('/brand/mark-mono.svg') center / contain no-repeat;
+  mix-blend-mode: screen;
+  opacity: 0.75;
+  animation: refractor-sway 9s ease-in-out infinite;
+  transition:
+    background-position 0.25s ease-out,
+    opacity 0.9s ease;
+}
+@keyframes refractor-sway {
+  0%,
+  100% {
+    transform: perspective(900px) rotateY(-7deg) rotateX(2deg);
+  }
+  50% {
+    transform: perspective(900px) rotateY(7deg) rotateX(-2deg);
+  }
+}
+
+/* the fallback lines (stage pixels, drawn from the measured anchors) */
+.refractor-lines {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: visible;
+  pointer-events: none;
+  fill: none;
+  stroke-linecap: round;
+  transition: opacity 0.9s ease;
+}
+.line-beam-edge {
+  stroke: #6b7482;
+  stroke-width: 5;
+  opacity: 0.3;
+}
+.line-beam-glow {
+  stroke: #fff;
+  stroke-width: 10;
+  opacity: 0.9;
+}
+.line-beam {
+  stroke: #fff;
+  stroke-width: 2.5;
+}
+.line-hook-glow {
+  stroke: var(--c);
+  stroke-width: 8;
+  opacity: 0.32;
+}
+.line-hook {
+  stroke: var(--c);
+  stroke-width: 2.5;
+}
+
+/* the live scene sits over the fallback and fades in once its first frame is drawn */
+.refractor-scene {
+  position: absolute;
+  inset: calc(-1 * var(--bleed));
+  z-index: 2;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 1.1s ease;
+}
+.refractor-scene canvas {
+  display: block;
+}
+.refractor.is-live .refractor-scene {
+  opacity: 1;
+}
+.refractor.is-live .refractor-q img,
+.refractor.is-live .refractor-glint,
+.refractor.is-live .refractor-lines {
+  opacity: 0;
+}
+.refractor.is-live .refractor-q {
+  filter: none;
+}
+
+/* ---------- the source: Meteora creator fees ---------- */
+.refractor-feed {
+  position: absolute;
+  /* clear of the headline, which on wide screens runs to the column's edge on the same line */
+  left: 3cqw;
+  top: 0;
+  z-index: 3;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 97cqw;
+  margin: 0;
+  padding: 5px 14px 5px 5px;
+  border-radius: var(--r-pill);
+  /* the same clear glass as the readouts (a dark pill here would read as part of the headline
+     beside it); its light is the white of the fee beam, edged in steel like the beam itself */
+  background:
+    radial-gradient(120% 140% at 20% 0%, rgba(255, 255, 255, 0.95), transparent 60%),
+    linear-gradient(160deg, rgba(255, 255, 255, 0.8), rgba(255, 255, 255, 0.5));
+  -webkit-backdrop-filter: blur(16px) saturate(1.15);
+  backdrop-filter: blur(16px) saturate(1.15);
+  border: 1px solid rgba(255, 255, 255, 0.95);
+  box-shadow:
+    inset 0 1px 0 #fff,
+    inset 0 0 0 1px rgba(107, 116, 130, calc(0.1 + var(--hit) * 0.3)),
+    0 0 0 calc(var(--hit) * 5px) rgba(255, 255, 255, calc(var(--hit) * 0.9)),
+    0 0 calc(var(--hit) * 30px) rgba(107, 116, 130, calc(var(--hit) * 0.35)),
+    0 12px 26px -12px rgba(21, 24, 29, 0.3),
+    0 2px 6px rgba(21, 24, 29, 0.06);
+  color: var(--ink);
+  font-size: clamp(11px, 2.3cqw, 13px);
+  font-weight: 650;
+  white-space: nowrap;
+}
+.feed-mark {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background:
+    radial-gradient(90% 70% at 35% 20%, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.55) 55%),
+    #fff;
+  box-shadow:
+    inset 0 -2px 3px rgba(21, 24, 29, 0.2),
+    0 0 0 1px rgba(107, 116, 130, 0.22),
+    0 2px 5px rgba(21, 24, 29, 0.14),
+    0 0 calc(6px + var(--hit) * 14px) rgba(255, 255, 255, calc(0.35 + var(--hit) * 0.6));
+}
+.feed-mark .meteora-mark {
+  width: 16px;
+  height: 16px;
+}
+.feed-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.feed-symbol {
+  color: var(--ink);
+  font-weight: 600;
+}
+/* the beam leaves from under the Meteora bead */
+.feed-node {
+  position: absolute;
+  left: 13px;
+  bottom: -5px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow:
+    0 0 0 2px rgba(107, 116, 130, 0.35),
+    0 0 calc(8px + var(--hit) * 14px) rgba(255, 255, 255, 0.95);
+}
+
+/* ---------- the four readouts ---------- */
+.refractor-readouts {
+  grid-area: 1 / 1;
+  justify-self: end;
+  align-self: start;
+  position: relative;
+  z-index: 3;
+  display: grid;
+  gap: var(--card-gap);
+  /* never so narrow that "Quantum Burn" and its share stop fitting on one line */
+  width: max(36cqw, 218px);
+  margin: calc(var(--q-y) + var(--q) * 0.8923 - 2 * var(--card-h) - 1.5 * var(--card-gap)) 0 0;
+  padding: 0;
+  list-style: none;
+}
+.readout {
+  --hit: 0;
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas:
+    'icon name pct'
+    'icon effect effect'
+    'bar bar bar';
+  align-items: center;
+  align-content: center;
+  column-gap: 10px;
+  height: var(--card-h);
+  padding: 0 12px 0 10px;
+  border-radius: 16px;
+  /* clear enough to show the studio behind, white enough that the pink pool on the page does not
+     tint all four: each card's own colour comes from its edge, bead and bar */
+  background:
+    radial-gradient(
+      70% 140% at var(--wash-x, 0%) 50%,
+      color-mix(in srgb, var(--c) 11%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(130% 90% at 0% 0%, rgba(255, 255, 255, 0.8), transparent 55%),
+    linear-gradient(150deg, rgba(255, 255, 255, 0.88), rgba(255, 255, 255, 0.68));
+  -webkit-backdrop-filter: blur(18px) saturate(1.15);
+  backdrop-filter: blur(18px) saturate(1.15);
+  border: 1px solid rgba(255, 255, 255, 0.92);
+  box-shadow:
+    inset 0 1px 0 #fff,
+    inset 0 0 0 1px color-mix(in srgb, var(--c) calc(12% + var(--hit) * 40%), transparent),
+    inset 0 -10px 22px -16px color-mix(in srgb, var(--c) 60%, transparent),
+    0 0 calc(var(--hit) * 30px) color-mix(in srgb, var(--c) calc(var(--hit) * 55%), transparent),
+    0 14px 30px -16px color-mix(in srgb, var(--c) 70%, transparent),
+    0 2px 6px rgba(21, 24, 29, 0.06);
+  font-size: var(--t-sm);
+  line-height: 1.25;
+}
+/* the light the line brings in, spreading along the edge it enters by */
+.readout::before {
+  content: '';
+  position: absolute;
+  left: -1px;
+  top: 12px;
+  bottom: 12px;
+  width: 2px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, transparent, var(--c) 30% 70%, transparent);
+  opacity: calc(0.45 + var(--hit) * 0.55);
+  box-shadow: 0 0 calc(4px + var(--hit) * 10px) var(--c);
+}
+.readout-node {
+  --enter: right;
+  position: absolute;
+  left: -7px;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  margin-top: -6px;
+  border-radius: 50%;
+  background: radial-gradient(circle, #fff 0 30%, var(--c) 38%);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--c) 22%, transparent),
+    0 0 calc(6px + var(--hit) * 18px) var(--c);
+  transform: scale(calc(1 + var(--hit) * 0.4));
+}
+.readout-icon {
+  grid-area: icon;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+  color: #fff;
+  background:
+    radial-gradient(110% 80% at 30% 10%, rgba(255, 255, 255, 0.7), transparent 50%),
+    linear-gradient(
+      165deg,
+      color-mix(in srgb, var(--c) 70%, #fff),
+      var(--c) 55%,
+      color-mix(in srgb, var(--c) 72%, #000)
+    );
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.75),
+    inset 0 -3px 5px color-mix(in srgb, var(--c) 55%, #000),
+    0 0 calc(var(--hit) * 16px) var(--c),
+    0 5px 12px -3px color-mix(in srgb, var(--c) 60%, transparent);
+}
+.readout-icon svg {
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.25));
+}
+.readout-fusion .readout-icon {
+  color: var(--ink);
+}
+.readout-fusion .readout-icon svg {
+  filter: none;
+}
+.readout-name {
+  grid-area: name;
+  min-width: 0;
+  font-size: clamp(12.5px, 2.25cqw, 14px);
+  font-weight: 700;
+  font-stretch: 104%;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.readout-pct {
+  grid-area: pct;
+  font-family: var(--font-mono);
+  font-size: clamp(18px, 3.4cqw, 23px);
+  font-weight: 600;
+  letter-spacing: -0.05em;
+  line-height: 1;
+  color: var(--ink);
+}
+.readout-effect {
+  grid-area: effect;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 2px;
+  font-size: var(--t-xs);
+  color: var(--steel);
+}
+.readout-bar {
+  grid-area: bar;
+  position: relative;
+  height: 4px;
+  margin-top: 10px;
+  border-radius: 4px;
+  background: rgba(21, 24, 29, 0.08);
+  box-shadow: inset 0 1px 1px rgba(21, 24, 29, 0.08);
+}
+.readout-bar i {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--p);
+  border-radius: inherit;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--c) 45%, #fff), var(--c));
+  box-shadow: 0 0 calc(5px + var(--hit) * 10px) color-mix(in srgb, var(--c) 80%, transparent);
+  overflow: hidden;
+}
+/* a glint runs along the filled share when the pulse lands */
+.readout-bar i::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.95), transparent);
+  transform: translateX(-110%);
+}
+.readout[data-hit='a'] {
+  animation: readout-hit-a 1.6s cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+.readout[data-hit='b'] {
+  animation: readout-hit-b 1.6s cubic-bezier(0.2, 0.7, 0.3, 1);
+}
+.readout[data-hit='a'] .readout-bar i::after {
+  animation: readout-glint-a 0.9s ease-out;
+}
+.readout[data-hit='b'] .readout-bar i::after {
+  animation: readout-glint-b 0.9s ease-out;
+}
+.refractor-feed[data-hit='a'] {
+  animation: readout-hit-a 1.4s ease-out;
+}
+.refractor-feed[data-hit='b'] {
+  animation: readout-hit-b 1.4s ease-out;
+}
+/* two identical keyframes, so swapping the name restarts the flash without a reflow */
+@keyframes readout-hit-a {
+  0% {
+    --hit: 0;
+  }
+  7% {
+    --hit: 1;
+  }
+  100% {
+    --hit: 0;
+  }
+}
+@keyframes readout-hit-b {
+  0% {
+    --hit: 0;
+  }
+  7% {
+    --hit: 1;
+  }
+  100% {
+    --hit: 0;
+  }
+}
+@keyframes readout-glint-a {
+  to {
+    transform: translateX(110%);
+  }
+}
+@keyframes readout-glint-b {
+  to {
+    transform: translateX(110%);
+  }
+}
+/* no WebGL: the same story on a CSS loop, timed to the SVG pulses */
+.refractor.is-loop .readout {
+  animation: readout-loop var(--loop) linear var(--at) infinite;
+}
+.refractor.is-loop .refractor-feed {
+  animation: readout-loop var(--loop) linear infinite;
+}
+@keyframes readout-loop {
+  0% {
+    --hit: 1;
+  }
+  20%,
+  100% {
+    --hit: 0;
+  }
+}
+
+.refractor-caption {
+  position: absolute;
+  left: 0;
+  bottom: 8px;
+  z-index: 3;
+  max-width: 60cqw;
+  font-size: var(--t-xs);
+  color: var(--steel-2);
+}
+
+/* ---------- narrower stages: tighter readouts ---------- */
+@container (max-width: 560px) {
+  .refractor-stage {
+    /* the wider readouts need the room: a slightly smaller mark, further left */
+    --q: 57cqw;
+    --q-x: -2cqw;
+    --card-h: 68px;
+    --card-gap: 8px;
+  }
+  .refractor-readouts {
+    width: 41cqw;
+  }
+  .readout {
+    column-gap: 8px;
+    padding: 0 10px 0 9px;
+    border-radius: 14px;
+  }
+  .readout-icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 9px;
+  }
+  .readout-icon svg {
+    width: 14px;
+    height: 14px;
+  }
+  .readout-name {
+    font-size: 12.5px;
+  }
+  .readout-pct {
+    font-size: 17px;
+  }
+  .readout-effect {
+    font-size: 11px;
+  }
+  .readout-bar {
+    margin-top: 7px;
+  }
+}
+
+/* ---------- narrow stages: the readouts stack under the mark ---------- */
+@container (max-width: 460px) {
+  .refractor-stage {
+    --q: 74cqw;
+    --q-x: 1cqw;
+    --q-y: 50px;
+    --bleed: 16px;
+  }
+  .refractor-readouts {
+    grid-area: 2 / 1;
+    justify-self: start;
+    width: calc(100% - 30px);
+    margin: 22px 0 0;
+    gap: 10px;
+  }
+  .readout-node {
+    --enter: left;
+    --reach: 26px;
+    left: auto;
+    right: -7px;
+  }
+  .readout {
+    --wash-x: 100%;
+  }
+  .readout::before {
+    left: auto;
+    right: -1px;
+  }
+  .refractor-caption {
+    position: static;
+    max-width: none;
+    margin-top: 12px;
+  }
+}
+
+@media (max-width: 960px) {
+  .hero-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  /* stacked under the copy, the scene keeps its desktop proportions, centred */
+  .refractor {
+    width: 100%;
+    max-width: 640px;
+    margin-inline: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .refractor-q img,
+  .refractor-glint {
+    animation: none;
+  }
+}
+
+/* ---------- night studio ---------- */
+:root[data-theme='dark'] .refractor-q {
+  filter: drop-shadow(0 26px 34px rgba(0, 0, 0, 0.55));
+}
+:root[data-theme='dark'] .line-beam-edge {
+  stroke: #8fa4ff;
+  opacity: 0.18;
+}
+:root[data-theme='dark'] .refractor-feed {
+  background:
+    radial-gradient(120% 140% at 20% 0%, rgba(255, 255, 255, 0.14), transparent 55%),
+    linear-gradient(160deg, rgba(40, 46, 60, 0.72), rgba(14, 16, 24, 0.78));
+  border-color: rgba(255, 255, 255, 0.14);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    0 0 calc(var(--hit) * 30px) rgba(255, 255, 255, calc(var(--hit) * 0.6)),
+    0 12px 30px -8px rgba(0, 0, 0, 0.7);
+  color: var(--on-graphite);
+}
+:root[data-theme='dark'] .feed-symbol {
+  color: #fff;
+}
+:root[data-theme='dark'] .readout {
+  background:
+    radial-gradient(
+      70% 140% at var(--wash-x, 0%) 50%,
+      color-mix(in srgb, var(--c) 14%, transparent),
+      transparent 70%
+    ),
+    radial-gradient(130% 90% at 0% 0%, rgba(255, 255, 255, 0.1), transparent 55%),
+    linear-gradient(150deg, rgba(34, 39, 52, 0.66), rgba(12, 14, 21, 0.62));
+  border-color: rgba(255, 255, 255, 0.11);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    inset 0 0 0 1px color-mix(in srgb, var(--c) calc(18% + var(--hit) * 45%), transparent),
+    inset 0 -12px 26px -16px color-mix(in srgb, var(--c) 70%, transparent),
+    0 0 calc(var(--hit) * 36px) color-mix(in srgb, var(--c) calc(var(--hit) * 70%), transparent),
+    0 16px 34px -16px color-mix(in srgb, var(--c) 55%, transparent),
+    0 2px 10px rgba(0, 0, 0, 0.4);
+}
+:root[data-theme='dark'] .readout-name,
+:root[data-theme='dark'] .readout-pct {
+  color: #f2f4f8;
+}
+:root[data-theme='dark'] .readout-effect {
+  color: #b9c1cd;
+}
+:root[data-theme='dark'] .readout-bar {
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow: none;
+}
+:root[data-theme='dark'] .refractor-caption {
+  color: #9aa3b1;
+}
+
+/* On phones "Launch on [mark] Meteora." wraps as ordinary text: as a flex row its first words would
+   wrap inside their own box and leave the mark stranded. */
+@media (max-width: 640px) {
+  .hero-venue {
+    display: block;
+  }
+  .hero-mark {
+    vertical-align: -0.02em;
+  }
+}

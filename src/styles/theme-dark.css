@@ -1,0 +1,528 @@
+/* Dark mode: the night studio. Every rule is scoped to :root[data-theme='dark'] (set by
+   public/theme-init.js and src/lib/theme.js); light stays the default.
+
+   Overrides wrap the scope in :where() so each one keeps the specificity of the light rule it
+   replaces. This sheet loads last, so it wins that tie, while the more specific light rules
+   (.instrument .btn, .instrument .segmented ...) still win where they already did.
+
+   The page is near-black blue graphite lit by the same four pools, dimmer, so the glass still has
+   colour to bend. Panels become smoked glass with a white top-left rim. Muted text keeps WCAG AA
+   4.5:1 on that glass and on the page under the brightest pool: tests/unit/theme.test.mjs checks
+   both against the values below. */
+:root[data-theme='dark'] {
+  /* studio + metal neutrals */
+  --pearl: #07080c;
+  --pearl-2: #0c0e13;
+  --plate: #12151b;
+  --mercury: #3a414d;
+  --mercury-2: #252b35;
+  --steel: #bcc4cf;
+  --steel-2: #adb6c2;
+  --ink: #f1f4f8;
+  --ink-2: #d9dee6;
+
+  /* instruments sit a step above the page so they still read as panels */
+  --graphite: #191d25;
+  --graphite-2: #101318;
+  --graphite-3: #262b35;
+  --graphite-line: #303643;
+
+  /* trade direction: the bright shades read on every dark surface */
+  --buy: #18d47a;
+  --sell: #ff92ce;
+  --focus: #8fa4ff;
+
+  /* silver chrome with a dark horizon: the night version of black-chrome lettering */
+  --night-chrome: linear-gradient(
+    180deg,
+    #ffffff 0%,
+    #eef2f7 26%,
+    #b7c0cc 44%,
+    #4a5260 50%,
+    #7c8798 57%,
+    #d6dde7 76%,
+    #ffffff 100%
+  );
+  --plate-edge:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 1px 2px rgba(0, 0, 0, 0.4),
+    0 10px 30px rgba(0, 0, 0, 0.45);
+
+  /* smoked glass: a white bloom at the key-light corner over a blue-graphite body */
+  --glass-fill:
+    radial-gradient(120% 70% at 0% 0%, rgba(255, 255, 255, 0.09), transparent 52%),
+    linear-gradient(140deg, rgba(26, 30, 39, 0.66) 0%, rgba(12, 14, 20, 0.58) 100%);
+  --glass-rim: rgba(255, 255, 255, 0.13);
+  --glass-shadow:
+    inset 1px 1px 0 rgba(255, 255, 255, 0.2), inset -1px -1px 0 rgba(0, 0, 0, 0.5),
+    inset 0 0 28px rgba(255, 255, 255, 0.025), 0 1px 2px rgba(0, 0, 0, 0.4),
+    0 18px 44px rgba(0, 0, 0, 0.5);
+  --glass-blur: blur(24px) saturate(1.6);
+  --smoke-fill:
+    radial-gradient(120% 70% at 0% 0%, rgba(255, 255, 255, 0.06), transparent 50%),
+    linear-gradient(160deg, rgba(30, 34, 43, 0.9) 0%, rgba(13, 15, 20, 0.94) 100%);
+  --smoke-shadow:
+    inset 1px 1px 0 rgba(255, 255, 255, 0.12), inset -1px -1px 0 rgba(0, 0, 0, 0.6),
+    0 22px 48px rgba(0, 0, 0, 0.55);
+  color-scheme: dark;
+}
+
+:where(:root[data-theme='dark']) ::selection {
+  background: rgba(143, 164, 255, 0.34);
+}
+
+/* ---------- the night studio ---------- */
+:where(:root[data-theme='dark']) .studio {
+  background:
+    radial-gradient(1100px 620px at 88% -8%, rgba(132, 150, 205, 0.16), transparent 62%),
+    radial-gradient(900px 520px at -6% 108%, rgba(46, 75, 255, 0.1), transparent 60%), var(--pearl);
+}
+/* film grain over the night studio: breaks up the banding a near-black gradient shows on 8-bit
+   screens, and gives the dark a photographic texture (rasterised once, never animated) */
+:where(:root[data-theme='dark']) .studio::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 160 160' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E");
+  background-size: 160px 160px;
+  opacity: 0.07;
+  mix-blend-mode: overlay;
+}
+/* Screen-blended so overlapping pools add up like light, kept low so text on the page stays
+   readable at the brightest point. */
+:where(:root[data-theme='dark']) .studio-pool {
+  opacity: 0.44;
+  mix-blend-mode: screen;
+}
+/* blue is the dimmest light on black, so it can burn brighter */
+:where(:root[data-theme='dark']) .studio-blue {
+  opacity: 0.62;
+}
+:where(:root[data-theme='dark']) .studio-lines {
+  background: linear-gradient(
+    135deg,
+    transparent 0 47%,
+    rgba(255, 62, 165, 0.5) 47% 47.5%,
+    transparent 47.5% 48.1%,
+    rgba(255, 194, 26, 0.36) 48.1% 48.6%,
+    transparent 48.6% 49.2%,
+    rgba(18, 194, 110, 0.42) 49.2% 49.7%,
+    transparent 49.7% 50.3%,
+    rgba(70, 98, 255, 0.66) 50.3% 50.8%,
+    transparent 50.8% 100%
+  );
+}
+/* Lit lines read much stronger on black, so at night they burn in from the top-right corner and
+   fade out before they reach the reading column. */
+:where(:root[data-theme='dark']) .studio-lines {
+  -webkit-mask-image: radial-gradient(120% 95% at 100% 0%, #000 22%, transparent 60%);
+  mask-image: radial-gradient(120% 95% at 100% 0%, #000 22%, transparent 60%);
+}
+/* at night the lines glow: a blurred copy of the same four lines behind the crisp ones */
+:where(:root[data-theme='dark']) .studio-lines::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: inherit;
+  filter: blur(7px);
+  opacity: 0.7;
+}
+
+/* ---------- lettering ---------- */
+:where(:root[data-theme='dark']) .chrome-text {
+  background: var(--lines-thin), var(--night-chrome);
+  background-size:
+    220% 100%,
+    100% 100%;
+  background-position:
+    var(--lx, 70%) 0,
+    0 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+:where(:root[data-theme='dark']) .steps li::before {
+  background: var(--night-chrome);
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+/* links in copy: ink with a lighter cobalt underline (the deep one vanishes on black) */
+:where(:root[data-theme='dark']) .prose a:not(.btn),
+:where(:root[data-theme='dark']) .gate-note a {
+  text-decoration-color: var(--blue-tint);
+}
+:where(:root[data-theme='dark']) .activity li a {
+  color: var(--blue-tint);
+}
+
+/* ---------- header, tape, footer ---------- */
+:where(:root[data-theme='dark']) .topbar-capsule,
+:where(:root[data-theme='dark']) .lg {
+  border-color: rgba(255, 255, 255, 0.14);
+}
+:where(:root[data-theme='dark']) .topbar-capsule .mobile-nav {
+  border-top-color: rgba(255, 255, 255, 0.1);
+}
+:where(:root[data-theme='dark']) .nav a.active::after {
+  background: #6f86ff;
+  box-shadow: 0 0 10px rgba(111, 134, 255, 0.8);
+}
+:where(:root[data-theme='dark']) .built-on-top {
+  border-color: rgba(255, 255, 255, 0.16);
+}
+:where(:root[data-theme='dark']) .tape {
+  border-bottom-color: rgba(255, 255, 255, 0.07);
+}
+/* The footer stays a distinct graphite stage: lifted off the black page with a lit top rim. */
+:where(:root[data-theme='dark']) .footer {
+  background:
+    radial-gradient(900px 220px at 18% 0%, rgba(143, 164, 255, 0.07), transparent 70%),
+    linear-gradient(180deg, rgba(25, 29, 37, 0.94), rgba(13, 15, 20, 0.97));
+  border-top-color: rgba(255, 255, 255, 0.12);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.05),
+    0 -24px 60px rgba(0, 0, 0, 0.35);
+}
+
+/* The risk gate renders outside the page shell, so it has no studio behind it: at night it gets
+   two dim pools of its own, enough for its glass card to read as glass on the black. */
+:where(:root[data-theme='dark']) .gate {
+  background:
+    radial-gradient(80vmax 60vmax at 6% 0%, rgba(46, 75, 255, 0.36), transparent 62%),
+    radial-gradient(70vmax 50vmax at 100% 100%, rgba(255, 62, 165, 0.2), transparent 62%),
+    var(--pearl);
+}
+
+/* ---------- glass surfaces ---------- */
+/* the rim catches the key light: bright top and left edges, nearly dark bottom and right */
+:where(:root[data-theme='dark']) .panel,
+:where(:root[data-theme='dark']) .coin-card,
+:where(:root[data-theme='dark']) .steps li,
+:where(:root[data-theme='dark']) .hook-tile,
+:where(:root[data-theme='dark']) .hook-detail,
+:where(:root[data-theme='dark']) .flow-node,
+:where(:root[data-theme='dark']) .coin-stats,
+:where(:root[data-theme='dark']) .gate-card,
+:where(:root[data-theme='dark']) .modal,
+:where(:root[data-theme='dark']) .notice,
+:where(:root[data-theme='dark']) .quantum-reserves > div {
+  border-color: rgba(255, 255, 255, 0.2) rgba(255, 255, 255, 0.08) rgba(255, 255, 255, 0.05)
+    rgba(255, 255, 255, 0.15);
+}
+:where(:root[data-theme='dark']) .quantum-reserves > div {
+  border-left-color: var(--c);
+}
+:where(:root[data-theme='dark']) .coin-card:hover {
+  border-color: rgba(255, 255, 255, 0.28);
+  box-shadow:
+    var(--glass-shadow),
+    0 0 0 1px rgba(143, 164, 255, 0.22),
+    0 0 32px rgba(46, 75, 255, 0.14);
+}
+/* the fee flow's source node is where white light enters: it glows faintly white */
+:where(:root[data-theme='dark']) .flow-node:first-child {
+  border-color: rgba(255, 255, 255, 0.24);
+  box-shadow:
+    var(--smoke-shadow),
+    0 0 26px rgba(255, 255, 255, 0.07);
+}
+:where(:root[data-theme='dark']) .toast {
+  border-color: rgba(255, 255, 255, 0.14);
+  box-shadow:
+    inset 1px 1px 0 rgba(255, 255, 255, 0.12),
+    0 18px 50px rgba(0, 0, 0, 0.7);
+}
+:where(:root[data-theme='dark']) .notice-warn {
+  background: linear-gradient(140deg, rgba(255, 194, 26, 0.16), rgba(255, 194, 26, 0.06));
+  border-color: rgba(255, 194, 26, 0.42);
+  color: #ffe6a3;
+}
+:where(:root[data-theme='dark']) .notice-error {
+  background: linear-gradient(140deg, rgba(255, 62, 165, 0.17), rgba(255, 62, 165, 0.06));
+  border-color: rgba(255, 62, 165, 0.48);
+}
+:where(:root[data-theme='dark']) .instrument {
+  border-color: rgba(255, 255, 255, 0.1);
+}
+:where(:root[data-theme='dark']) .holo {
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.07),
+    0 24px 60px rgba(0, 0, 0, 0.6),
+    0 0 50px rgba(46, 75, 255, 0.1);
+}
+
+/* ---------- controls ---------- */
+:where(:root[data-theme='dark']) .btn {
+  background:
+    radial-gradient(120% 90% at 30% 0%, rgba(255, 255, 255, 0.16), transparent 60%),
+    linear-gradient(180deg, rgba(52, 59, 73, 0.74), rgba(20, 23, 30, 0.62));
+  border-color: rgba(255, 255, 255, 0.16);
+  box-shadow:
+    inset 1px 1px 0 rgba(255, 255, 255, 0.22),
+    inset -1px -1px 0 rgba(0, 0, 0, 0.5),
+    0 2px 6px rgba(0, 0, 0, 0.35),
+    0 10px 22px rgba(0, 0, 0, 0.3);
+}
+:where(:root[data-theme='dark']) .btn:hover:not(:disabled) {
+  border-color: rgba(255, 255, 255, 0.34);
+}
+/* primary stays cobalt-anodised, with the glow it throws on a dark set */
+:where(:root[data-theme='dark']) .btn-primary {
+  background:
+    radial-gradient(120% 90% at 30% 0%, rgba(255, 255, 255, 0.2), transparent 55%),
+    linear-gradient(
+      180deg,
+      rgba(70, 98, 255, 0.97) 0%,
+      rgba(46, 75, 255, 0.96) 52%,
+      rgba(27, 51, 224, 0.98) 100%
+    );
+  border-color: rgba(160, 178, 255, 0.7);
+  box-shadow:
+    inset 1px 1px 0 rgba(255, 255, 255, 0.5),
+    inset -1px -1px 0 rgba(10, 20, 120, 0.4),
+    0 8px 26px rgba(46, 75, 255, 0.45);
+}
+:where(:root[data-theme='dark']) .btn-primary:hover:not(:disabled) {
+  border-color: rgba(190, 204, 255, 0.9);
+  box-shadow:
+    inset 1px 1px 0 rgba(255, 255, 255, 0.55),
+    inset -1px -1px 0 rgba(10, 20, 120, 0.4),
+    0 10px 32px rgba(46, 75, 255, 0.6);
+}
+:where(:root[data-theme='dark']) .btn-buy {
+  background:
+    radial-gradient(120% 90% at 30% 0%, rgba(255, 255, 255, 0.45), transparent 55%),
+    linear-gradient(
+      180deg,
+      rgba(76, 230, 156, 0.96),
+      rgba(18, 194, 110, 0.95) 55%,
+      rgba(10, 154, 85, 0.97)
+    );
+  border-color: rgba(150, 245, 200, 0.7);
+  box-shadow:
+    inset 1px 1px 0 rgba(255, 255, 255, 0.4),
+    0 8px 24px rgba(18, 194, 110, 0.3);
+}
+:where(:root[data-theme='dark']) .btn-sell {
+  background:
+    radial-gradient(120% 90% at 30% 0%, rgba(255, 255, 255, 0.45), transparent 55%),
+    linear-gradient(
+      180deg,
+      rgba(255, 130, 196, 0.96),
+      rgba(255, 62, 165, 0.95) 55%,
+      rgba(216, 31, 120, 0.97)
+    );
+  border-color: rgba(255, 180, 220, 0.7);
+  box-shadow:
+    inset 1px 1px 0 rgba(255, 255, 255, 0.4),
+    0 8px 24px rgba(255, 62, 165, 0.3);
+}
+:where(:root[data-theme='dark']) .btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+:where(:root[data-theme='dark']) .btn-ghost:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+:where(:root[data-theme='dark']) .chip {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.11), rgba(255, 255, 255, 0.04));
+  border-color: rgba(255, 255, 255, 0.14);
+  box-shadow:
+    inset 1px 1px 0 rgba(255, 255, 255, 0.14),
+    0 2px 6px rgba(0, 0, 0, 0.3);
+}
+:where(:root[data-theme='dark']) .chip.chip-quantum {
+  background: linear-gradient(180deg, #2c323d, #11141a);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+:where(:root[data-theme='dark']) .chip-grad {
+  border-color: rgba(24, 212, 122, 0.4);
+}
+:where(:root[data-theme='dark']) .chip-dot,
+:where(:root[data-theme='dark']) .alloc-legend i {
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.16);
+}
+
+:where(:root[data-theme='dark']) .segmented {
+  background: rgba(0, 0, 0, 0.34);
+  border-color: rgba(255, 255, 255, 0.1);
+  box-shadow:
+    inset 0 1px 3px rgba(0, 0, 0, 0.5),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.05);
+}
+:where(:root[data-theme='dark']) .segmented button[aria-pressed='true'] {
+  background:
+    radial-gradient(120% 90% at 30% 0%, rgba(255, 255, 255, 0.2), transparent 70%),
+    rgba(255, 255, 255, 0.12);
+  box-shadow:
+    inset 1px 1px 0 rgba(255, 255, 255, 0.24),
+    0 2px 8px rgba(0, 0, 0, 0.4);
+}
+:where(:root[data-theme='dark']) .launch-type .segmented button:first-child {
+  box-shadow: inset 0 0 0 2px #5b73ff;
+}
+:where(:root[data-theme='dark']) .launch-type .segmented button:first-child[aria-pressed='true'] {
+  box-shadow:
+    inset 0 0 0 2px #5b73ff,
+    0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+:where(:root[data-theme='dark']) .input,
+:where(:root[data-theme='dark']) .textarea,
+:where(:root[data-theme='dark']) .select,
+:where(:root[data-theme='dark']) .topbar-search input {
+  background: rgba(0, 0, 0, 0.32);
+  border-color: rgba(255, 255, 255, 0.14);
+  box-shadow:
+    inset 0 1px 3px rgba(0, 0, 0, 0.5),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.05);
+}
+:where(:root[data-theme='dark']) .input:focus,
+:where(:root[data-theme='dark']) .textarea:focus,
+:where(:root[data-theme='dark']) .select:focus,
+:where(:root[data-theme='dark']) .topbar-search input:focus {
+  border-color: var(--focus);
+  box-shadow:
+    inset 0 1px 3px rgba(0, 0, 0, 0.5),
+    0 0 0 3px rgba(143, 164, 255, 0.22);
+}
+:where(:root[data-theme='dark']) .input[aria-invalid='true'] {
+  border-color: var(--sell);
+}
+:where(:root[data-theme='dark']) .select option {
+  background: #12151b;
+  color: var(--ink);
+}
+
+/* range: the empty track is a dark groove; the focus gap is page-black instead of white */
+:where(:root[data-theme='dark']) .range {
+  background: linear-gradient(
+    90deg,
+    var(--c, var(--blue)) var(--p, 0%),
+    rgba(255, 255, 255, 0.12) var(--p, 0%)
+  );
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+:where(:root[data-theme='dark']) .range:focus-visible::-webkit-slider-thumb {
+  box-shadow:
+    0 0 0 2px var(--pearl),
+    0 0 0 4px var(--focus);
+}
+:where(:root[data-theme='dark']) .range:focus-visible::-moz-range-thumb {
+  box-shadow:
+    0 0 0 2px var(--pearl),
+    0 0 0 4px var(--focus);
+}
+:where(:root[data-theme='dark']) .curve-track,
+:where(:root[data-theme='dark']) .alloc-bar {
+  background: rgba(255, 255, 255, 0.09);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.55);
+}
+/* the letter on a chrome avatar keeps dark ink: the chrome itself is light */
+:where(:root[data-theme='dark']) .avatar {
+  color: #15181d;
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.12),
+    0 2px 8px rgba(0, 0, 0, 0.5);
+}
+:where(:root[data-theme='dark']) .art-drop {
+  background:
+    linear-gradient(#12151b, #12151b) padding-box,
+    var(--chrome);
+}
+:where(:root[data-theme='dark']) .art-drop:hover {
+  border-color: var(--focus);
+  color: var(--focus);
+}
+:where(:root[data-theme='dark']) .flow-arrow {
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.45);
+}
+
+/* ---------- tables ---------- */
+:where(:root[data-theme='dark']) .table td {
+  border-bottom-color: rgba(255, 255, 255, 0.07);
+}
+:where(:root[data-theme='dark']) .row-link:hover td {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+/* ---------- modal, wallet dialog ---------- */
+:where(:root[data-theme='dark']) .modal-backdrop {
+  background: rgba(3, 4, 7, 0.62);
+}
+:where(:root[data-theme='dark']) .modal {
+  background:
+    radial-gradient(120% 70% at 0% 0%, rgba(255, 255, 255, 0.08), transparent 52%),
+    linear-gradient(140deg, rgba(28, 32, 41, 0.9) 0%, rgba(14, 16, 22, 0.88) 100%);
+  box-shadow:
+    inset 1px 1px 0 rgba(255, 255, 255, 0.2),
+    inset -1px -1px 0 rgba(0, 0, 0, 0.5),
+    0 30px 80px rgba(0, 0, 0, 0.65);
+}
+:where(:root[data-theme='dark']) .wallet-option {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.12);
+  box-shadow: inset 1px 1px 0 rgba(255, 255, 255, 0.1);
+}
+:where(:root[data-theme='dark']) .wallet-option:hover {
+  border-color: var(--focus);
+}
+
+/* ---------- loading ---------- */
+:where(:root[data-theme='dark']) .spinner {
+  border-color: rgba(255, 255, 255, 0.16);
+  border-top-color: var(--blue-tint);
+}
+:where(:root[data-theme='dark']) .skeleton {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.04) 0%,
+    rgba(255, 255, 255, 0.1) 50%,
+    rgba(255, 255, 255, 0.04) 100%
+  );
+  background-size: 200% 100%;
+}
+
+/* ---------- theme switch ---------- */
+/* the moon's lens: a cool specular and the cobalt night light focused in the lower rim */
+:where(:root[data-theme='dark']) .theme-toggle {
+  color: #e8edf5;
+}
+:where(:root[data-theme='dark']) .theme-toggle::before {
+  background:
+    radial-gradient(52% 30% at 36% 14%, rgba(255, 255, 255, 0.55), transparent 74%),
+    radial-gradient(30% 20% at 72% 86%, rgba(255, 255, 255, 0.18), transparent 80%);
+}
+:where(:root[data-theme='dark']) .theme-icon {
+  filter: drop-shadow(0 0 5px rgba(200, 214, 255, 0.55));
+}
+:where(:root[data-theme='dark']) .btn.theme-toggle {
+  background: radial-gradient(
+    circle at 50% 50%,
+    rgba(20, 24, 32, 0.25) 0 50%,
+    rgba(48, 56, 72, 0.55) 76%,
+    rgba(120, 134, 160, 0.42) 100%
+  );
+  border-color: rgba(255, 255, 255, 0.24);
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.4),
+    inset 0 -3px 6px rgba(0, 0, 0, 0.45),
+    inset 0 0 0 3px rgba(255, 255, 255, 0.04),
+    0 2px 6px rgba(0, 0, 0, 0.4),
+    0 0 18px rgba(111, 134, 255, 0.18);
+}
+:where(:root[data-theme='dark']) .theme-lens {
+  background:
+    radial-gradient(50% 34% at 50% 100%, rgba(111, 134, 255, 0.95), transparent 80%),
+    radial-gradient(30% 22% at 50% 0%, rgba(143, 164, 255, 0.45), transparent 80%);
+}
+:where(:root[data-theme='dark']) .theme-icon-metal-hi {
+  stop-color: #ffffff;
+}
+:where(:root[data-theme='dark']) .theme-icon-metal-mid {
+  stop-color: #aab4c2;
+}
+:where(:root[data-theme='dark']) .theme-icon-metal-lo {
+  stop-color: #eef2f7;
+}

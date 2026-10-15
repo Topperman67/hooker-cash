@@ -36,6 +36,20 @@
   height: 100%;
   display: block;
 }
+/* the live scene (three/FlywheelScene.jsx): over the still, under the labels; it fades in once its
+   first frame is drawn, so there is never an empty card */
+.fw-live {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 0.9s ease;
+}
+.fw-art[data-live] .fw-live {
+  opacity: 1;
+}
+.fw-live canvas {
+  display: block;
+}
 
 /* copy */
 .fw-copy {
@@ -90,6 +104,7 @@
   gap: 0.875cqw;
 }
 .fw-row {
+  position: relative;
   display: grid;
   grid-template-columns: 7cqw 1fr;
   gap: 1.125cqw;
@@ -163,6 +178,67 @@
   font-style: normal;
   color: #8fa4ff;
 }
+
+/* lit in time with the live loop (three/flywheelHud.js) */
+.fw-loop > * {
+  transition:
+    background-color 0.35s ease,
+    box-shadow 0.35s ease,
+    color 0.35s ease,
+    text-shadow 0.35s ease;
+}
+.fw-loop span.is-on {
+  color: #fff;
+  background-color: rgba(255, 255, 255, 0.2);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.55),
+    0 0 0 1px var(--fw-step, rgba(220, 226, 255, 0.55)),
+    0 0 18px var(--fw-step-glow, rgba(143, 164, 255, 0.55));
+}
+.fw-loop i.is-on {
+  color: #fff;
+  text-shadow: 0 0 10px rgba(143, 164, 255, 0.95);
+}
+.fw-loop .fw-step-holders {
+  --fw-step: rgba(92, 240, 166, 0.8);
+  --fw-step-glow: rgba(18, 194, 110, 0.6);
+}
+.fw-loop .fw-step-burn {
+  --fw-step: rgba(255, 140, 200, 0.8);
+  --fw-step-glow: rgba(255, 62, 165, 0.6);
+}
+.fw-loop .fw-step-turn {
+  display: inline-block;
+}
+.fw-loop .fw-step-turn.is-on {
+  animation: fw-turn 1.3s cubic-bezier(0.5, 0, 0.3, 1) both;
+}
+@keyframes fw-turn {
+  to {
+    rotate: 360deg;
+  }
+}
+
+/* the 60% / 40% rows pulse as their stream lands */
+.fw-row-glow {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  opacity: 0;
+}
+.fw-holders .fw-row-glow {
+  box-shadow:
+    inset 0 0 0 1px rgba(92, 240, 166, 0.75),
+    inset 0 0 30px rgba(18, 194, 110, 0.28),
+    0 0 36px rgba(18, 194, 110, 0.45);
+}
+.fw-burn .fw-row-glow {
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 140, 200, 0.75),
+    inset 0 0 30px rgba(255, 62, 165, 0.28),
+    0 0 36px rgba(255, 62, 165, 0.45);
+}
 .fw-url {
   position: absolute;
   z-index: 1;
@@ -193,6 +269,19 @@
   transform: translateX(-50%);
   text-align: center;
   white-space: nowrap;
+}
+.fw-fee-glow {
+  position: absolute;
+  z-index: -1;
+  left: 50%;
+  top: 34%;
+  width: 16cqw;
+  height: 9cqw;
+  translate: -50% -50%;
+  border-radius: 50%;
+  background: radial-gradient(closest-side, rgba(143, 164, 255, 0.55), rgba(46, 75, 255, 0));
+  opacity: 0;
+  pointer-events: none;
 }
 .fw-fee b {
   display: block;
@@ -227,6 +316,9 @@
 .fw-chip {
   position: absolute;
   transform: translate(-50%, -50%);
+  /* the box's corner is the chip's visual centre (after the -50% shift), so the live scene's
+     scale pulse grows the chip in place instead of drifting it up and left */
+  transform-origin: 0 0;
   padding: 0.5625cqw 1cqw 0.625cqw;
   border-radius: 999px;
   white-space: nowrap;
@@ -263,8 +355,9 @@
   text-shadow: 0 0 18px rgba(18, 194, 110, 0.9);
 }
 
-/* narrow: copy first, then the chart cropped to x 560–1600, y 90–900 of the design */
-@container fw (max-width: 700px) {
+/* narrow (below about 960px the copy no longer fits beside the chart at readable sizes): copy
+   first, then the chart cropped to x 560–1600, y 90–900 of the design */
+@container fw (max-width: 960px) {
   .fw-stage {
     aspect-ratio: auto;
     display: flex;
@@ -333,16 +426,37 @@
     );
     mask-image: linear-gradient(to bottom, transparent 10%, #000 24%, #000 88%, transparent 100%);
   }
+  /* the live canvas covers only the visible crop (x 35–100%, y 10–100% of the frame), with the
+     plate's fade re-expressed over that box */
+  .fw-live {
+    left: 35%;
+    top: 10%;
+    -webkit-mask-image: linear-gradient(
+      to bottom,
+      transparent 0%,
+      #000 15.6%,
+      #000 86.7%,
+      transparent 100%
+    );
+    mask-image: linear-gradient(
+      to bottom,
+      transparent 0%,
+      #000 15.6%,
+      #000 86.7%,
+      transparent 100%
+    );
+  }
+  /* cqw here is of the full frame (.fw-canvas), so labels grow with the chart on tablets */
   .fw-fee span {
-    font-size: 10px;
+    font-size: clamp(10px, 0.95cqw, 14px);
   }
   .fw-chip {
-    font-size: 15px;
-    padding: 6px 10px 7px;
+    font-size: clamp(15px, 1.85cqw, 26px);
+    padding: 0.4em 0.67em 0.47em;
   }
   .fw-chip small {
-    margin-left: 5px;
-    font-size: 10.5px;
+    margin-left: 0.35em;
+    font-size: 0.7em;
   }
   .fw-canvas {
     inset: auto;
@@ -355,5 +469,66 @@
     position: static;
     padding: 0 20px 24px;
     font-size: 12px;
+  }
+}
+
+/* phones: the chips keep a readable minimum size while the crop shrinks, so they would run into
+   the fee line; trim them a little and give the three labels more air */
+@container fw (max-width: 440px) {
+  .fw-art {
+    margin-top: 12px;
+  }
+  .fw-chip {
+    font-size: clamp(12px, 3.1cqw, 15px);
+  }
+  .fw-fee {
+    top: 11.4%;
+  }
+  .fw-chip-burn {
+    left: 46.5%;
+    top: 34.6%;
+  }
+  .fw-chip-holders {
+    top: 35.2%;
+  }
+}
+
+/* stacked but roomy (tablets): the two rows sit side by side above the chart */
+@container fw (min-width: 600px) and (max-width: 960px) {
+  .fw-copy {
+    padding: 40px 40px 0;
+  }
+  .fw-title {
+    font-size: clamp(42px, 6.6cqw, 56px);
+  }
+  .fw-lede {
+    max-width: 36em;
+    font-size: 16px;
+  }
+  .fw-rows {
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .fw-loop {
+    font-size: 12px;
+  }
+  .fw-url {
+    padding: 0 40px 32px;
+  }
+}
+
+/* dark mode: the card stays cobalt; a faint rim and glow keep it from dissolving into the night
+   studio's near-black page */
+:root[data-theme='dark'] .fw-stage {
+  box-shadow:
+    0 0 0 1px rgba(143, 164, 255, 0.22),
+    0 30px 90px rgba(0, 0, 0, 0.55),
+    0 0 120px -10px rgba(46, 75, 255, 0.32);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fw-live,
+  .fw-loop > * {
+    transition: none;
   }
 }

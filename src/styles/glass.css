@@ -349,7 +349,6 @@ body {
 }
 
 /* ---------- hero glass ---------- */
-.refractor-chip,
 .hero-stats {
   background: var(--glass-fill);
   -webkit-backdrop-filter: blur(16px) saturate(1.6);
@@ -362,12 +361,6 @@ body {
   max-width: 100%;
   padding: 14px 20px;
   border-radius: 18px;
-}
-.refractor-source {
-  background: var(--smoke-fill);
-  -webkit-backdrop-filter: blur(16px);
-  backdrop-filter: blur(16px);
-  border: 1px solid rgba(255, 255, 255, 0.14);
 }
 /* QuickLiquid owns the refractive layers; React content stays above them. */
 .lg {

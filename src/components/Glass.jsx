@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { LiquidGlassEngine } from 'quick-liquid/core'
+import { useTheme } from '../lib/theme.js'
 
 // Real liquid-glass lensing (SVG backdrop refraction in Chromium, frosted fallback elsewhere) for
 // the few surfaces that deserve it. React owns the content; QuickLiquid owns only its lens layers.
@@ -49,6 +50,10 @@ const PRESETS = {
   },
 }
 
+// Dark-tint strength per lens at night: the header still floats over graphite instruments, so it
+// keeps the most body.
+const NIGHT_TINT = { bar: 0.66, panel: 0.5, pill: 0.5, lens: 0.16 }
+
 export default function Glass({
   as: Component = 'div',
   children,
@@ -60,26 +65,31 @@ export default function Glass({
 }) {
   const element = useRef(null)
   const engine = useRef(null)
+  const [theme] = useTheme()
   const config = useMemo(() => {
     const preset = PRESETS[variant] || PRESETS.panel
-    const dark = variant === 'smoke'
+    // Smoke is dark glass in both themes; at night every other lens turns to smoked glass too,
+    // with a dimmer white rim so it does not glare against the black studio.
+    const dark = variant === 'smoke' || theme === 'dark'
+    const night = theme === 'dark' && variant !== 'smoke'
     return {
       ...preset,
+      tintOpacity: night ? (NIGHT_TINT[variant] ?? preset.tintOpacity) : preset.tintOpacity,
       appearance: dark ? 'dark' : 'light',
-      tint: dark ? '24, 27, 33' : '255, 255, 255',
+      tint: night ? '14, 17, 23' : dark ? '24, 27, 33' : '255, 255, 255',
       borderRadius: radius ?? (variant === 'pill' ? 999 : variant === 'bar' ? 22 : 20),
-      saturation: 1.6,
+      saturation: night ? 1.5 : 1.6,
       chromaticAberration: 0.02,
       dispersionMode: 'auto',
-      edgeHighlight: dark ? 0.35 : 0.75,
-      specularStrength: dark ? 0.12 : 0.22,
+      edgeHighlight: night ? 0.6 : dark ? 0.35 : 0.75,
+      specularStrength: night ? 0.2 : dark ? 0.12 : 0.22,
       lightAngle: -45,
       elevation: variant === 'pill' ? 0.4 : 0.8,
       dynamicLighting: interactive,
       hoverLighting: interactive,
       refractionMode: 'auto',
     }
-  }, [variant, radius, interactive])
+  }, [variant, radius, interactive, theme])
 
   useEffect(() => {
     const glass = new LiquidGlassEngine(element.current, config)
@@ -92,7 +102,9 @@ export default function Glass({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [Component])
 
-  useEffect(() => {
+  // A layout effect: a theme switch restyles the lens in the same commit, so the view transition
+  // (ThemeToggle) captures the header already in its new glass.
+  useLayoutEffect(() => {
     engine.current?.setConfig(config)
   }, [config])
 

@@ -72,12 +72,6 @@
 .hero {
   padding: 46px 0 8px;
 }
-.hero-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.02fr);
-  gap: 36px;
-  align-items: center;
-}
 .hero-copy {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -86,7 +80,9 @@
 .hero-title {
   display: grid;
   gap: 0.04em;
-  font-size: clamp(2rem, 3.6vw, 3.25rem);
+  /* capped so the widest line ("Quantum Hooks.") fits the 596px column of the full-width
+     container, instead of running into the Q's source pill */
+  font-size: clamp(2rem, 3.6vw, 3.05rem);
   font-stretch: 110%;
   line-height: 0.98;
 }
@@ -125,108 +121,6 @@
   margin: 0;
   font-size: var(--t-lg);
   font-weight: 600;
-}
-
-.refractor {
-  position: relative;
-  margin: 0;
-  width: 100%;
-  aspect-ratio: 600 / 560;
-  container-type: inline-size;
-}
-.refractor-lines {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  overflow: visible;
-}
-.refractor-q {
-  position: absolute;
-  left: 25%;
-  top: 17.86%;
-  width: 50%;
-  perspective: 900px;
-  filter: drop-shadow(0 28px 30px rgba(21, 24, 29, 0.22));
-}
-.refractor-q img {
-  width: 100%;
-  animation: sway 9s ease-in-out infinite;
-  transform-origin: 50% 50%;
-}
-/* moving four-line glint, clipped to the mark's silhouette */
-.refractor-glint {
-  position: absolute;
-  inset: 0;
-  background: var(--lines);
-  background-size: 260% 100%;
-  background-position: var(--lx, 70%) 0;
-  -webkit-mask: url('/brand/mark-mono.svg') center / contain no-repeat;
-  mask: url('/brand/mark-mono.svg') center / contain no-repeat;
-  mix-blend-mode: screen;
-  opacity: 0.75;
-  animation: sway 9s ease-in-out infinite;
-  transition: background-position 0.25s ease-out;
-}
-@keyframes sway {
-  0%,
-  100% {
-    transform: rotateY(-8deg) rotateX(2deg);
-  }
-  50% {
-    transform: rotateY(8deg) rotateX(-2deg);
-  }
-}
-.refractor-source {
-  position: absolute;
-  left: 2%;
-  top: 0;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 14px;
-  border-radius: var(--r-pill);
-  background: var(--graphite);
-  color: var(--on-graphite);
-  font-size: clamp(10px, 2.2cqw, 13px);
-  font-weight: 600;
-  box-shadow: 0 10px 24px rgba(21, 24, 29, 0.25);
-  white-space: nowrap;
-}
-.refractor-source strong {
-  color: #fff;
-}
-.refractor-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 0 10px #fff;
-}
-.refractor-chip {
-  position: absolute;
-  transform: translate(-100%, -50%);
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  border-radius: var(--r-pill);
-  background: rgba(255, 255, 255, 0.92);
-  border: 1px solid var(--mercury-2);
-  box-shadow: 0 6px 18px rgba(21, 24, 29, 0.12);
-  font-size: clamp(10px, 2.2cqw, 13px);
-  font-weight: 650;
-  white-space: nowrap;
-}
-.refractor-chip .num {
-  color: var(--steel);
-}
-.refractor-caption {
-  position: absolute;
-  left: 2%;
-  bottom: 0;
-  font-size: var(--t-xs);
-  color: var(--steel-2);
 }
 
 /* ---------- steps + hooks ---------- */
@@ -1122,7 +1016,6 @@
   }
 }
 @media (max-width: 960px) {
-  .hero-grid,
   .launch-grid,
   .coin-grid-layout,
   .coin-top,
@@ -1213,9 +1106,6 @@
   }
   .section {
     padding-top: 44px;
-  }
-  .refractor-caption {
-    display: none;
   }
 }
 
