@@ -74,10 +74,6 @@ export default function HomePage() {
       </section>
 
       <section className="wrap section">
-        <Flywheel />
-      </section>
-
-      <section className="wrap section">
         <div className="section-head">
           <h2>Trending now</h2>
           <Link to="/market?sort=trending" className="btn btn-ghost">
@@ -105,6 +101,10 @@ export default function HomePage() {
             Coins launched through Quant Pad appear here as soon as their launch confirms.
           </Empty>
         )}
+      </section>
+
+      <section className="wrap section">
+        <Flywheel />
       </section>
 
       {latest.data?.items?.length > 0 && (
