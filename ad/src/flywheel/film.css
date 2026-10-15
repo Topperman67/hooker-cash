@@ -1,0 +1,339 @@
+/* The flywheel film's type, after the home page section (src/styles/flywheel.css). */
+.fw-film {
+  --green: #12c26e;
+  --green-hi: #5cf0a6;
+  --pink: #ff3ea5;
+  --pink-hi: #ff8cc8;
+  --text: #dce2ff;
+  --muted: #c9d2ff;
+  --display: 'Hubot Sans Variable', system-ui, sans-serif;
+  --body: 'Mona Sans Variable', system-ui, sans-serif;
+  --mono: 'Martian Mono Variable', ui-monospace, monospace;
+  --silver: linear-gradient(180deg, #fff 0%, #fff 30%, #c9d2de 50%, #9faaba 56%, #e8ecf2 72%, #fff 100%);
+  color: #fff;
+}
+.fw-film .layer,
+.layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  font-family: var(--body);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* pinned labels: centred on their point in the scene */
+.pin {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  white-space: nowrap;
+}
+
+/* 0–4 s */
+.opening .scrim {
+  position: absolute;
+  left: -200px;
+  right: -200px;
+  top: -140px;
+  bottom: -160px;
+  background: radial-gradient(50% 50% at 50% 55%, rgba(2, 4, 24, 0.78), rgba(2, 4, 24, 0));
+  z-index: -1;
+}
+.opening {
+  position: absolute;
+  z-index: 0;
+  left: 0;
+  right: 0;
+  bottom: 96px;
+  text-align: center;
+  font-family: var(--display);
+  font-weight: 900;
+  font-stretch: 114%;
+  font-size: 92px;
+  line-height: 0.98;
+  letter-spacing: -0.015em;
+  text-shadow: 0 10px 40px rgba(2, 6, 40, 0.7);
+}
+.silver {
+  font-stretch: 125%;
+  background: var(--silver);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow: none;
+  filter: drop-shadow(0 4px 12px rgba(2, 6, 40, 0.6));
+}
+
+/* the fee, pinned over the gate */
+.fee {
+  text-align: center;
+}
+.fee b {
+  display: block;
+  font-family: var(--display);
+  font-weight: 900;
+  font-stretch: 120%;
+  font-size: 168px;
+  line-height: 0.9;
+  background: linear-gradient(180deg, #fff 0%, #fff 34%, #c9d2de 52%, #9faaba 58%, #e8ecf2 74%, #fff 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  filter: drop-shadow(0 8px 24px rgba(2, 6, 40, 0.7));
+}
+.fee span {
+  display: block;
+  margin-top: 12px;
+  font-family: var(--mono);
+  font-weight: 500;
+  font-size: 26px;
+  letter-spacing: 0.02em;
+  color: var(--text);
+  text-shadow: 0 2px 14px rgba(2, 6, 40, 0.9);
+}
+
+/* chart chips */
+.chip {
+  padding: 13px 24px 15px;
+  border-radius: 999px;
+  font-family: var(--body);
+  font-weight: 900;
+  font-stretch: 112%;
+  font-size: 46px;
+  line-height: 1;
+  letter-spacing: -0.01em;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.28), rgba(255, 255, 255, 0.08));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.7),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.12),
+    0 12px 30px rgba(2, 6, 40, 0.45);
+  backdrop-filter: blur(10px);
+}
+.chip small {
+  font-weight: 600;
+  font-stretch: 100%;
+  font-size: 23px;
+  margin-left: 12px;
+  opacity: 0.92;
+}
+.chip.holders {
+  color: #effff6;
+  text-shadow: 0 0 22px rgba(18, 194, 110, 0.9);
+}
+.chip.burn {
+  color: #fff1f8;
+  text-shadow: 0 0 22px rgba(255, 62, 165, 0.9);
+}
+
+/* glass rows: the holders and burn cards, and the end card's two rows */
+.card-slot {
+  position: absolute;
+  bottom: 104px;
+  width: 760px;
+}
+.card-slot.left {
+  left: 110px;
+}
+.card-slot.right {
+  right: 110px;
+}
+.row {
+  display: grid;
+  grid-template-columns: 168px 1fr;
+  gap: 28px;
+  align-items: center;
+  padding: 24px 32px 24px 24px;
+  border-radius: 34px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.14), rgba(255, 255, 255, 0.05));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.06),
+    0 20px 50px rgba(2, 6, 40, 0.4);
+  backdrop-filter: blur(16px);
+}
+.pct {
+  font-family: var(--body);
+  font-weight: 900;
+  font-stretch: 112%;
+  font-size: 58px;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  text-align: center;
+  padding: 20px 0;
+  border-radius: 24px;
+}
+.row.holders .pct {
+  color: #effff6;
+  background: linear-gradient(180deg, var(--green-hi), var(--green));
+  box-shadow:
+    0 0 38px rgba(18, 194, 110, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+.row.burn .pct {
+  color: #fff1f8;
+  background: linear-gradient(180deg, var(--pink-hi), var(--pink));
+  box-shadow:
+    0 0 38px rgba(255, 62, 165, 0.55),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6);
+}
+.row.fee .pct {
+  color: #fff;
+  background: linear-gradient(180deg, #8fa4ff, #2e4bff);
+}
+.row h3 {
+  margin: 0;
+  font-family: var(--display);
+  font-weight: 800;
+  font-stretch: 108%;
+  font-size: 36px;
+  color: #fff;
+}
+.row p {
+  margin: 8px 0 0;
+  font-size: 23px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+/* the snapshot tag */
+.tag {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 20px 11px 16px;
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-weight: 500;
+  font-size: 24px;
+  color: #fff;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.24), rgba(255, 255, 255, 0.08));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.6),
+    0 10px 26px rgba(2, 6, 40, 0.45);
+  backdrop-filter: blur(10px);
+}
+.tag i {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow:
+    0 0 10px #fff,
+    0 0 22px var(--green);
+}
+
+/* 20–24 s: the loop */
+.loop-row {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 96px;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  font-family: var(--mono);
+  font-weight: 500;
+  font-size: 30px;
+  color: var(--text);
+}
+.loop-step {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.loop-step > span {
+  display: inline-block;
+  padding: 12px 22px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.1);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    0 10px 26px rgba(2, 6, 40, 0.4);
+  backdrop-filter: blur(10px);
+}
+.loop-row i {
+  font-style: normal;
+  color: #8fa4ff;
+}
+.loop-row .loop-turn {
+  display: inline-block;
+  font-size: 40px;
+  color: var(--pink-hi);
+  text-shadow: 0 0 18px rgba(255, 62, 165, 0.8);
+}
+
+/* 25–30 s: the end card, laid out like the home page section */
+.end {
+  position: absolute;
+  left: 110px;
+  top: 128px;
+  width: 660px;
+}
+.end .lockup {
+  display: block;
+  height: 40px;
+  filter: drop-shadow(0 4px 12px rgba(2, 6, 40, 0.5));
+}
+.end h1 {
+  margin: 40px 0 0;
+  font-family: var(--display);
+  font-weight: 900;
+  font-stretch: 114%;
+  font-size: 66px;
+  line-height: 0.98;
+  letter-spacing: -0.015em;
+  white-space: nowrap;
+  text-shadow: 0 8px 30px rgba(2, 6, 40, 0.6);
+}
+.end h1 b {
+  font-stretch: 125%;
+  background: linear-gradient(110deg, transparent 40%, rgba(255, 255, 255, 0.95) 50%, transparent 60%), var(--silver);
+  background-size: 260% 100%, 100% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow: none;
+  filter: drop-shadow(0 3px 10px rgba(2, 6, 40, 0.5));
+}
+.end .rows {
+  margin-top: 44px;
+  display: grid;
+  gap: 18px;
+}
+.end .row {
+  grid-template-columns: 136px 1fr;
+  gap: 22px;
+  padding: 18px 26px 18px 18px;
+  border-radius: 28px;
+}
+.end .pct {
+  font-size: 46px;
+  padding: 16px 0;
+  border-radius: 20px;
+}
+.end .row h3 {
+  font-size: 30px;
+}
+.end .row p {
+  font-size: 19px;
+}
+.url {
+  position: absolute;
+  left: 110px;
+  bottom: 76px;
+  font-family: var(--mono);
+  font-weight: 500;
+  font-size: 26px;
+  letter-spacing: 0.02em;
+  color: #c9d3ff;
+}
+.url i {
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  margin-right: 18px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 14px var(--green);
+  transform: translateY(-2px);
+}

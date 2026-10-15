@@ -8,7 +8,10 @@
     "logo": "node scripts/extract-logo.mjs",
     "studio": "remotion studio src/index.js --port 3000",
     "review": "node scripts/review.mjs",
-    "render": "npm run audio && node scripts/render.mjs"
+    "render": "npm run audio && node scripts/render.mjs",
+    "flywheel:audio": "node scripts/flywheel-audio.mjs",
+    "flywheel:stills": "node scripts/flywheel-stills.mjs",
+    "flywheel": "npm run flywheel:audio && node scripts/render-flywheel.mjs"
   },
   "dependencies": {
     "@fontsource-variable/hubot-sans": "5.3.0",
