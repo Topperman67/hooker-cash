@@ -263,17 +263,12 @@ async function graduate(mm: PublicKey, buyer: Keypair) {
   await curveBuy(buyer, 50, mm, { partial: true })
   const pool = await dbcPoolState(mm)
   assert.ok(pool.migrationProgress > m.PROGRESS.PRE, 'curve complete')
-  const config = await dbcConfigState()
-  const migration = await dbcClient().migration.migrateToDammV2({
+  const migration = await m.dbcMigrationInstructions({
+    connection,
     payer: buyer.publicKey,
-    pool: m.dbcPoolPda(dbcConfig, mm),
-    dammConfig: m.DAMM_MIGRATION_CONFIGS[config.migrationFeeOption],
+    dbcPool: m.dbcPoolPda(dbcConfig, mm),
   })
-  return send(
-    migration.transaction.instructions,
-    [buyer, migration.firstPositionNftKeypair, migration.secondPositionNftKeypair],
-    { cu: 1_400_000 },
-  )
+  return send(migration.instructions, [buyer, ...migration.signers], { cu: 1_400_000 })
 }
 async function dammState(mm = mint) {
   const config = await dbcConfigState()
@@ -1179,17 +1174,13 @@ describe('quantum_hooks on a local validator with mainnet Meteora DBC and DAMM v
     )
     assert.equal(event(harvest, 'Harvested').legs & q.HARVEST.SURPLUS, q.HARVEST.SURPLUS)
 
-    const config = await dbcConfigState()
-    const migration = await dbcClient().migration.migrateToDammV2({
+    // What the keeper sends (server/keeper.mjs migrateGraduates).
+    const migration = await q.dbcMigrationInstructions({
+      connection,
       payer: keeper.publicKey,
-      pool: m.dbcPoolPda(dbcConfig, mint),
-      dammConfig: m.DAMM_MIGRATION_CONFIGS[config.migrationFeeOption],
+      dbcPool: m.dbcPoolPda(dbcConfig, mint),
     })
-    const migrated = await send(
-      migration.transaction.instructions,
-      [keeper, migration.firstPositionNftKeypair, migration.secondPositionNftKeypair],
-      { cu: 1_400_000 },
-    )
+    const migrated = await send(migration.instructions, [keeper, ...migration.signers], { cu: 1_400_000 })
     console.log(`    migration ${migrated.size} B, ${migrated.cu} CU`)
     pool = await dbcPoolState()
     assert.equal(pool.migrationProgress, m.PROGRESS.MIGRATED)

@@ -1,19 +1,17 @@
-// Indexes Quant Pad coins (and any pump.fun coin a visitor opens) from Solana transactions.
+// Indexes Quant Pad coins (and any Meteora DBC coin a visitor opens) from Solana transactions.
 // State lives in the shared store. Serverless instances cooperate through leases (one pass at a
 // time, one sync per coin at a time) and short write locks around every read-modify-write.
 import { createHash, randomBytes } from 'node:crypto'
 import { PublicKey } from '@solana/web3.js'
 import {
-  extractEvents,
-  normalizeCreate,
+  createFrom,
   tradesFrom,
   fetchTransactions,
   pendingSignatures,
   firstSignature,
+  findDbcPool,
   readMarket,
   readTokenIdentity,
-  poolFor,
-  curveFor,
   isSolQuote,
 } from './solana.mjs'
 import {
@@ -25,6 +23,14 @@ import {
   marketCap,
 } from './market-math.mjs'
 import { curveProgress, isAddress, isSignature } from '../shared/network.mjs'
+
+// Quant Pad's DBC launch configs (QUANTPAD_DBC_CONFIG, comma-separated): a coin under one of them
+// is found by its pool address without a program scan.
+const envLaunchConfigs = () =>
+  String(process.env.QUANTPAD_DBC_CONFIG || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(isAddress)
 
 const MAX_TRADES = 4000
 const TRADE_CHUNK = 500 // trades per stored chunk (see the trade storage section)
@@ -49,7 +55,7 @@ const DAY = 86400
 const DAY_MS = DAY * 1000
 const INITIAL_SIGNATURES = 200 // a tracked coin's first read covers its newest signatures
 const SCAN_PAGES = 3 // signature pages per address per pass while paging back to a cursor
-const CREATE_PAGES = 5 // signature pages searched for a coin's create transaction
+const CREATE_PAGES = 5 // signature pages searched for a coin's create transaction (its DBC pool's first)
 // A pass starts no new work after this long; serverless functions get 60 s in total.
 const PASS_MS = Number(process.env.QUANTPAD_SYNC_MS) || (process.env.VERCEL ? 25_000 : 40_000)
 const LEASE_SLACK_MS = 45_000 // leases outlive the request still in flight at a deadline
@@ -112,6 +118,7 @@ const needsIdentity = (r) =>
  * registration, or a tracked Quantum coin); a failed call is retried by later syncs, so it must be
  * idempotent. `hidden` (default QUANTPAD_HIDDEN_MINTS) keeps hidden mints out of the native cap.
  * `maxNative`, `staleVolume` (SOL) and `launchesPerWallet` override the native-cap settings.
+ * `launchConfigs` (default QUANTPAD_DBC_CONFIG) are Quant Pad's DBC configs.
  */
 export function createIndexer({
   connection,
@@ -123,6 +130,7 @@ export function createIndexer({
   maxNative = MAX_NATIVE,
   staleVolume = STALE_VOLUME_SOL,
   launchesPerWallet = LAUNCHES_PER_WALLET,
+  launchConfigs = envLaunchConfigs(),
 }) {
   const keys = {
     list: 'coins:list',
@@ -244,9 +252,8 @@ export function createIndexer({
   const changes = (record, patch) =>
     Object.fromEntries(Object.entries(patch).filter(([field, value]) => record[field] !== value))
 
-  // Repairs a record's identity: re-read while it is a placeholder (legacy SPL Token coins were
-  // stored as 'Unknown $???' before identity reads fell back to Metaplex), and the zero key that
-  // legacy curves decoded as their creator. Returns the fields to change.
+  // Repairs a record's identity: re-read while it is a placeholder (its read failed, or the create
+  // instruction could not be decoded). Returns the fields to change.
   async function healIdentity(record) {
     const patch = record.creator === SYSTEM_PROGRAM ? { creator: null } : {}
     if (needsIdentity(record)) Object.assign(patch, await identityPatch(record.mint))
@@ -608,41 +615,38 @@ export function createIndexer({
   // coins are read from their first transaction; tracked coins from their newest signatures.
   function coveredFrom(record) {
     const from = (field) => record.historyFrom?.[field] ?? (record.external ? null : 0)
-    const starts = [from('cursor'), ...(record.complete ? [from('poolCursor')] : [])]
+    const starts = [from('cursor'), ...(record.migrated ? [from('poolCursor')] : [])]
     return starts.includes(null) ? null : Math.max(...starts)
   }
 
-  // Price, reserves, progress, market cap and 24h stats from the indexed trades, overridden by a
+  // Price, curve fill, progress, market cap and 24h stats from the indexed trades, overridden by a
   // live on-chain read when there is one (the backlog may still be catching up).
   function derive(record, trades, live) {
     const out = {}
-    const curveTrade = trades.find((t) => t.price > 0 && t.venue === 'curve')
+    const curveTrade = trades.find((t) => t.venue === 'curve' && t.quoteReserve)
     if (curveTrade)
       Object.assign(out, {
-        virtualSolReserves: curveTrade.virtualSolReserves,
-        virtualTokenReserves: curveTrade.virtualTokenReserves,
-        realTokenReserves: curveTrade.realTokenReserves,
-        progress: curveProgress(curveTrade.realTokenReserves),
+        quoteReserve: curveTrade.quoteReserve,
+        migrationThreshold: curveTrade.migrationThreshold,
+        progress: curveProgress(curveTrade.quoteReserve, curveTrade.migrationThreshold),
       })
     let price = trades.find((t) => t.price > 0)?.price ?? record.price ?? null
     if (live?.curve) {
       Object.assign(out, {
-        virtualSolReserves: live.curve.virtualSolReserves,
-        virtualTokenReserves: live.curve.virtualTokenReserves,
-        realTokenReserves: live.curve.realTokenReserves,
+        quoteReserve: live.curve.quoteReserve,
+        migrationThreshold: live.curve.migrationThreshold,
         progress: live.curve.progress,
       })
-      if (!live.curve.complete && live.curve.price) price = live.curve.price
+      // A full curve keeps its last price until the DAMM v2 pool opens.
+      if (live.curve.price && !live.curve.migrated) price = live.curve.price
     }
-    if (record.complete && live?.pool?.price) price = live.pool.price
-    // A graduate with no PumpSwap pool trades elsewhere (legacy coins went to Raydium): its last
-    // curve trade is not its price.
-    if (record.complete && record.poolMissing) price = null
+    if (record.migrated && live?.pool?.price) price = live.pool.price
     if (record.complete) out.progress = 100
     const supply = capSupply(record)
     const nowSecs = now() / 1000
     const day = stats(trades, nowSecs, {
       supply,
+      decimals: record.decimals ?? undefined,
       coveredFrom: coveredFrom(record),
       behind: !!record.behind,
       day: record.day,
@@ -654,7 +658,7 @@ export function createIndexer({
       // whether a launch is stale (QP-SEC-9).
       volume7d: Math.max(weekVolume(trades, nowSecs), day.volume24h || 0),
       price,
-      marketCap: marketCap(price, supply),
+      marketCap: marketCap(price, supply, record.decimals ?? undefined),
     }
   }
 
@@ -662,12 +666,10 @@ export function createIndexer({
   const notYet = (message = 'The launch is not visible on Solana yet. Try again in a moment.') =>
     fail(409, message, 'not_indexed_yet')
   const createIn = (found, mint) =>
-    extractEvents(found.tx).find(
-      (e) => e.name === 'CreateEvent' && (!mint || e.event.mint.toBase58() === mint),
-    )
+    createFrom(found.tx, { signature: found.signature, mint: mint || undefined })
 
-  // C2. Registers a native Quant Pad launch from its pump.fun create transaction. The signature is
-  // optional when the mint is given (the create is then the bonding curve's first transaction). A
+  // C2. Registers a native Quant Pad launch from its Meteora DBC create transaction. The signature
+  // is optional when the mint is given (the create is then its DBC pool's first transaction). A
   // coin is native only when it is a verified Quantum coin or its metadata URI was issued by this
   // server; otherwise 409 not_indexed_yet (retry later) or 400 not_quantpad (track it instead).
   async function registerLaunch(signature, { mint } = {}) {
@@ -687,7 +689,9 @@ export function createIndexer({
       create = found && createIn(found, mint)
     }
     if (!create && mint) {
-      const first = await rpc(firstSignature(connection, curveFor(mint), { pages: CREATE_PAGES }))
+      const dbcPool = await rpc(findDbcPool(connection, mint, launchConfigs))
+      if (!dbcPool) throw notYet()
+      const first = await rpc(firstSignature(connection, dbcPool, { pages: CREATE_PAGES }))
       if (first.tooDeep)
         throw fail(400, "Could not find this coin's launch transaction.", 'not_quantpad')
       if (!first.signature) throw notYet()
@@ -695,14 +699,17 @@ export function createIndexer({
       if (!entry?.tx) throw notYet()
       found = entry
       create = createIn(found, mint)
-      if (!create) throw fail(400, 'This coin was not created on pump.fun.', 'not_quantpad')
+      if (!create) throw fail(400, 'This coin was not created on Meteora.', 'not_quantpad')
     }
     if (!create) {
       if (failed) throw fail(400, 'That transaction failed on-chain.', 'failed_transaction')
       if (!found) throw notYet()
-      throw fail(400, 'That transaction did not create a pump.fun coin.', 'not_create')
+      throw fail(400, 'That transaction did not create a Meteora coin.', 'not_create')
     }
-    const base = normalizeCreate(create.event, { signature: found.signature, slot: found.tx.slot })
+    const { identityPending, ...base } = {
+      ...create,
+      identityPending: !create.name && !create.symbol && !create.uri,
+    }
     if (!isSolQuote(base.quoteMint))
       throw fail(400, 'Quant Pad tracks SOL-quoted coins only.', 'not_sol_quote')
 
@@ -750,6 +757,7 @@ export function createIndexer({
     const initial = tradesFrom(found.tx, {
       signature: found.signature,
       mint: base.mint,
+      dbcPool: base.dbcPool,
       pool: null,
     }).filter((t) => !MARKERS.has(t.side))
     let created = false
@@ -759,7 +767,7 @@ export function createIndexer({
       const next = {
         ...current,
         ...base,
-        identityPending: false,
+        identityPending,
         quantum: q.quantum,
         launcher: q.launcher || base.launcher,
         external: false,
@@ -768,6 +776,7 @@ export function createIndexer({
         cursor: current?.cursor || null,
         poolCursor: current?.poolCursor || null,
         complete: current?.complete || false,
+        migrated: current?.migrated || false,
         pool: current?.pool || null,
         supply: current?.supply || null,
         behind: true, // the history after the create is read by the sync below
@@ -790,8 +799,8 @@ export function createIndexer({
     return record
   }
 
-  // Tracks any SOL-quoted pump.fun coin a visitor opens: external unless it is a verified Quantum
-  // coin. Responds with the live on-chain price (the pool's once the curve has completed).
+  // Tracks any SOL-quoted Meteora DBC coin a visitor opens: external unless it is a verified
+  // Quantum coin. Responds with the live on-chain price (the DAMM v2 pool's once migrated).
   async function track(mint) {
     if (!isAddress(mint)) throw fail(400, 'Enter a valid Solana mint address.', 'invalid_mint')
     const existing = await store.get(keys.coin(mint))
@@ -809,9 +818,9 @@ export function createIndexer({
       if (!listed || !record.syncedAt) syncCoin(mint).catch(() => {})
       return record
     }
-    const market = await rpc(readMarket(connection, mint))
+    const market = await rpc(readMarket(connection, mint, { launchConfigs }))
     const curve = market.curve
-    if (!curve) throw fail(404, 'That mint is not a pump.fun coin.', 'not_pump')
+    if (!curve) throw fail(404, 'That mint is not a Meteora coin.', 'not_meteora')
     if (!isSolQuote(curve.quoteMint))
       throw fail(400, 'Quant Pad tracks SOL-quoted coins only.', 'not_sol_quote')
     // A failed identity read is not "no metadata": the record says so and syncs read it again.
@@ -826,10 +835,12 @@ export function createIndexer({
       uri: '',
       ...identity,
       creator: curve.creator,
-      bondingCurve: curveFor(mint),
+      dbcPool: curve.dbcPool,
+      dbcConfig: curve.dbcConfig,
+      decimals: curve.decimals,
       quantum: q.quantum,
       external: !native,
-      source: native ? 'quantpad' : 'pump.fun',
+      source: native ? 'quantpad' : 'meteora',
       // Without its uri yet, the launch is announced by the sync that reads it.
       ...(native
         ? {
@@ -838,25 +849,23 @@ export function createIndexer({
             ...notice(identity.identityPending ? 0 : now()),
           }
         : {}),
-      mayhem: curve.mayhem,
       createdAt: native ? q.createdAt || null : null,
       complete: curve.complete,
-      poolMissing: market.poolMissing,
-      pool: curve.complete && !market.poolMissing ? poolFor(mint) : null,
+      migrated: !!market.pool,
+      pool: market.pool?.address || null,
       cursor: null,
       poolCursor: null,
       supply: market.supply,
       supplyAt: market.supply ? now() : null,
-      price: (curve.complete ? market.pool?.price : curve.price) || null,
-      virtualSolReserves: curve.virtualSolReserves,
-      virtualTokenReserves: curve.virtualTokenReserves,
-      realTokenReserves: curve.realTokenReserves,
+      price: (market.pool ? market.pool.price : curve.price) || null,
+      quoteReserve: curve.quoteReserve,
+      migrationThreshold: curve.migrationThreshold,
       progress: curve.progress,
       behind: true,
       statsPartial: true,
       registeredAt: now(),
     }
-    draft.marketCap = marketCap(draft.price, capSupply(draft))
+    draft.marketCap = marketCap(draft.price, capSupply(draft), draft.decimals ?? undefined)
     let created = false
     let record = await writeCoin(mint, (current) => {
       if (current) return current
@@ -925,6 +934,9 @@ export function createIndexer({
     let moved = false
     let error = null
     let complete = !!record.complete
+    let migrated = !!record.migrated
+    const dbcPool = record.dbcPool
+    const decimals = record.decimals ?? undefined
 
     // Reads the oldest unread signatures of one address, at most PER_PASS transactions, in
     // execution order. `seq` numbers transactions as read, so trades in one slot keep their order.
@@ -956,7 +968,7 @@ export function createIndexer({
           for (const { signature, tx } of fetched) {
             if (!tx) break // not visible to this node yet: never step past it
             state.seq++
-            for (const t of tradesFrom(tx, { signature, mint, pool }))
+            for (const t of tradesFrom(tx, { signature, mint, dbcPool, pool, decimals }))
               fresh.push({ ...t, seq: state.seq })
             state[field] = signature
             read++
@@ -971,21 +983,28 @@ export function createIndexer({
       }
     }
 
-    await collect(record.bondingCurve || curveFor(mint), 'cursor', null)
+    // A record without its DBC pool (none was found when it was stored) only reads live state.
+    if (dbcPool) await collect(dbcPool, 'cursor', null)
     if (fresh.some((t) => t.side === 'complete')) complete = true
-    const pool = record.pool || poolFor(mint)
-    // A coin that left pump.fun before PumpSwap has no pool history to read.
-    if (complete && !record.poolMissing) await collect(pool, 'poolCursor', pool)
+    const pool = record.pool || null
+    // The DAMM v2 pool's history once Meteora migrated the coin.
+    if (migrated && pool) await collect(pool, 'poolCursor', pool)
 
     const supplyStale = !record.supplyAt || now() - record.supplyAt > SUPPLY_TTL_MS
     let live = null
     if (
       Date.now() < deadline &&
-      (moved || behind || !record.syncedAt || !(record.price > 0) || supplyStale)
+      (moved || behind || !record.syncedAt || !(record.price > 0) || supplyStale ||
+        (complete && !migrated))
     )
-      live = await readMarket(connection, mint, { supply: supplyStale }).catch(() => null)
-    if (live?.curve?.complete && !complete) {
-      complete = true
+      live = await readMarket(connection, mint, {
+        dbcPool,
+        supply: supplyStale,
+        launchConfigs,
+      }).catch(() => null)
+    if (live?.curve?.complete && !complete) complete = true
+    if (live?.pool && !migrated) {
+      migrated = true
       behind = true // the pool's history is read from the next pass
     }
     const healed = await healQuantum(record).catch(() => ({}))
@@ -998,7 +1017,6 @@ export function createIndexer({
     const saved = await writeCoin(mint, async (current) => {
       if (!current) return null // evicted meanwhile
       const { trades, day } = await mergeTrades(mint, current, priced)
-      const poolMissing = live ? !!live.poolMissing : !!current.poolMissing
       const next = {
         ...applyHeal(current, { ...healed, ...identity }),
         ...(day ? { day } : {}),
@@ -1008,15 +1026,19 @@ export function createIndexer({
         historyFrom: state.historyFrom,
         seq: state.seq,
         complete: !!current.complete || complete,
-        poolMissing,
-        pool: poolMissing ? null : current.pool || (complete ? pool : null),
+        migrated: !!current.migrated || migrated,
+        pool: current.pool || live?.pool?.address || null,
         behind,
         syncedAt: now(),
       }
       if (!next.createdAt && created?.createdAt) next.createdAt = created.createdAt
       if (live?.supply) Object.assign(next, { supply: live.supply, supplyAt: now() })
-      if (live?.curve) next.mayhem = live.curve.mayhem
-      if (!next.creator && live?.curve?.creator) next.creator = live.curve.creator
+      if (live?.curve) {
+        // A DBC pool's creator can be handed on (to a Quantum well, for one): follow it.
+        next.creator = live.curve.creator
+        if (!next.dbcPool) Object.assign(next, { dbcPool: live.curve.dbcPool, dbcConfig: live.curve.dbcConfig })
+        if (next.decimals == null) next.decimals = live.curve.decimals
+      }
       return { ...next, ...derive(next, trades, live) }
     })
     if (!saved) return null
@@ -1148,8 +1170,8 @@ export function summarize(r) {
     external: !!r.external,
     createdAt: r.createdAt ?? null,
     complete: !!r.complete,
-    // Graduated without a PumpSwap pool: migrated off pump.fun (or about to get its pool).
-    poolMissing: !!r.poolMissing,
+    // Meteora moved the full curve into its DAMM v2 pool (until then a full curve cannot trade).
+    migrated: !!r.migrated,
     progress: r.progress ?? 0,
     price: r.price ?? null,
     marketCap: r.marketCap ?? null,
@@ -1187,7 +1209,11 @@ const later = (a, b) => (!a || (b && b[1] >= a[1]) ? b : a)
 // unknown). `statsPartial` says they are unknown, or are a lower bound because `behind` says
 // unread transactions remain. change24h is null without a price from before the window, rather
 // than measured against the oldest indexed trade.
-export function stats(trades, nowSecs, { supply, coveredFrom = 0, behind = false, day } = {}) {
+export function stats(
+  trades,
+  nowSecs,
+  { supply, decimals, coveredFrom = 0, behind = false, day } = {},
+) {
   const priced = trades.filter((t) => t.price > 0)
   const latest = priced[0]
   const dayAgo = nowSecs - DAY
@@ -1220,7 +1246,7 @@ export function stats(trades, nowSecs, { supply, coveredFrom = 0, behind = false
     before = last ? last[0] : coveredFrom === 0 && day.from === 0 ? (day.first?.[0] ?? null) : null
   }
   return {
-    marketCap: latest ? marketCap(latest.price, supply) : null,
+    marketCap: latest ? marketCap(latest.price, supply, decimals) : null,
     volume24h: activity ? activity[0] / 1e9 : null,
     trades24h: activity ? activity[1] : null,
     change24h: latest && before > 0 ? ((latest.price - before) / before) * 100 : null,

@@ -1,5 +1,7 @@
-// Quantum Hooks keeper: collects creator fees into each coin's well (pulse), runs Quantum Burn and
-// Fusion, and posts Entanglement epochs. Every action is also permissionless on-chain except
+// Quantum Hooks keeper: harvests each coin's Meteora creator fees into its well and allocates them
+// (pulse), runs Quantum Burn and Fusion, posts Entanglement epochs, and migrates Quant Pad coins
+// whose bonding curve filled to DAMM v2 (Meteora's migration is permissionless, and a full curve
+// cannot trade until someone runs it). Every action is also permissionless on-chain except
 // posting epoch roots, so a stalled keeper delays hooks but cannot redirect funds. An epoch's
 // claims open only at its claimStart (the config's claim delay after the post); until then the
 // authority may cancel it, which returns its SOL to the coin's reserve and closes its account.
@@ -15,8 +17,13 @@ import {
 } from '@solana/web3.js'
 import bs58 from 'bs58'
 import { network } from '../shared/network.mjs'
+import { LAUNCH_CONFIG } from '../shared/dbc-config.mjs'
 
 const MIN_PULSE = 20_000_000n // 0.02 SOL of creator fees waiting outside the well
+// Burns wait out the launch config's anti-sniper fee window: early swaps pay up to 25%.
+const BURN_AFTER = Number(LAUNCH_CONFIG.antiSniper?.totalDurationSecs || 0)
+const MIGRATIONS_PER_TICK = 2
+const DAMM_ENABLED = 0 // DAMM v2 pool_status: 0 enabled, 1 disabled by Meteora's operators
 const MIN_BURN = 10_000_000n
 const MIN_FUSION = 50_000_000n
 const MIN_EPOCH = 50_000_000n
@@ -152,7 +159,11 @@ export function createKeeper({
 
   // `beforeSend` runs once the transaction is signed and before it is broadcast. Polling stops at
   // `deadline` with a KEEPER_UNCONFIRMED error rather than outliving the tick.
-  async function send(instructions, signers = [], { deadline = Infinity, beforeSend } = {}) {
+  async function send(
+    instructions,
+    signers = [],
+    { deadline = Infinity, beforeSend, units = 600_000 } = {},
+  ) {
     const fees = await connection.getRecentPrioritizationFees().catch(() => [])
     const sorted = fees.map((f) => f.prioritizationFee).sort((a, b) => a - b)
     const price = Math.min(
@@ -164,7 +175,7 @@ export function createKeeper({
       payerKey: keeper.publicKey,
       recentBlockhash: blockhash,
       instructions: [
-        ComputeBudgetProgram.setComputeUnitLimit({ units: 600_000 }),
+        ComputeBudgetProgram.setComputeUnitLimit({ units }),
         ComputeBudgetProgram.setComputeUnitPrice({ microLamports: price }),
         ...instructions,
       ],
@@ -230,7 +241,7 @@ export function createKeeper({
         maxSupportedTransactionVersion: 0,
       })
       const event = quantum.decodeQuantumEvents(tx?.meta?.logMessages).find((e) => e.name === name)
-      for (const field of ['spent', 'tokensBurned', 'lpReceived'])
+      for (const field of ['spent', 'tokensBurned', 'liquidityAdded'])
         if (event?.data[field] !== undefined) detail[field] = event.data[field].toString()
     } catch (e) {
       log(`${name} ${signature}: ${e.message}`)
@@ -249,9 +260,8 @@ export function createKeeper({
   }
 
   // Holder snapshot for Entanglement: token accounts for the mint owned by wallets (on-curve
-  // keys), under the mint's own token program — Token-2022 for `create_v2` coins, SPL Token for
-  // ones made with pump.fun's legacy `create`. PDAs — the bonding curve, pool, well and lock
-  // vault — are excluded.
+  // keys), under the mint's own token program (SPL Token for Quant Pad's DBC coins). PDAs — the
+  // Meteora vaults and pool authorities, the well and the lock vault — are excluded.
   async function snapshot(mint) {
     const program = quantum.mintTokenProgram(
       await connection.getAccountInfo(new PublicKey(mint), 'confirmed'),
@@ -716,11 +726,32 @@ export function createKeeper({
     } catch (e) {
       if (!/NothingToPulse/i.test(e.message)) log(`pulse ${mint}: ${e.message}`)
     }
+    // Where the coin trades: burns need an open venue (not a full curve awaiting migration, not a
+    // DAMM pool Meteora's operators disabled), and Fusion the DAMM v2 pool recorded by sync.
+    const venue = await quantum.fetchVenue(connection, key).catch(() => null)
+    if (!late() && venue?.kind === 'pool' && !state.dammPool) {
+      try {
+        const sync = await quantum.buildSyncInstruction({ connection, mint: key })
+        const signature = await send([sync], [], { deadline })
+        await record(mint, 'sync', { signature })
+        state = (await quantum.fetchQuantum(connection, key)) || state
+      } catch (e) {
+        log(`sync ${mint}: ${e.message}`)
+      }
+    }
+    const open =
+      venue?.kind === 'curve' || (venue?.kind === 'pool' && venue.damm?.poolStatus === DAMM_ENABLED)
     const config = await quantum.fetchConfig(connection)
     const now = Math.floor(Date.now() / 1000)
     const interval = Number(config?.minActionInterval || 0)
     const burnReserve = BigInt(state.burnReserve)
-    if (!late() && burnReserve >= MIN_BURN && now >= Number(state.lastBurnAt) + interval) {
+    if (
+      !late() &&
+      open &&
+      burnReserve >= MIN_BURN &&
+      now >= Number(state.lastBurnAt) + interval &&
+      (venue.kind === 'pool' || now >= Number(state.createdAt || 0) + BURN_AFTER)
+    ) {
       const cap = BigInt(config?.maxBurnLamports || burnReserve)
       const spendLamports = burnReserve < cap ? burnReserve : cap
       try {
@@ -743,7 +774,9 @@ export function createKeeper({
     const fusionReserve = BigInt(state.fusionReserve)
     if (
       !late() &&
-      coin?.complete &&
+      open &&
+      venue.kind === 'pool' &&
+      state.dammPool &&
       fusionReserve >= MIN_FUSION &&
       now >= Number(state.lastFusionAt) + interval
     ) {
@@ -794,6 +827,31 @@ export function createKeeper({
     }
   }
 
+  // Quant Pad launches whose curve filled but that Meteora has not migrated yet: nothing can trade
+  // them until migration_damm_v2 runs, so the keeper runs it (it is permissionless; losing a race
+  // to another migrator only costs a failed transaction). Quantum coins then record the DAMM pool
+  // on their next tick.
+  async function migrateGraduates(items, deadline) {
+    const waiting = items.filter((c) => !c.external && c.complete && !c.migrated && c.dbcPool)
+    for (const coin of waiting.slice(0, MIGRATIONS_PER_TICK)) {
+      if (Date.now() >= deadline) return
+      try {
+        const venue = await quantum.fetchVenue(connection, new PublicKey(coin.mint))
+        if (venue.kind !== 'migrating') continue
+        const { instructions, signers } = await quantum.dbcMigrationInstructions({
+          connection,
+          payer: keeper.publicKey,
+          dbcPool: coin.dbcPool,
+        })
+        const signature = await send(instructions, signers, { deadline, units: 1_400_000 })
+        await record(coin.mint, 'migrate', { signature })
+        await indexer.syncCoin?.(coin.mint)?.catch(() => {})
+      } catch (e) {
+        log(`migrate ${coin.mint}: ${e.message}`)
+      }
+    }
+  }
+
   // A keeper that runs dry stops every hook, so a balance under roughly a day of epoch rent and
   // fees for the coins it serves is logged each tick. A failed balance read is ignored.
   async function checkBalance(coinCount, alerts) {
@@ -821,7 +879,9 @@ export function createKeeper({
     if (!(await store.set('keeper:lease', owner, { nx: true, ttl: 240000 })))
       return { skipped: true }
     try {
-      const coins = (await indexer.list()).filter(isCandidate)
+      const listed = await indexer.list()
+      if (quantum.dbcMigrationInstructions) await migrateGraduates(listed, deadline)
+      const coins = listed.filter(isCandidate)
       // Things the operator must act on: epochs this keeper did not post (cancel them before
       // their claimStart) and a keeper wallet running low. Each is also logged.
       const alerts = []

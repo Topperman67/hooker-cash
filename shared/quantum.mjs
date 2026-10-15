@@ -43,6 +43,7 @@ import idl from './idl/quantum_hooks.json' with { type: 'json' }
 export const QUANTUM_IDL = idl
 export const QUANTUM_PROGRAM_ID = new PublicKey(idl.address)
 export { DBC_PROGRAM_ID, DAMM_V2_PROGRAM_ID }
+export { dbcMigrationInstructions } from './meteora.mjs'
 const BPF_UPGRADEABLE_LOADER = new PublicKey('BPFLoaderUpgradeab1e11111111111111111111111')
 
 export const BPS = 10_000

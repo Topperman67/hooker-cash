@@ -1,9 +1,7 @@
-// Read-only Solana access for the server: transaction/event decoding and pump.fun state reads.
-import { createHash } from 'node:crypto'
+// Read-only Solana access for the server: transaction/event decoding and Meteora state reads (the
+// Dynamic Bonding Curve a coin launches on, and the DAMM v2 pool it migrates into).
 import { Connection, PublicKey } from '@solana/web3.js'
 import bs58 from 'bs58'
-import { PUMP_SDK, bondingCurvePda, canonicalPumpPoolPda } from '#pump-sdk'
-import { PUMP_AMM_SDK } from '#pump-swap-sdk'
 import {
   ExtensionType,
   getExtensionData,
@@ -11,65 +9,106 @@ import {
   TOKEN_PROGRAM_ID,
   TOKEN_2022_PROGRAM_ID,
 } from '@solana/spl-token'
-import { network, priceFromReserves, curveProgress } from '../shared/network.mjs'
+import { network, priceFromSqrtPrice, curveProgress } from '../shared/network.mjs'
+import * as meteora from '../shared/meteora.mjs'
 
-export const PUMP = network.pumpProgram
-export const PUMP_AMM = network.pumpAmmProgram
-const SOL_QUOTE = new Set(['11111111111111111111111111111111', network.wsolMint])
+export const DBC = network.dbcProgram
+export const DAMM = network.dammV2Program
+const SOL_QUOTE = new Set([network.wsolMint])
 
-const discriminator = (name) => createHash('sha256').update(`event:${name}`).digest().subarray(0, 8)
-const EVENTS = {
-  [PUMP]: {
-    CreateEvent: (d) => PUMP_SDK.decodeCreateEventBc(d),
-    TradeEvent: (d) => PUMP_SDK.decodeTradeEventBc(d),
-    CompleteEvent: (d) => PUMP_SDK.decodeCompleteEventBc(d),
-  },
-  [PUMP_AMM]: {
-    BuyEvent: (d) => PUMP_SDK.decodeBuyEventAmm(d),
-    SellEvent: (d) => PUMP_SDK.decodeSellEventAmm(d),
-  },
+// The events the indexer reads, by program. Anchor camel-cases the IDL's names; they are
+// capitalised again here, as the IDLs spell them.
+const CODERS = { [DBC]: meteora.dbcCoder, [DAMM]: meteora.dammCoder }
+const WANTED = {
+  [DBC]: new Set([
+    'EvtInitializePool',
+    'EvtSwap',
+    'EvtSwap2',
+    'EvtCurveComplete',
+    'EvtUpdatePoolCreator',
+  ]),
+  [DAMM]: new Set(['EvtSwap2']),
 }
-const BY_DISCRIMINATOR = new Map()
-for (const [program, events] of Object.entries(EVENTS))
-  for (const [name, decode] of Object.entries(events))
-    BY_DISCRIMINATOR.set(`${program}:${discriminator(name).toString('hex')}`, { name, decode })
 // Anchor `emit_cpi!` prefixes self-CPI event data with this tag.
 const EVENT_IX_TAG = Buffer.from('e445a52e51cb9a1d', 'hex')
+// The payer account of the instructions whose events name no trader or launcher.
+const PAYER = {
+  [DBC]: {
+    swap: 9,
+    swap2: 9,
+    initializeVirtualPoolWithSplToken: 10,
+    initializeVirtualPoolWithToken2022: 8,
+  },
+  [DAMM]: { swap: 8, swap2: 8 },
+}
 
 export function createConnection(rpcUrl = process.env.QUANTPAD_RPC_URL || network.publicRpcUrl) {
   return new Connection(rpcUrl, { commitment: 'confirmed', disableRetryOnRateLimit: false })
 }
 
 function decode(program, bytes) {
-  const entry = BY_DISCRIMINATOR.get(`${program}:${bytes.subarray(0, 8).toString('hex')}`)
-  if (!entry) return null
+  const coder = CODERS[program]
+  if (!coder || bytes.length < 8) return null
   try {
-    return { program, name: entry.name, event: entry.decode(bytes.subarray(8)) }
+    const decoded = coder.events.decode(bytes.toString('base64'))
+    if (!decoded) return null
+    const name = decoded.name[0].toUpperCase() + decoded.name.slice(1)
+    return WANTED[program].has(name) ? { program, name, event: decoded.data } : null
   } catch {
     return null
   }
 }
 
-// Events from Anchor event-CPI inner instructions (robust to log truncation), falling back to
-// "Program data:" log lines attributed to the program on top of the invoke stack.
-export function extractEvents(tx) {
+// The transaction's instructions in execution order: each outer instruction, then its inner ones,
+// with account keys resolved and the CPI depth (1 = outer).
+function instructionsOf(tx) {
   const keys = accountKeys(tx)
+  const inner = new Map((tx?.meta?.innerInstructions || []).map((g) => [g.index, g.instructions]))
   const out = []
-  for (const group of tx?.meta?.innerInstructions || [])
-    for (const ix of group.instructions) {
-      const program = keys[ix.programIdIndex]
-      if (program !== PUMP && program !== PUMP_AMM) continue
-      let data
-      try {
-        data = Buffer.from(bs58.decode(ix.data))
-      } catch {
-        continue
-      }
-      if (data.length > 16 && data.subarray(0, 8).equals(EVENT_IX_TAG)) {
-        const event = decode(program, data.subarray(8))
-        if (event) out.push(event)
-      }
+  ;(tx?.transaction?.message?.instructions || []).forEach((ix, i) => {
+    out.push({ ...ix, stackHeight: 1 })
+    for (const x of inner.get(i) || []) out.push({ ...x, stackHeight: x.stackHeight || 2 })
+  })
+  return out.map((ix) => ({
+    program: keys[ix.programIdIndex],
+    accounts: (ix.accounts || []).map((a) => keys[a]),
+    data: ix.data,
+    stackHeight: ix.stackHeight,
+  }))
+}
+
+// The decoded name and arguments of a Meteora instruction (base58 data, as the JSON encoding has
+// it), or null.
+function decodeInstruction(ix) {
+  const coder = CODERS[ix?.program]
+  if (!coder) return null
+  try {
+    return coder.instruction.decode(Buffer.from(bs58.decode(ix.data)))
+  } catch {
+    return null
+  }
+}
+
+// Meteora events from Anchor event-CPI inner instructions (robust to log truncation), each with the
+// instruction that emitted it (`emitter`, null when unknown), falling back to "Program data:" log
+// lines attributed to the program on top of the invoke stack.
+export function extractEvents(tx) {
+  const out = []
+  const parents = []
+  for (const ix of instructionsOf(tx)) {
+    parents[ix.stackHeight] = ix
+    if (!CODERS[ix.program]) continue
+    let data
+    try {
+      data = Buffer.from(bs58.decode(ix.data))
+    } catch {
+      continue
     }
+    if (data.length > 16 && data.subarray(0, 8).equals(EVENT_IX_TAG)) {
+      const event = decode(ix.program, data.subarray(8))
+      if (event) out.push({ ...event, emitter: parents[ix.stackHeight - 1] || null })
+    }
+  }
   if (out.length) return out
   const stack = []
   for (const line of tx?.meta?.logMessages || []) {
@@ -83,9 +122,9 @@ export function extractEvents(tx) {
       continue
     }
     const program = stack.at(-1)
-    if ((program === PUMP || program === PUMP_AMM) && line.startsWith('Program data: ')) {
+    if (CODERS[program] && line.startsWith('Program data: ')) {
       const event = decode(program, Buffer.from(line.slice(14), 'base64'))
-      if (event) out.push(event)
+      if (event) out.push({ ...event, emitter: null })
     }
   }
   return out
@@ -102,103 +141,120 @@ function accountKeys(tx) {
 }
 
 const str = (v) => (v === undefined || v === null ? null : v.toString())
-const big = (v) => BigInt(v?.toString() || '0')
+const b58 = (v) => (v?.toBase58 ? v.toBase58() : str(v))
+const text = (v) => String(v || '').replace(/\0+$/, '').trim()
 
-export function normalizeCreate(event, { signature, slot }) {
+// Who signed for the instruction that emitted an event: its payer account, else the fee payer.
+function payerOf(tx, emitter) {
+  const name = emitter && decodeInstruction(emitter)?.name
+  const index = name ? PAYER[emitter.program]?.[name] : undefined
+  return (index !== undefined && emitter.accounts[index]) || accountKeys(tx)[0] || null
+}
+
+/**
+ * The coin a DBC create transaction launched: from its EvtInitializePool (the first, or the one for
+ * `mint`) and the create instruction's arguments. `creator` is the pool creator at the end of the
+ * transaction (a Quantum launch hands it to the coin's well in the same transaction); `launcher` is
+ * the creator it was created with. Null when the transaction created no DBC pool.
+ */
+export function createFrom(tx, { signature, mint } = {}) {
+  const events = extractEvents(tx)
+  const init = events.find(
+    (e) =>
+      e.program === DBC &&
+      e.name === 'EvtInitializePool' &&
+      (!mint || b58(e.event.baseMint) === mint),
+  )
+  if (!init) return null
+  const pool = b58(init.event.pool)
+  let creator = b58(init.event.creator)
+  for (const e of events)
+    if (e.program === DBC && e.name === 'EvtUpdatePoolCreator' && b58(e.event.pool) === pool)
+      creator = b58(e.event.newCreator)
+  const ix = decodeInstruction(init.emitter)
+  const params = ix?.data?.params || {}
+  const t22 = ix?.name === 'initializeVirtualPoolWithToken2022'
+  const accounts = init.emitter?.accounts || []
   return {
-    mint: event.mint.toBase58(),
-    name: event.name,
-    symbol: event.symbol,
-    uri: event.uri,
-    creator: event.creator.toBase58(),
-    launcher: event.user.toBase58(),
-    bondingCurve: event.bondingCurve.toBase58(),
-    tokenProgram: event.tokenProgram?.toBase58() || network.token2022Program,
-    quoteMint: event.quoteMint?.toBase58() || '11111111111111111111111111111111',
-    mayhem: !!event.isMayhemMode,
-    holderReward: !!event.isHolderReward,
-    createdAt: Number(event.timestamp),
+    mint: b58(init.event.baseMint),
+    name: text(params.name),
+    symbol: text(params.symbol),
+    uri: text(params.uri),
+    creator,
+    launcher: b58(init.event.creator),
+    dbcPool: pool,
+    dbcConfig: b58(init.event.config),
+    tokenProgram:
+      accounts[t22 ? 10 : 12] ||
+      (t22 ? TOKEN_2022_PROGRAM_ID.toBase58() : TOKEN_PROGRAM_ID.toBase58()),
+    quoteMint: accounts[4] || null,
+    createdAt: tx.blockTime || null,
     signature,
-    slot,
-    virtualSolReserves: str(event.virtualSolReserves),
-    virtualTokenReserves: str(event.virtualTokenReserves),
-    realTokenReserves: str(event.realTokenReserves),
-    totalSupply: str(event.tokenTotalSupply),
+    slot: tx.slot,
   }
 }
 
-// Normalized trades for one coin from one confirmed transaction. `index` is the event's position in
-// the transaction, so trades sort in execution order within a transaction. The coin's CreateEvent
-// and CompleteEvent come back as markers (`side: 'create'` / `'complete'`) without a price.
-export function tradesFrom(tx, { signature, mint, pool }) {
+// Normalized trades for one coin from one confirmed transaction: swaps on its DBC pool (`dbcPool`,
+// venue 'curve') and on its DAMM v2 pool (`pool`, venue 'pool'). `index` is the event's position in
+// the transaction, so trades sort in execution order within a transaction. The coin's create and
+// its curve completion come back as markers (`side: 'create'` / `'complete'`) without a price.
+// Prices are SOL per whole token, from the sqrt price each swap left behind.
+export function tradesFrom(
+  tx,
+  { signature, mint, dbcPool, pool, decimals = network.tokenDecimals },
+) {
   const trades = []
-  extractEvents(tx).forEach(({ name, event }, index) => {
+  const events = extractEvents(tx)
+  // DBC's legacy `swap` may emit EvtSwap next to EvtSwap2: each swap counts once.
+  const swap2 = events.filter((e) => e.program === DBC && e.name === 'EvtSwap2')
+  const swap2By = new Set(swap2.map((e) => e.emitter))
+  events.forEach(({ program, name, event, emitter }, index) => {
     const base = {
       id: `${signature}:${index}`,
       signature,
       slot: tx.slot,
       index,
-      timestamp: Number(event.timestamp) || tx.blockTime || 0,
+      timestamp: Number(event.currentTimestamp) || tx.blockTime || 0,
     }
-    if (name === 'TradeEvent' && event.mint.toBase58() === mint) {
-      const quoteMint = event.quoteMint?.toBase58()
-      if (quoteMint && !SOL_QUOTE.has(quoteMint)) return
-      const sol =
-        event.quoteAmount && !event.quoteAmount.isZero?.() ? event.quoteAmount : event.solAmount
-      const vSol =
-        event.virtualQuoteReserves && !event.virtualQuoteReserves.isZero?.()
-          ? event.virtualQuoteReserves
-          : event.virtualSolReserves
+    const at = b58(event.pool)
+    if (program === DBC && at === dbcPool && (name === 'EvtSwap2' || name === 'EvtSwap')) {
+      if (name === 'EvtSwap' && (emitter ? swap2By.has(emitter) : swap2.length > 0)) return
+      const r = event.swapResult
+      const buy = Number(event.tradeDirection) === 1 // QuoteToBase
+      const input = name === 'EvtSwap2' ? r.includedFeeInputAmount : event.amountIn
       trades.push({
         ...base,
         venue: 'curve',
-        side: event.isBuy ? 'buy' : 'sell',
-        trader: event.user.toBase58(),
-        solAmount: str(sol),
-        tokenAmount: str(event.tokenAmount),
-        price: priceFromReserves(vSol, event.virtualTokenReserves),
-        virtualSolReserves: str(vSol),
-        virtualTokenReserves: str(event.virtualTokenReserves),
-        realTokenReserves: str(event.realTokenReserves),
-        creatorFee: str(event.creatorFee),
+        side: buy ? 'buy' : 'sell',
+        trader: payerOf(tx, emitter),
+        solAmount: str(buy ? input : r.outputAmount),
+        tokenAmount: str(buy ? r.outputAmount : input),
+        price: priceFromSqrtPrice(r.nextSqrtPrice, decimals),
+        fee: str(r.tradingFee),
+        ...(name === 'EvtSwap2'
+          ? {
+              quoteReserve: str(event.quoteReserveAmount),
+              migrationThreshold: str(event.migrationThreshold),
+            }
+          : {}),
       })
-    } else if (
-      (name === 'BuyEvent' || name === 'SellEvent') &&
-      pool &&
-      event.pool.toBase58() === pool
-    ) {
-      const buy = name === 'BuyEvent'
-      // PumpSwap events carry the pool reserves from BEFORE the swap (curve TradeEvents carry them
-      // after). Price the trade from the reserves it left behind: the LP fee stays in the pool,
-      // the protocol and creator fees do not count as liquidity.
-      const baseReserves = buy
-        ? big(event.poolBaseTokenReserves) - big(event.baseAmountOut)
-        : big(event.poolBaseTokenReserves) + big(event.baseAmountIn)
-      const lpFee = big(event.lpFee)
-      const quoteReserves =
-        (buy
-          ? big(event.poolQuoteTokenReserves) +
-            (event.quoteAmountInWithLpFee
-              ? big(event.quoteAmountInWithLpFee)
-              : big(event.quoteAmountIn) + lpFee)
-          : big(event.poolQuoteTokenReserves) -
-            (event.quoteAmountOutWithoutLpFee
-              ? big(event.quoteAmountOutWithoutLpFee)
-              : big(event.quoteAmountOut) - lpFee)) + big(event.virtualQuoteReserves)
+    } else if (program === DAMM && name === 'EvtSwap2' && pool && at === pool) {
+      const r = event.swapResult
+      const buy = Number(event.tradeDirection) === 1 // BtoA: SOL in, the coin out
       trades.push({
         ...base,
         venue: 'pool',
         side: buy ? 'buy' : 'sell',
-        trader: event.user.toBase58(),
-        solAmount: str(buy ? event.quoteAmountIn : event.quoteAmountOut),
-        tokenAmount: str(buy ? event.baseAmountOut : event.baseAmountIn),
-        price: priceFromReserves(quoteReserves, baseReserves),
-        creatorFee: str(event.coinCreatorFee),
+        trader: payerOf(tx, emitter),
+        solAmount: str(buy ? r.includedFeeInputAmount : r.outputAmount),
+        tokenAmount: str(buy ? r.outputAmount : r.includedFeeInputAmount),
+        price: priceFromSqrtPrice(r.nextSqrtPrice, decimals),
+        fee: str(r.claimingFee),
       })
-    } else if (name === 'CompleteEvent' && event.mint.toBase58() === mint) {
+    } else if (program === DBC && name === 'EvtCurveComplete' && at === dbcPool) {
       trades.push({ ...base, venue: 'curve', side: 'complete' })
-    } else if (name === 'CreateEvent' && event.mint.toBase58() === mint) {
-      trades.push({ ...base, venue: 'curve', side: 'create', createdAt: Number(event.timestamp) })
+    } else if (program === DBC && name === 'EvtInitializePool' && b58(event.baseMint) === mint) {
+      trades.push({ ...base, venue: 'curve', side: 'create', createdAt: tx.blockTime || null })
     }
   })
   return trades
@@ -375,7 +431,7 @@ export async function pendingSignatures(
   return { window: [], anchor: previous?.above || null, reached: false }
 }
 
-// The first successful signature of `address` (for a bonding curve, the coin's create transaction),
+// The first successful signature of `address` (for a DBC pool, the coin's create transaction),
 // paging back at most `pages` pages: { signature } (null when there is no history yet), or
 // { signature: null, tooDeep: true } when the history is longer than that.
 export async function firstSignature(connection, address, { pages = 5 } = {}) {
@@ -391,74 +447,108 @@ export async function firstSignature(connection, address, { pages = 5 } = {}) {
   return { signature: null, tooDeep: true }
 }
 
-// Legacy curves (created before pump.fun recorded creators) decode with the zero key as creator:
-// that is "unknown", not the system program.
-function decodeCurve(info) {
-  const curve = PUMP_SDK.decodeBondingCurveNullable(info)
-  if (!curve) return null
-  return {
-    complete: curve.complete,
-    creator: curve.creator.equals(PublicKey.default) ? null : curve.creator.toBase58(),
-    quoteMint: curve.quoteMint?.toBase58() || '11111111111111111111111111111111',
-    mayhem: !!curve.isMayhemMode,
-    virtualSolReserves: curve.virtualQuoteReserves.toString(),
-    virtualTokenReserves: curve.virtualTokenReserves.toString(),
-    realTokenReserves: curve.realTokenReserves.toString(),
-    realSolReserves: curve.realQuoteReserves.toString(),
-    totalSupply: curve.tokenTotalSupply.toString(),
-    price: priceFromReserves(curve.virtualQuoteReserves, curve.virtualTokenReserves),
-    progress: curve.complete ? 100 : curveProgress(curve.realTokenReserves),
+// ---- Meteora state ----------------------------------------------------------------------------
+
+// A DBC VirtualPool account: its discriminator, then pool_state with base_mint at byte 136.
+const POOL_DISCRIMINATOR = bs58.encode(
+  Buffer.from(meteora.dbcCoder.accounts.accountDiscriminator('virtualPool')),
+)
+const BASE_MINT_OFFSET = 136
+
+// DBC configs cannot change once created: each is read once per process.
+const configs = new Map()
+async function readConfig(connection, address) {
+  if (configs.has(address)) return configs.get(address)
+  const info = await connection.getAccountInfo(new PublicKey(address), 'confirmed')
+  const config = info?.owner?.toBase58() === DBC ? meteora.decodeDbcConfig(info.data) : null
+  if (config) {
+    if (configs.size > 500) configs.clear()
+    configs.set(address, config)
   }
+  return config
 }
-
-export async function readCurve(connection, mint) {
-  const info = await connection.getAccountInfo(bondingCurvePda(new PublicKey(mint)))
-  return info ? decodeCurve(info) : null
-}
-
-// SPL and Token-2022 share the base layouts: a mint's supply is at byte 36, an account's amount at 64.
-const u64At = (data, offset) => Buffer.from(data).readBigUInt64LE(offset)
 
 /**
- * Live market state in one or two account reads: the bonding curve and, once it has completed, the
- * canonical PumpSwap pool priced from its vaults (fee buckets excluded, virtual quote included).
- * With `supply`, also the mint's current raw supply: mayhem coins mint 2B, and burns reduce it.
- * `poolMissing` is true when the curve has completed but no canonical PumpSwap pool exists: coins
- * that graduated before PumpSwap migrated to Raydium (and a new graduate is briefly in between).
+ * The DBC pool of `mint`: derived under each of `launchConfigs` (Quant Pad's own; one read), else
+ * found by its base mint with getProgramAccounts. Resolves to the pool address or null.
  */
-export async function readMarket(connection, mint, { supply = true } = {}) {
+export async function findDbcPool(connection, mint, launchConfigs = []) {
   const key = new PublicKey(mint)
-  const poolKey = canonicalPumpPoolPda(key)
-  const [curveInfo, poolInfo, mintInfo] = await connection.getMultipleAccountsInfo(
-    [bondingCurvePda(key), poolKey, ...(supply ? [key] : [])],
-    'confirmed',
-  )
-  const curve = curveInfo ? decodeCurve(curveInfo) : null
+  if (launchConfigs.length) {
+    const pdas = launchConfigs.map((c) => meteora.dbcPoolPda(c, key))
+    const infos = await connection.getMultipleAccountsInfo(pdas, 'confirmed')
+    const i = infos.findIndex((x) => x?.owner?.toBase58() === DBC)
+    if (i >= 0) return pdas[i].toBase58()
+  }
+  const found = await connection.getProgramAccounts(meteora.DBC_PROGRAM_ID, {
+    commitment: 'confirmed',
+    dataSlice: { offset: 0, length: 0 },
+    filters: [
+      { memcmp: { offset: 0, bytes: POOL_DISCRIMINATOR } },
+      { memcmp: { offset: BASE_MINT_OFFSET, bytes: key.toBase58() } },
+    ],
+  })
+  return found[0]?.pubkey?.toBase58() || null
+}
+
+// SPL and Token-2022 share the base layouts: a mint's supply is at byte 36, its decimals at 44.
+const mintFacts = (data) =>
+  data?.length >= 45
+    ? { supply: Buffer.from(data).readBigUInt64LE(36).toString(), decimals: Buffer.from(data)[44] }
+    : { supply: null, decimals: null }
+
+/**
+ * Live market state: the coin's DBC pool (`curve`) and, once Meteora migrated it, its DAMM v2 pool
+ * (`pool`). `dbcPool` skips the pool lookup (see findDbcPool). With `supply`, also the mint's raw
+ * supply (burns reduce it) and decimals. `curve.complete` is a full curve (nothing trades until it
+ * is migrated), `curve.migrated` that the DAMM v2 pool exists. `curve` is null for a mint without
+ * a DBC pool.
+ */
+export async function readMarket(
+  connection,
+  mint,
+  { dbcPool = null, supply = true, launchConfigs = [] } = {},
+) {
+  const key = new PublicKey(mint)
+  const poolKey = dbcPool || (await findDbcPool(connection, key, launchConfigs))
+  const keys = [...(poolKey ? [new PublicKey(poolKey)] : []), ...(supply ? [key] : [])]
+  const infos = keys.length ? await connection.getMultipleAccountsInfo(keys, 'confirmed') : []
+  const poolInfo = poolKey ? infos[0] : null
+  const facts = supply ? mintFacts(infos.at(-1)?.data) : { supply: null, decimals: null }
+  const state = poolInfo?.owner?.toBase58() === DBC ? meteora.decodeDbcPool(poolInfo.data) : null
+  if (!state || state.baseMint !== key.toBase58()) return { curve: null, pool: null, ...facts }
+  const config = await readConfig(connection, state.config)
+  const decimals = config?.tokenDecimal ?? facts.decimals ?? network.tokenDecimals
+  const complete = state.migrationProgress > meteora.PROGRESS.PRE
+  const migrated = state.migrationProgress === meteora.PROGRESS.MIGRATED || state.isMigrated
+  const threshold = config?.migrationQuoteThreshold ?? null
+  const curve = {
+    dbcPool: poolKey,
+    dbcConfig: state.config,
+    creator: state.creator,
+    quoteMint: config?.quoteMint || null,
+    decimals,
+    complete,
+    migrated,
+    quoteReserve: state.quoteReserve.toString(),
+    migrationThreshold: str(threshold),
+    price: priceFromSqrtPrice(state.sqrtPrice, decimals),
+    progress: complete ? 100 : curveProgress(state.quoteReserve, threshold),
+  }
   let pool = null
-  if (poolInfo && (!curve || curve.complete)) {
-    const decoded = PUMP_AMM_SDK.decodePool(poolInfo)
-    const [baseInfo, quoteInfo] = await connection.getMultipleAccountsInfo(
-      [decoded.poolBaseTokenAccount, decoded.poolQuoteTokenAccount],
-      'confirmed',
-    )
-    if (baseInfo && quoteInfo) {
-      const base = u64At(baseInfo.data, 64)
-      const real = u64At(quoteInfo.data, 64) - big(decoded.protocolFees) - big(decoded.creatorFees)
-      const quote = (real > 0n ? real : 0n) + big(decoded.virtualQuoteReserves)
+  if (migrated && config) {
+    const address = meteora.migratedPoolFor(config, key)
+    const info = await connection.getAccountInfo(address, 'confirmed')
+    const damm = info?.owner?.toBase58() === DAMM ? meteora.decodeDammPool(info.data) : null
+    if (damm && damm.tokenAMint === key.toBase58())
       pool = {
-        address: poolKey.toBase58(),
-        baseReserves: base.toString(),
-        quoteReserves: quote.toString(),
-        price: priceFromReserves(quote, base),
+        address: address.toBase58(),
+        liquidity: damm.liquidity.toString(),
+        status: damm.poolStatus,
+        price: priceFromSqrtPrice(damm.sqrtPrice, decimals),
       }
-    }
   }
-  return {
-    curve,
-    pool,
-    poolMissing: !!curve?.complete && !poolInfo,
-    supply: mintInfo?.data?.length >= 44 ? u64At(mintInfo.data, 36).toString() : null,
-  }
+  return { curve, pool, ...facts }
 }
 
 export const METAPLEX_METADATA = 'metaqbxxUerdq28cj1RbAWkYQm3ybzjb6a8bt518x1s'
@@ -494,7 +584,7 @@ const identityOf = ([name, symbol, uri] = []) =>
     ? { name: name.slice(0, 64), symbol: symbol.slice(0, 16), uri: uri.slice(0, 512) }
     : null
 
-// Token-2022 metadata stored in the mint (pump.fun's current coins): update authority, mint, then
+// Token-2022 metadata stored in the mint (DBC's Token-2022 coins): update authority, mint, then
 // name, symbol and uri.
 function token2022Identity(key, info) {
   try {
@@ -508,8 +598,8 @@ function token2022Identity(key, info) {
   }
 }
 
-// A Metaplex metadata account (pump.fun's legacy SPL Token coins): key 4 (MetadataV1), update
-// authority, mint, then name, symbol and uri.
+// A Metaplex metadata account (DBC's SPL Token coins, Quant Pad's included): key 4 (MetadataV1),
+// update authority, mint, then name, symbol and uri.
 function metaplexIdentity(key, info) {
   if (!info || !info.owner?.equals?.(METAPLEX)) return null
   const data = Buffer.from(info.data)
@@ -520,7 +610,7 @@ function metaplexIdentity(key, info) {
 
 /**
  * A coin's name, symbol and metadata URI, with the token program that owns its mint: from the
- * Token-2022 metadata extension, else the Metaplex metadata account (legacy SPL Token coins).
+ * Token-2022 metadata extension, else the Metaplex metadata account (SPL Token coins).
  * One RPC read. Resolves to null when the mint has neither; throws when the RPC fails or the mint
  * is not visible (a lagging node), so a caller never mistakes a failed read for "no metadata".
  */
@@ -546,6 +636,7 @@ export async function readTokenIdentity(connection, mint) {
   }
 }
 
-export const poolFor = (mint) => canonicalPumpPoolPda(new PublicKey(mint)).toBase58()
-export const curveFor = (mint) => bondingCurvePda(new PublicKey(mint)).toBase58()
 export const isSolQuote = (quoteMint) => SOL_QUOTE.has(quoteMint)
+/** The DAMM v2 pool a DBC coin under `config` (a decoded DBC config) migrates into. */
+export const dammPoolFor = (config, mint) =>
+  meteora.migratedPoolFor(config, new PublicKey(mint)).toBase58()

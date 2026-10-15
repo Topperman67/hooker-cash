@@ -16,15 +16,16 @@ export function compareTrades(a, b) {
   )
 }
 
-// Raw supply the market cap counts. The mint's live supply when known (mayhem coins mint 2B and
-// burns reduce it), else pump.fun's 1B (2B for mayhem coins).
-export function capSupply({ supply, mayhem } = {}) {
+// Raw supply the market cap counts: the mint's live supply when known (burns reduce it), else Quant
+// Pad's fixed 1B.
+export function capSupply({ supply } = {}) {
   if (supply && Number(supply) > 0) return String(supply)
-  return mayhem ? String(2n * BigInt(network.totalSupply)) : network.totalSupply
+  return network.totalSupply
 }
 
-export function marketCap(price, supply = network.totalSupply) {
-  return price > 0 ? (price * Number(supply)) / 1e6 : null
+// SOL value of `supply` raw units at `price` SOL per whole token.
+export function marketCap(price, supply = network.totalSupply, decimals = network.tokenDecimals) {
+  return price > 0 ? (price * Number(supply)) / 10 ** decimals : null
 }
 
 // Candle buckets of `size` seconds in time order: [time, open, high, low, close, lamports, first,

@@ -1,58 +1,42 @@
-// Address lookup table contents for Quant Pad transactions. A pump.fun create_v2 + dev buy
-// references ~35 accounts (~1.6 KB), over Solana's 1 232-byte limit; with the static accounts in
-// a lookup table each costs one byte instead of 32. Static = identical across launches, found by
-// building two launches with unrelated keys and intersecting, plus every fee recipient pump.fun
-// may pick at random.
-import BN from 'bn.js'
-import { Keypair, PublicKey } from '@solana/web3.js'
-import { OnlinePumpSdk, PUMP_SDK, getBuyTokenAmountFromSolAmount } from '#pump-sdk'
+// Address lookup table contents for Quant Pad launch transactions. The DBC create, the creator
+// hand-off to the well, sync and the dev buy reference about 30 accounts (well over Solana's
+// 1 232-byte limit at 32 bytes each); with the static ones in a lookup table each costs one byte.
+// Static = identical across launches: Meteora's DBC accounts, the launch configs, token programs
+// and sysvars, and Quantum Hooks' config. A program a transaction invokes still takes a static
+// key, so its table entry only helps where it is passed as a plain account (DBC's event CPI).
+import { PublicKey, SystemProgram, SYSVAR_INSTRUCTIONS_PUBKEY, SYSVAR_RENT_PUBKEY } from '@solana/web3.js'
+import {
+  ASSOCIATED_TOKEN_PROGRAM_ID,
+  NATIVE_MINT,
+  TOKEN_2022_PROGRAM_ID,
+  TOKEN_PROGRAM_ID,
+} from '@solana/spl-token'
+import {
+  DBC_EVENT_AUTHORITY,
+  DBC_POOL_AUTHORITY,
+  DBC_PROGRAM_ID,
+  METAPLEX_PROGRAM_ID,
+} from './meteora.mjs'
 
-async function sampleLaunchKeys(global, feeConfig) {
-  const user = Keypair.generate().publicKey,
-    mint = Keypair.generate().publicKey
-  const amount = getBuyTokenAmountFromSolAmount({
-    global,
-    feeConfig,
-    mintSupply: null,
-    bondingCurve: null,
-    amount: new BN(100_000_000),
-    quoteMint: PublicKey.default,
-  })
-  const ixs = await PUMP_SDK.createV2AndBuyV2Instructions({
-    global,
-    mint,
-    name: 'Sample',
-    symbol: 'SMPL',
-    uri: 'https://example.invalid/meta.json',
-    creator: user,
-    user,
-    amount,
-    quoteAmount: new BN(100_000_000),
-    mayhemMode: false,
-  })
-  return new Set(
-    ixs.flatMap((ix) => [ix.programId.toBase58(), ...ix.keys.map((k) => k.pubkey.toBase58())]),
+/** `launchConfigs`: Quant Pad's DBC configs; `extra`: more keys (Quantum Hooks, the treasury). */
+export function staticLaunchAccounts({ launchConfigs = [], extra = [] } = {}) {
+  const keys = new Set(
+    [
+      DBC_PROGRAM_ID,
+      DBC_POOL_AUTHORITY,
+      DBC_EVENT_AUTHORITY,
+      METAPLEX_PROGRAM_ID,
+      NATIVE_MINT,
+      TOKEN_PROGRAM_ID,
+      TOKEN_2022_PROGRAM_ID,
+      ASSOCIATED_TOKEN_PROGRAM_ID,
+      SystemProgram.programId,
+      SYSVAR_INSTRUCTIONS_PUBKEY,
+      SYSVAR_RENT_PUBKEY,
+      new PublicKey('ComputeBudget111111111111111111111111111111'),
+      ...launchConfigs,
+      ...extra,
+    ].map((k) => new PublicKey(k).toBase58()),
   )
-}
-
-export async function staticLaunchAccounts(connection, { extra = [] } = {}) {
-  const sdk = new OnlinePumpSdk(connection)
-  const [global, feeConfig] = await Promise.all([sdk.fetchGlobal(), sdk.fetchFeeConfig()])
-  const [a, b] = await Promise.all([
-    sampleLaunchKeys(global, feeConfig),
-    sampleLaunchKeys(global, feeConfig),
-  ])
-  const keys = new Set([...a].filter((k) => b.has(k)))
-  for (const list of [
-    global.feeRecipients,
-    global.reservedFeeRecipients,
-    global.buybackFeeRecipients,
-  ])
-    for (const k of list || []) if (!k.equals(PublicKey.default)) keys.add(k.toBase58())
-  for (const k of [global.feeRecipient, global.reservedFeeRecipient])
-    if (k && !k.equals(PublicKey.default)) keys.add(k.toBase58())
-  keys.add('ComputeBudget111111111111111111111111111111')
-  keys.add('SysvarRent111111111111111111111111111111111')
-  for (const k of extra) keys.add(k.toString())
   return [...keys].map((k) => new PublicKey(k))
 }

@@ -6,7 +6,7 @@
 import { Buffer } from 'buffer'
 import BN from 'bn.js'
 import { AnchorProvider, Program } from '@coral-xyz/anchor'
-import { PublicKey, SystemProgram, SYSVAR_INSTRUCTIONS_PUBKEY } from '@solana/web3.js'
+import { ComputeBudgetProgram, PublicKey, SystemProgram, SYSVAR_INSTRUCTIONS_PUBKEY } from '@solana/web3.js'
 import {
   NATIVE_MINT,
   TOKEN_PROGRAM_ID,
@@ -17,6 +17,7 @@ import {
 } from '@solana/spl-token'
 import {
   DAMM_V2_MIGRATION_FEE_ADDRESS,
+  DynamicBondingCurveClient,
   swapQuoteExactIn as dbcSwapQuoteExactIn,
 } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import { getUnClaimLpFee, swapQuoteExactInput as dammSwapQuoteExactIn } from '@meteora-ag/cp-amm-sdk'
@@ -230,6 +231,29 @@ export function dbcQuote({ pool, config, side, amountIn, slippageBps = 0, curren
     firstSwap,
   )
   return { out: big(q.outputAmount), minOut: big(q.minimumAmountOut), fee: big(q.tradingFee) + big(q.protocolFee) }
+}
+
+/**
+ * DBC `migration_damm_v2` (permissionless) for a full curve: Meteora creates the coin's DAMM v2
+ * pool and hands the creator and partner their LP positions. Returns { instructions, signers }
+ * (the two position NFT mints sign).
+ */
+export async function dbcMigrationInstructions({ connection, payer, dbcPool }) {
+  const pool = decodeDbcPool((await connection.getAccountInfo(pk(dbcPool)))?.data)
+  if (!pool) throw new Error('Not a DBC pool.')
+  const config = decodeDbcConfig((await connection.getAccountInfo(pk(pool.config)))?.data)
+  const built = await new DynamicBondingCurveClient(connection, 'confirmed').migration.migrateToDammV2({
+    payer: pk(payer),
+    pool: pk(dbcPool),
+    dammConfig: DAMM_MIGRATION_CONFIGS[config.migrationFeeOption],
+  })
+  // The sender sets the compute budget: a second set of budget instructions fails the transaction.
+  return {
+    instructions: built.transaction.instructions.filter(
+      (ix) => !ix.programId.equals(ComputeBudgetProgram.programId),
+    ),
+    signers: [built.firstPositionNftKeypair, built.secondPositionNftKeypair],
+  }
 }
 
 /** DAMM v2 quote, exact in. Token A is the coin, B is WSOL. */

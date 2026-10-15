@@ -1,9 +1,11 @@
-// Creates (or extends) Quant Pad's address lookup table so launch transactions with a dev buy
-// and Quantum Hooks fit in one transaction. Operator tool: signs with a local keypair file.
+// Creates (or extends) Quant Pad's address lookup table so the Meteora launch transaction (DBC
+// create, creator hand-off, sync and dev buy) fits in one transaction. Operator tool: signs with a
+// local keypair file.
 //
-//   node scripts/create-lookup-table.mjs --keypair ~/.config/solana/id.json [--rpc URL] [--table ADDRESS]
+//   node scripts/create-lookup-table.mjs --keypair ~/.config/solana/id.json [--rpc URL] [--table ADDRESS] [--config DBC_CONFIG,...]
 //
-// Then set QUANTPAD_LOOKUP_TABLE=<address> on the server.
+// The DBC configs default to QUANTPAD_DBC_CONFIG. Then set QUANTPAD_LOOKUP_TABLE=<address> on the
+// server.
 import { readFile } from 'node:fs/promises'
 import {
   AddressLookupTableProgram,
@@ -27,7 +29,7 @@ const args = Object.fromEntries(
 )
 if (!args.keypair) {
   console.error(
-    'Usage: node scripts/create-lookup-table.mjs --keypair <file> [--rpc URL] [--table ADDRESS]',
+    'Usage: node scripts/create-lookup-table.mjs --keypair <file> [--rpc URL] [--table ADDRESS] [--config DBC_CONFIG,...]',
   )
   process.exit(1)
 }
@@ -39,13 +41,16 @@ const connection = new Connection(
   'confirmed',
 )
 
-const extra = []
-try {
-  const quantum = await import('../shared/quantum.mjs')
-  extra.push(quantum.QUANTUM_PROGRAM_ID, quantum.configPda())
-} catch {
-  console.warn('Quantum Hooks client not found; the table will cover pump.fun accounts only.')
-}
+const quantum = await import('../shared/quantum.mjs')
+const extra = [quantum.QUANTUM_PROGRAM_ID, quantum.configPda()]
+if (process.env.QUANTPAD_TREASURY) extra.push(new PublicKey(process.env.QUANTPAD_TREASURY))
+const launchConfigs = String(args.config || process.env.QUANTPAD_DBC_CONFIG || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean)
+  .map((s) => new PublicKey(s))
+if (!launchConfigs.length)
+  console.warn('No DBC launch config given (--config or QUANTPAD_DBC_CONFIG); add it later with --table.')
 
 async function send(instructions) {
   const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash()
@@ -78,7 +83,7 @@ const existing = new Set(
     k.toBase58(),
   ),
 )
-const wanted = (await staticLaunchAccounts(connection, { extra })).filter(
+const wanted = staticLaunchAccounts({ launchConfigs, extra }).filter(
   (k) => !existing.has(k.toBase58()),
 )
 for (let i = 0; i < wanted.length; i += 20) {
