@@ -728,7 +728,9 @@ export function createKeeper({
     }
     // Where the coin trades: burns need an open venue (not a full curve awaiting migration, not a
     // DAMM pool Meteora's operators disabled), and Fusion the DAMM v2 pool recorded by sync.
-    const venue = await quantum.fetchVenue(connection, key).catch(() => null)
+    const venue = quantum.fetchVenue
+      ? await quantum.fetchVenue(connection, key).catch(() => null)
+      : null
     if (!late() && venue?.kind === 'pool' && !state.dammPool) {
       try {
         const sync = await quantum.buildSyncInstruction({ connection, mint: key })
