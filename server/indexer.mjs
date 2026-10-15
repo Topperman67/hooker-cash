@@ -22,15 +22,19 @@ import {
   capSupply,
   marketCap,
 } from './market-math.mjs'
-import { curveProgress, isAddress, isSignature } from '../shared/network.mjs'
+import { curveProgress, isAddress, isSignature, launchTiers } from '../shared/network.mjs'
 
 // Quant Pad's DBC launch configs (QUANTPAD_DBC_CONFIG, comma-separated): a coin under one of them
 // is found by its pool address without a program scan.
-const envLaunchConfigs = () =>
-  String(process.env.QUANTPAD_DBC_CONFIG || '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(isAddress)
+const envLaunchConfigs = () => [
+  ...new Set([
+    ...String(process.env.QUANTPAD_DBC_CONFIG || '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter(isAddress),
+    ...launchTiers.map((t) => t.config),
+  ]),
+]
 
 const MAX_TRADES = 4000
 const TRADE_CHUNK = 500 // trades per stored chunk (see the trade storage section)

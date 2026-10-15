@@ -74,9 +74,9 @@ export default function DocsPage() {
         <h2 id="fees">Fees</h2>
         <ul>
           <li>
-            Quant Pad coins pay a 1% trading fee on Meteora (higher for the first two minutes after
-            launch, to deter snipers). Meteora keeps its protocol share and the rest goes to the
-            coin’s creator.
+            Every Quant Pad coin has a trading tax its launcher picks: 1%, 2%, 3% or 5%, shown on
+            its coin page. It starts at 25% for the first two minutes after launch, to deter
+            snipers. Meteora keeps its protocol share and the rest goes to the coin’s creator.
           </li>
           <li>
             {platform.feeBps

@@ -8,7 +8,7 @@ import { formatUnits, parseUnits, sol, toSol, bps } from '../lib/format.js'
 import { packTransactions, friendlyWalletError } from '../lib/solana.js'
 import { buyExceedsBalance, maxBuy } from '../lib/amounts.js'
 import { useChargedPlatformFee } from '../lib/useChargedFee.js'
-import { explorer } from '../../shared/network.mjs'
+import { explorer, tierForConfig } from '../../shared/network.mjs'
 
 const SOL_PRESETS = ['0.1', '0.5', '1', '2']
 const SELL_PRESETS = [25, 50, 75, 100]
@@ -311,6 +311,12 @@ export default function TradeTicket({ coin, onTraded }) {
             <>
               <dt>Quant Pad fee ({bps(platform.feeBps)})</dt>
               <dd className="num">{sol(toSol(fee))}</dd>
+            </>
+          )}
+          {tierForConfig(coin.dbcConfig) && (
+            <>
+              <dt>Trading tax</dt>
+              <dd className="num">{tierForConfig(coin.dbcConfig).feeBps / 100}%</dd>
             </>
           )}
           <dt>Route</dt>

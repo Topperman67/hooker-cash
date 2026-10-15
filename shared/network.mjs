@@ -25,6 +25,18 @@ export const brand = Object.freeze({
   tagline: 'Launch on Meteora. Wire it with Quantum Hooks.',
 })
 
+// Quant Pad's Meteora launch configs on mainnet, one per trading tax a launcher can pick
+// (scripts/create-dbc-config.mjs --fee N --pool-fee N). Each starts at 25% and falls to its tax over
+// the first 2 minutes (anti-sniper), and the coin's DAMM v2 pool keeps that tax after graduation.
+// The coin's creator receives the tax, less Meteora's protocol share.
+export const launchTiers = Object.freeze([
+  Object.freeze({ feeBps: 100, config: '8pm3TA69VqTstQGdDkkivEaujoaG64XqRMAMK8hWBFJ9' }),
+  Object.freeze({ feeBps: 200, config: 'CZmoBruAVTGKAo2sp8ziLvzpENuwgZk9nybvXsKhcPfn' }),
+  Object.freeze({ feeBps: 300, config: 'EaBVGcoSKhXLQvUJj8XYFDSUHsohYMheQS5Dgfac2tCT' }),
+  Object.freeze({ feeBps: 500, config: 'J25Zk92d9DBJJ5eWggmQN3yBe8tC6iuxs61FsefFSHNd' }),
+])
+export const tierForConfig = (config) => launchTiers.find((t) => t.config === config) || null
+
 // v2: the Meteora index (pump.fun records under v1 are left behind, not migrated).
 export const storageNamespace = 'quantpad:solana:v2'
 export const storageDirectory = 'solana-v2'

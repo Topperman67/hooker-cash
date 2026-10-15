@@ -37,7 +37,7 @@ import {
   saveJob,
   stagesPerTransaction,
 } from '../lib/launchPlan.js'
-import { explorer, isAddress } from '../../shared/network.mjs'
+import { explorer, isAddress, launchTiers } from '../../shared/network.mjs'
 import Glass from '../components/Glass.jsx'
 
 const DRAFT_KEY = 'quantpad:launch-draft:v1'
@@ -55,6 +55,8 @@ const EMPTY = {
   lock: { enabled: false, bps: 5000, cliffDays: 7, durationDays: 90 },
   devBuy: '0.5',
   slippage: 2,
+  // Trading tax in bps: picks the Meteora launch config (shared/network.mjs launchTiers).
+  tax: 100,
 }
 const bytes = (s) => new TextEncoder().encode(s).length
 const storage = () => {
@@ -107,13 +109,12 @@ export default function LaunchPage() {
   const pendingLaunch = useRef(null)
   const fileInput = useRef(null)
 
-  // Until the Quantum Hooks program is live (and not paused), every launch is a standard one and the
-  // launch-type choice is not offered.
-  const wantsQuantum = draft.mode === 'quantum' && quantum.available
+  const wantsQuantum = draft.mode === 'quantum'
   const quantumMode = wantsQuantum && quantum.available
   const quantumBlocked = wantsQuantum && !quantum.available
   const quantumPaused = quantumBlocked && !!quantum.paused
   const set = (patch) => setDraft((d) => ({ ...d, ...patch }))
+  const tier = launchTiers.find((t) => t.feeBps === Number(draft.tax)) || launchTiers[0]
   useEffect(() => {
     try {
       localStorage.setItem(DRAFT_KEY, JSON.stringify(draft))
@@ -125,7 +126,7 @@ export default function LaunchPage() {
     let live = true
     if (!devLamports) return setDevTokens(0n)
     const t = setTimeout(() => {
-      devBuyQuote(devLamports, dbcConfig)
+      devBuyQuote(devLamports, tier.config)
         .then((v) => live && setDevTokens(v))
         .catch(() => live && setDevTokens(0n))
     }, 250)
@@ -133,7 +134,7 @@ export default function LaunchPage() {
       live = false
       clearTimeout(t)
     }
-  }, [devLamports, dbcConfig])
+  }, [devLamports, tier.config])
 
   const splitTotal = draft.splits.reduce((s, x) => s + Number(x.bps || 0), 0)
   // The balance check counts the full fee (a treasury funded before the launch is sent takes it);
@@ -265,7 +266,7 @@ export default function LaunchPage() {
             slippagePct: draft.slippage,
             platform,
             lookupTable,
-            dbcConfig,
+            dbcConfig: tier.config,
           }),
         })
         pendingLaunch.current = job
@@ -506,21 +507,28 @@ export default function LaunchPage() {
             <h2 id="hooks-step">
               <span className="step-index">2</span> Quantum Hooks
             </h2>
-            {quantum.available ? (
+            <Segmented
+              label="Launch type"
+              value={wantsQuantum ? 'quantum' : 'standard'}
+              onChange={(mode) => set({ mode })}
+              options={[
+                ['quantum', 'Quantum launch'],
+                ['standard', 'Standard Meteora'],
+              ]}
+            />
+            <div className="tax-picker" style={{ marginTop: 16 }}>
               <Segmented
-                label="Launch type"
-                value={wantsQuantum ? 'quantum' : 'standard'}
-                onChange={(mode) => set({ mode })}
-                options={[
-                  ['quantum', 'Quantum launch'],
-                  ['standard', 'Standard Meteora'],
-                ]}
+                label="Trading tax"
+                value={tier.feeBps}
+                onChange={(tax) => set({ tax })}
+                options={launchTiers.map((t) => [t.feeBps, `${t.feeBps / 100}% tax`])}
               />
-            ) : (
-              <p className="chip" style={{ display: 'inline-flex', margin: 0 }}>
-                Quantum Hooks: coming soon
+              <p className="faint" style={{ margin: '8px 0 0', fontSize: 'var(--t-xs)' }}>
+                Every buy and sell pays {tier.feeBps / 100}% to the coin’s creator (less Meteora’s
+                protocol share), before and after graduation. For the first 2 minutes it starts at
+                25% and falls to {tier.feeBps / 100}%, to stop snipers.
               </p>
-            )}
+            </div>
             {quantumBlocked && (
               <p className="notice notice-warn" style={{ marginTop: 14 }}>
                 {quantumPaused
@@ -838,6 +846,8 @@ export default function LaunchPage() {
               <p className="muted summary-note">Standard Meteora launch. You are the creator.</p>
             )}
             <dl className="kv summary-costs">
+              <dt>Trading tax</dt>
+              <dd className="num">{tier.feeBps / 100}%</dd>
               <dt>Dev buy</dt>
               <dd className="num">{sol(toSol(devLamports || 0n))}</dd>
               {feeCharged > 0n && (
