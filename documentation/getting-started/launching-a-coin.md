@@ -54,12 +54,20 @@ The anti-sniper tax starts at 25% at launch and falls to the normal 1% over the 
 
 For a Quantum launch you split each fee pulse across the four [fee modules](../quantum-hooks/fee-modules.md). The allocation always adds up to 100%. The Launch page offers four presets to start from:
 
+<figure><img src="../.gitbook/assets/diagram-presets.jpg" alt="The four Launch page presets. Deflationary: 30% Creator share, 70% Quantum Burn. Holder yield: 25% Creator share, 75% Entanglement. Balanced: 30% Creator share, 30% Quantum Burn, 20% Entanglement, 20% Fusion. Creator max: 100% Creator share."><figcaption></figcaption></figure>
+
+<details>
+
+<summary>The presets as a table</summary>
+
 | Preset        | Creator share | Quantum Burn | Entanglement | Fusion |
 | ------------- | ------------- | ------------ | ------------ | ------ |
 | Deflationary  | 30%           | 70%          | 0%           | 0%     |
 | Holder yield  | 25%           | 0%           | 75%          | 0%     |
 | Balanced      | 30%           | 30%          | 20%          | 20%    |
 | Creator max   | 100%          | 0%           | 0%           | 0%     |
+
+</details>
 
 You can also add [Superposition](../quantum-hooks/launch-extras.md#superposition) wallets to split your creator share, and a [Time Dilation](../quantum-hooks/launch-extras.md#time-dilation) lock on your dev buy.
 
@@ -70,3 +78,7 @@ Allocations, split wallets and lock schedules are written before the coin exists
 ## After launch
 
 Your coin trades on Meteora's Dynamic Bonding Curve. When the curve fills, it graduates to a Meteora DAMM v2 pool, and its liquidity is permanently locked.
+
+<figure><img src="../.gitbook/assets/diagram-lifecycle.jpg" alt="A coin's life on Meteora in three steps: it is launched with your dev buy in one transaction, trades on the Meteora bonding curve until the curve fills, then graduates to a DAMM v2 pool whose liquidity is locked forever."><figcaption></figcaption></figure>
+
+<a href="https://quantpad.vercel.app/launch" class="button primary" data-icon="rocket">Open the Launch page</a>

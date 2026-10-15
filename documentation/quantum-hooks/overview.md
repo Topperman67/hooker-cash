@@ -7,15 +7,7 @@ icon: atom
 
 Quantum Hooks work on the one stream every coin has: its creator fees. A Quant Pad coin's Meteora creator is the coin's own **well**, a program-controlled address, and the hooks decide where every lamport goes.
 
-```mermaid
-flowchart LR
-    A["Trades<br/>on the Meteora curve or DAMM v2 pool"] --> B["Creator fee<br/>claimed from Meteora into the well"]
-    B --> C["Pulse<br/>split by locked rules"]
-    C --> D[Creator share]
-    C --> E[Quantum Burn]
-    C --> F[Entanglement]
-    C --> G[Fusion]
-```
+<figure><img src="../.gitbook/assets/diagram-fee-flow.jpg" alt="Trades pay a trading tax. Meteora keeps its share and the creator fee flows into the coin's well. Each pulse splits the well's fees four ways: Creator share is paid to the launcher, Quantum Burn buys and burns the coin, Entanglement shares SOL with holders, and Fusion adds locked liquidity. An optional protocol share, capped at 10%, can be taken first."><figcaption></figcaption></figure>
 
 ## Key terms
 
@@ -29,8 +21,35 @@ Quantum Hooks can take a protocol share of each fee pulse before it is split. Th
 
 ## Learn more
 
-* [Fee modules](fee-modules.md): where each slice of a pulse goes
-* [Launch extras](launch-extras.md): Superposition and Time Dilation
-* [Guarantees and risks](guarantees-and-risks.md): what the program enforces, and what it can't
+<table data-view="cards">
+  <thead>
+    <tr>
+      <th></th>
+      <th></th>
+      <th data-hidden data-card-cover data-type="files"></th>
+      <th data-hidden data-card-target data-type="content-ref"></th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Fee modules</strong></td>
+      <td>Where each slice of a pulse goes.</td>
+      <td><a href="../.gitbook/assets/card-hooks.jpg">card-hooks.jpg</a></td>
+      <td><a href="fee-modules.md">fee-modules.md</a></td>
+    </tr>
+    <tr>
+      <td><strong>Launch extras</strong></td>
+      <td>Superposition and Time Dilation.</td>
+      <td><a href="../.gitbook/assets/extra-superposition.jpg">extra-superposition.jpg</a></td>
+      <td><a href="launch-extras.md">launch-extras.md</a></td>
+    </tr>
+    <tr>
+      <td><strong>Guarantees and risks</strong></td>
+      <td>What the program enforces, and what it can't.</td>
+      <td><a href="../.gitbook/assets/module-fusion.jpg">module-fusion.jpg</a></td>
+      <td><a href="guarantees-and-risks.md">guarantees-and-risks.md</a></td>
+    </tr>
+  </tbody>
+</table>
 
-<a href="https://quantpad.vercel.app/launch" class="button primary">Launch with Quantum Hooks</a>
+<a href="https://quantpad.vercel.app/launch" class="button primary" data-icon="rocket">Launch with Quantum Hooks</a>
