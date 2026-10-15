@@ -15,7 +15,7 @@ Connect a Solana wallet such as Phantom, Solflare or Backpack.
 {% step %}
 ### Describe your coin
 
-On the [Launch page](https://quant-pad.vercel.app/launch), add a name, ticker, artwork and optional links. Quant Pad publishes the metadata, and its address is stored in your token forever.
+On the [Launch page](https://www.quantpad.company/launch), add a name, ticker, artwork and optional links. Quant Pad publishes the metadata, and its address is stored in your token forever.
 {% endstep %}
 
 {% step %}
@@ -81,4 +81,4 @@ Your coin trades on Meteora's Dynamic Bonding Curve. When the curve fills, it gr
 
 <figure><img src="../.gitbook/assets/diagram-lifecycle.jpg" alt="A coin's life on Meteora in three steps: it is launched with your dev buy in one transaction, trades on the Meteora bonding curve until the curve fills, then graduates to a DAMM v2 pool whose liquidity is locked forever."><figcaption></figcaption></figure>
 
-<a href="https://quant-pad.vercel.app/launch" class="button primary" data-icon="rocket">Open the Launch page</a>
+<a href="https://www.quantpad.company/launch" class="button primary" data-icon="rocket">Open the Launch page</a>

@@ -28,7 +28,7 @@ Quant Pad is a launch and trading front end for Meteora on Solana. Its on-chain 
 
 Every coin is a real Meteora coin. It trades on Meteora's Dynamic Bonding Curve and, when the curve fills, graduates to a Meteora DAMM v2 pool with its liquidity permanently locked.
 
-<a href="https://quant-pad.vercel.app/launch" class="button primary" data-icon="rocket">Launch a coin</a> <a href="https://quant-pad.vercel.app" class="button secondary" data-icon="arrow-up-right-from-square">Open Quant Pad</a>
+<a href="https://www.quantpad.company/launch" class="button primary" data-icon="rocket">Launch a coin</a> <a href="https://www.quantpad.company" class="button secondary" data-icon="arrow-up-right-from-square">Open Quant Pad</a>
 {% endcolumn %}
 
 {% column width="42%" %}
