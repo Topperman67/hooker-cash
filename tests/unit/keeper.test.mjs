@@ -135,6 +135,8 @@ test('keeper pulses, burns within the cap and posts a holder epoch with valid pr
     indexer,
     quantum: fakeQuantum(state, calls),
     keeper: keeperKey,
+    // One sample is a window: these tests are about posting, not holding time.
+    holdtime: { minCovered: 0 },
   })
   assert.equal(keeper.enabled, true)
   assert.deepEqual(await keeper.tick(), { enabled: true, ran: 1 })

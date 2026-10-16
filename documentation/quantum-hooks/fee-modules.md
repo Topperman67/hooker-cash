@@ -55,9 +55,11 @@ Accumulates in the holder reserve.
 
 {% stepper %}
 {% step %}
-### Snapshot
+### Holding time
 
-About once a day, and never more often than every 20 hours, the keeper snapshots wallet balances and posts a merkle root for the epoch on-chain.
+The keeper samples wallet balances about every 10 minutes (down to every 50 minutes while the coin is quiet). A wallet earns only for tokens it held through two samples in a row, so tokens bought just before a sample and sold just after earn nothing. A wallet that sells keeps what it earned up to then.
+
+About once a day, and never more often than every 20 hours, the keeper splits the holder reserve by each wallet's average balance since the previous epoch and posts a merkle root for the epoch on-chain. A coin's first epoch waits until there are 12 hours of samples.
 {% endstep %}
 
 {% step %}

@@ -312,6 +312,8 @@ function makeKeeper(chain, store) {
     },
     log: (m) => chain.logged.push(m),
     pollMs: 1,
+    // One sample is a window: these tests are about posting, not holding time.
+    holdtime: { minCovered: 0 },
   })
 }
 

@@ -72,8 +72,8 @@ node scripts/program-ops.mjs --rpc "$QUANTPAD_RPC_URL" --mainnet \
 
 From code, the builders in `shared/quantum.mjs` named below do the same.
 
-- **Claim delay.** Every Entanglement epoch opens for claims at `claim_start`, which is `claim_delay` seconds after it was posted. Until then the coin page shows "Claims open in …" and the keeper offers no claims. Pick a delay longer than the time you need to notice a wrong epoch and cancel it. A longer delay also holds back every holder's payout by that much. The program accepts at most one epoch per coin every 20 hours (the keeper posts once a day).
-- **`cancel_epoch`** (`buildCancelEpochInstruction({ connection, authority, mint, index, programId })`) works only before the epoch's `claim_start`. It returns the epoch's SOL to the coin's holder reserve, closes the epoch account, sends its rent to the configured keeper and emits `EpochCancelled`. Use it for an epoch your keeper did not post, or one with a wrong snapshot or total. The keeper flags the first kind for you (see [Keeper alerts](#keeper-alerts)); `program-ops.mjs --epochs <mint>` lists a coin's epochs with their `claim_start`, and `GET /api/quantum/<mint>` lists the ones your keeper recorded. An index the keeper has no record of, or whose root differs from its record, was not posted by your keeper.
+- **Claim delay.** Every Entanglement epoch opens for claims at `claim_start`, which is `claim_delay` seconds after it was posted. Until then the coin page shows "Claims open in …" and the keeper offers no claims. Pick a delay longer than the time you need to notice a wrong epoch and cancel it. A longer delay also holds back every holder's payout by that much. The program accepts at most one epoch per coin every 20 hours. The keeper posts about once a day, splitting the holder reserve by each wallet's average balance since the previous epoch (see [Holder sampling](#holder-sampling)).
+- **`cancel_epoch`** (`buildCancelEpochInstruction({ connection, authority, mint, index, programId })`) works only before the epoch's `claim_start`. It returns the epoch's SOL to the coin's holder reserve, closes the epoch account, sends its rent to the configured keeper and emits `EpochCancelled`. Use it for an epoch your keeper did not post, or one with wrong weights or a wrong total. The keeper flags the first kind for you (see [Keeper alerts](#keeper-alerts)); `program-ops.mjs --epochs <mint>` lists a coin's epochs with their `claim_start`, and `GET /api/quantum/<mint>` lists the ones your keeper recorded. An index the keeper has no record of, or whose root differs from its record, was not posted by your keeper.
 - **`set_paused`** (`buildSetPausedInstruction({ connection, authority, paused, programId })`) pauses or resumes the program. A pause stops everything that calls into pump.fun: new Quantum registrations, Quantum burns and Fusion. Pulses, claims, epoch closes, epoch cancels and token releases keep working, so nobody's funds are frozen (see `docs/QUANTUM_HOOKS_SPEC.md`). `/api/status` reports `quantum.available: false` with reason `paused`. `update_config` no longer changes the pause flag.
 - **`update_config`** (`buildUpdateConfigInstruction({ ..., expectedVersion })`) changes the treasury, keeper, protocol share, burn cap, intervals, grace period, claim delay or authority. Every config change, including a pause, increments the config's `version`, and an update built against an older version fails with `ConfigChanged`. So an update prepared before a pause cannot undo it: re-read the config and rebuild the update after any other change. When `expectedVersion` is left out, the builder reads the current version when it builds the instruction.
 
@@ -93,8 +93,19 @@ Each keeper run logs what needs you, and `GET /api/keeper/tick` also returns it 
 
 - `foreign-epoch`: `epoch <mint>#<index> was not posted by this keeper; cancel it with cancel_epoch before <time>`. An on-chain epoch that the keeper has no record of, or whose root differs from its record, while it can still be cancelled. Cancel it with `program-ops.mjs --cancel-epoch` before that time, then rotate the keeper key (below): someone else holds it.
 - `low-balance`: the keeper wallet holds less than 0.01 SOL per Quantum coin it serves (about a mid-sized epoch's rent plus a day of fees each). Top it up.
+- `holdtime-stalled`: `holdtime <mint>: no holder sample since <time>; Entanglement cannot post without them` (or `no holder sample yet`). An Entanglement coin with a reserve to pay has had no holder sample for 3 hours, or has never had one because its scans keep timing out, so its next epoch cannot be built (see [Holder sampling](#holder-sampling)). The log lines before it name the failing scan; check your RPC provider's `getProgramAccounts` limits.
 
 The keeper works through its coins a few per run, in rotation, so these appear only while the cron (or traffic) keeps it running. Forward the function's logs to something that notifies you (for example a Vercel log drain with an alert on `was not posted by this keeper`), and check them more often than the claim delay.
+
+### Holder sampling
+
+Entanglement pays by holding time, so the keeper samples each Entanglement coin's holder balances with one `getProgramAccounts` call about every 10 minutes, about 144 calls a day per active coin. A coin whose balances stop changing is sampled less often, down to every 50 minutes (about 29 calls a day). `getProgramAccounts` is one of the heavier RPC calls and some providers limit it or bill it at a higher rate, so check your plan before many coins use Entanglement. `QUANTPAD_RPC_GLOBAL_PER_MIN` does not count these calls. Sampling also uses Redis commands and bandwidth (see the storage sizing note under [Limits and tuning](#7-limits-and-tuning)).
+
+Each keeper run samples at most 16 coins, oldest first, within a quarter of its time budget. With the 5-minute cron that is about 4 600 samples a day, so the 10-minute pace holds for about 30 active Entanglement coins. With more, each coin is sampled less often (about hourly at 200 coins): its anti-gaming resolution drops to that interval, and its 12 hours of samples take longer to gather.
+
+Each scan is given up after 8 seconds, or sooner when the run's quarter is spent, and a rate-limited one fails at once instead of being retried. A coin whose scan takes the full 8 seconds is left out of that quick pass: the keeper samples it on the coin's own turn in the run, allowing up to 30 seconds, at most every 50 minutes, until its scans are fast again. If none succeeds for 3 hours the keeper raises `holdtime-stalled` (see [Keeper alerts](#keeper-alerts)).
+
+Samples are taken only while the keeper runs, so keep the 5-minute cron going: a gap between samples is credited for at most an hour. An epoch needs 12 hours of samples, so each new coin's first epoch waits for them, and so does every coin's next epoch right after you first deploy a sampling keeper. If epochs land that the holding window did not pay for (for example while an older keeper version ran on the same storage), the window starts over from the next sample, so that time is not paid twice.
 
 ### Keeper SOL
 
@@ -239,6 +250,17 @@ Storage sizing: each open Entanglement epoch keeps its leaves with their merkle 
 cheap to serve, about 11 MB for a full epoch of 16 384 holders (less for smaller coins). Epochs stay
 in storage for the 30-day claim window plus 2 days. Size the Redis plan for the number of busy Quantum
 coins you expect: for example, 20 coins with full epochs need roughly 220 MB.
+
+Each Entanglement coin also keeps its holder records for [holder sampling](#holder-sampling), about
+150 bytes per holder (every bucket of 256 holders is kept twice, so an interrupted sample can be
+redone): about 2.4 MB at 16 384 holders and 4.8 MB at 32 768, the most the keeper follows. A sample
+that finds no balance changed costs 2 commands. Otherwise it reads and rewrites each bucket where a
+balance moved: a busy coin with 16 384 holders and 50 to 300 changes a sample uses about 70 to 130
+commands and moves 0.6 to 1.2 MB each way, about 10 000 to 19 000 commands and 180 to 350 MB a day;
+at 32 768 holders, up to about 260 commands and 2.4 MB each way a sample. Each epoch post also reads
+every bucket once. A bucket holds at most 4 096 records (about 430 KB), however many wallets land
+in it. Check the plan's command, bandwidth and request-size limits against the busy Entanglement
+coins you expect.
 
 The server fetches off-chain token metadata (to show coins' names and artwork) only over https and
 only from public addresses: private, loopback and link-local hosts are refused, also after a
