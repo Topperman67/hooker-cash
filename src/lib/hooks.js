@@ -19,7 +19,7 @@ export const MODULES = [
     name: 'Entanglement',
     color: 'var(--hook-entangle)',
     short: 'Shares SOL with holders',
-    body: 'Fees accumulate for holders. Each epoch snapshots balances and posts a claim list; holders claim their SOL from the coin page.',
+    body: 'Fees accumulate for holders. Each epoch splits them by each wallet’s average balance since the previous one; holders claim their SOL from the coin page.',
   },
   {
     key: 'fusionBps',

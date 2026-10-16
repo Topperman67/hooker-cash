@@ -96,18 +96,20 @@ const uriHash = (uri) => createHash('sha256').update(String(uri)).digest('hex').
 export const issuedUriKey = (uri) => 'issued-uri:' + uriHash(uri)
 export const issuedUriClaimKey = (uri) => 'issued-uri-mint:' + uriHash(uri)
 
+// An operator mint list: a Set, an array, or (when undefined) the comma-separated env var.
+const mintSet = (value, env) =>
+  value instanceof Set
+    ? value
+    : new Set(
+        (Array.isArray(value) ? value : String(process.env[env] || '').split(',')).map((s) =>
+          String(s).trim(),
+        ),
+      )
+
 // Operator moderation list (QUANTPAD_HIDDEN_MINTS): a Set, an array, or a predicate.
 function hiddenTest(hidden) {
   if (typeof hidden === 'function') return hidden
-  const set =
-    hidden instanceof Set
-      ? hidden
-      : new Set(
-          (Array.isArray(hidden)
-            ? hidden
-            : String(process.env.QUANTPAD_HIDDEN_MINTS || '').split(',')
-          ).map((s) => String(s).trim()),
-        )
+  const set = mintSet(hidden, 'QUANTPAD_HIDDEN_MINTS')
   return (mint) => set.has(mint)
 }
 
@@ -121,7 +123,10 @@ const needsIdentity = (r) =>
  * `onNativeLaunch({ mint, uri })` (K5) is awaited once after a coin becomes a native launch (a
  * registration, or a tracked Quantum coin); a failed call is retried by later syncs, so it must be
  * idempotent. `hidden` (default QUANTPAD_HIDDEN_MINTS) keeps hidden mints out of the native cap.
- * `maxNative`, `staleVolume` (SOL) and `launchesPerWallet` override the native-cap settings.
+ * `listed` (default QUANTPAD_LISTED_MINTS) are coins launched outside Quant Pad's launch flow (test
+ * launches, say) that its lists show anyway: tracked by the background pass even when nobody has
+ * opened them, and never dropped at the external cap. A hidden mint stays hidden. `maxNative`,
+ * `staleVolume` (SOL) and `launchesPerWallet` override the native-cap settings.
  * `launchConfigs` (default QUANTPAD_DBC_CONFIG) are Quant Pad's DBC configs.
  */
 export function createIndexer({
@@ -131,6 +136,7 @@ export function createIndexer({
   now = () => Date.now(),
   onNativeLaunch = null,
   hidden,
+  listed,
   maxNative = MAX_NATIVE,
   staleVolume = STALE_VOLUME_SOL,
   launchesPerWallet = LAUNCHES_PER_WALLET,
@@ -151,6 +157,12 @@ export function createIndexer({
     cursor: 'sync:cursor',
   }
   const isHidden = hiddenTest(hidden)
+  const listedMints = [...mintSet(listed, 'QUANTPAD_LISTED_MINTS')].filter(
+    (mint) => isAddress(mint) && !isHidden(mint),
+  )
+  const isListed = (mint) => listedMints.includes(mint)
+  // Shown in Quant Pad's own lists: its launches and the operator's listed coins.
+  const inLists = (c) => !c.external || isListed(c.mint)
   // Fields that start a native launch's onNativeLaunch notice (nothing to track without a callback).
   const notice = (at = now()) =>
     onNativeLaunch ? { nativeNotice: 'pending', nativeNoticeAt: at } : {}
@@ -316,8 +328,10 @@ export function createIndexer({
         items[index] = summary
       } else if (insert) items.unshift(summary)
       else return []
-      const others = items.filter((c) => c.external && c.mint !== mint)
-      const excess = others.length + (summary.external ? 1 : 0) - MAX_EXTERNAL
+      // Listed coins neither count toward the cap nor drop out at it.
+      const capped = (c) => c.external && !isListed(c.mint)
+      const others = items.filter((c) => capped(c) && c.mint !== mint)
+      const excess = others.length + (capped(summary) ? 1 : 0) - MAX_EXTERNAL
       const drop = new Set(
         excess > 0
           ? others
@@ -1072,6 +1086,7 @@ export function createIndexer({
   // One time-bounded pass: a lease keeps instances from double-indexing, and a shared rotation
   // cursor, saved after every coin, moves through the coins across cold starts and killed passes.
   let running = null
+  const untrackable = new Set()
   function sync(options = {}) {
     if (running) return Promise.resolve({ skipped: true })
     running = pass(options).finally(() => {
@@ -1085,10 +1100,22 @@ export function createIndexer({
     if (!(await store.set(keys.lease, owner, { nx: true, ttl: timeMs + LEASE_SLACK_MS })))
       return { skipped: true }
     try {
-      const items = await list()
+      let items = await list()
+      // Listed coins nobody has opened yet are tracked here, so the lists show them unvisited. A
+      // mint that cannot be tracked (not a SOL-quoted Meteora coin) is not retried on this instance.
+      const missing = listedMints.filter(
+        (mint) => !untrackable.has(mint) && !items.some((c) => c.mint === mint),
+      )
+      for (const mint of missing) {
+        if (Date.now() >= deadline) break
+        await track(mint).catch((e) => {
+          if (e?.status >= 400 && e?.status < 500) untrackable.add(mint)
+        })
+      }
+      if (missing.length) items = await list()
       if (!items.length) return { synced: 0 }
-      // Quant Pad launches first, then recently viewed external coins.
-      const ordered = [...items.filter((c) => !c.external), ...items.filter((c) => c.external)]
+      // Quant Pad launches and listed coins first, then recently viewed external coins.
+      const ordered = [...items.filter(inLists), ...items.filter((c) => !inLists(c))]
       const start = Number((await store.get(keys.cursor)) || 0) % ordered.length
       let synced = 0
       let failed = 0
@@ -1108,12 +1135,12 @@ export function createIndexer({
   }
 
   // Listing filters and sorts. Unknown names (including inherited ones such as 'constructor') mean
-  // 'all' and 'newest', so external coins are only ever listed when 'tracked' is asked for
-  // (QP-SEC-7: the route allowlists both too).
+  // 'all' and 'newest', so external coins are only ever listed when 'tracked' is asked for, or
+  // when the operator lists them (QP-SEC-7: the route allowlists both too).
   const FILTERS = {
-    all: (c) => !c.external,
-    quantum: (c) => !!c.quantum && !c.external,
-    graduated: (c) => !!c.complete && !c.external,
+    all: inLists,
+    quantum: (c) => !!c.quantum && inLists(c),
+    graduated: (c) => !!c.complete && inLists(c),
     tracked: (c) => !!c.external,
   }
   const SORTS = {

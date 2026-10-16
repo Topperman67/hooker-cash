@@ -12,6 +12,7 @@ import WalletDialog from './WalletDialog.jsx'
 import { useWallet } from '../context/WalletContext.jsx'
 import { usePlatform } from '../context/PlatformContext.jsx'
 import { short, sol, toSol, usd } from '../lib/format.js'
+import { DOCS_URL } from '../lib/links.js'
 
 const LINKS = [
   ['/launch', 'Launch'],
@@ -19,7 +20,6 @@ const LINKS = [
   ['/hooks', 'Quantum Hooks'],
   ['/portfolio', 'Portfolio'],
 ]
-const DOCS_URL = 'https://docs.quantpad.company/'
 
 // The docs live on GitBook. In the header the link shimmers blue every 3 s (shell.css).
 function DocsLink({ onClick }) {

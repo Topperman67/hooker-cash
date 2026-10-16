@@ -88,7 +88,7 @@ function Flywheel() {
               <div className="fw-pct">60%</div>
               <div>
                 <h3>Paid to holders</h3>
-                <p>In SOL, by a snapshot taken at a random moment every 2 hours.</p>
+                <p>In SOL, by each wallet’s average balance since the last payout.</p>
               </div>
             </div>
             <div className="fw-row fw-burn" ref={rowBurn}>

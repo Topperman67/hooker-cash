@@ -13,7 +13,7 @@ icon: scale-balanced
 
 ## What you should know
 
-* The keeper decides who each Entanglement epoch pays, and epochs are at least 20 hours apart. An epoch's claims open only after a delay set on-chain, 6 hours by default. Until then, Quant Pad can cancel the epoch, which returns its SOL to the holder reserve.
+* The keeper decides who each Entanglement epoch pays, from wallet balances it samples itself, so the amounts can't be recomputed from chain state. Epochs are at least 20 hours apart. An epoch's claims open only after a delay set on-chain, 6 hours by default. Until then, Quant Pad can cancel the epoch, which returns its SOL to the holder reserve.
 * Meteora can upgrade its programs, and its operators can change a migrated pool's fees or pause it. No Meteora admin can reassign a coin's creator away from its well.
 * Creator fees are a share of volume (the trading fee less Meteora's protocol share), so hooks scale with trading activity.
 * Buybacks are market orders and can be front-run. Each burn is capped in size to limit that.

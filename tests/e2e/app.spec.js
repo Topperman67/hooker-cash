@@ -579,6 +579,9 @@ test('Docs links open the GitBook site in a new tab, and the header one shimmers
     await expect(link).toHaveAttribute('href', 'https://docs.quantpad.company/')
     await expect(link).toHaveAttribute('target', '_blank')
   }
+  const hooks = page.getByRole('link', { name: 'See how the hooks work' })
+  await expect(hooks).toHaveAttribute('href', 'https://docs.quantpad.company/')
+  await expect(hooks).toHaveAttribute('target', '_blank')
   await expect(page.locator('.nav a.nav-docs')).toHaveCSS('animation-name', 'docs-shimmer')
   await expect(page.locator('.nav a.nav-docs')).toHaveCSS('animation-duration', '3s')
 })

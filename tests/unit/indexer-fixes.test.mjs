@@ -641,6 +641,61 @@ test('external eviction keeps the coin just tracked and deletes evicted records'
   assert.ok((await indexer.list()).some((c) => c.mint === mint))
 })
 
+test('listed mints are shown in the main lists, tracked by the pass and kept at the cap', async () => {
+  const chain = await fakeChain()
+  const store = memoryStore()
+  const [shown, opened, hidden, plain, missing] = Array.from({ length: 5 }, address)
+  for (const mint of [shown, opened, hidden, plain])
+    await chain.setAccounts(coinAccounts(mint, { creator: address() }))
+  const indexer = createIndexer({
+    connection: chain.connection,
+    store,
+    quantum: null,
+    listed: [shown, opened, hidden, missing, 'not-a-mint'],
+    hidden: [hidden],
+  })
+  await indexer.track(opened)
+  await indexer.track(plain)
+  await idle(store)
+  let tracks = 0
+  const getMany = chain.connection.getMultipleAccountsInfo
+  chain.connection.getMultipleAccountsInfo = async (keys) => {
+    if (keys.some((k) => k.toBase58() === missing)) tracks++
+    return getMany(keys)
+  }
+
+  // The pass tracks the listed coin nobody opened, skips the hidden one, and gives up on a mint
+  // that is not a Meteora coin.
+  await indexer.sync({ budget: 0, timeMs: 5000 })
+  await idle(store)
+  const mints = (q) => indexer.market(q).then((r) => r.items.map((c) => c.mint).sort())
+  assert.deepEqual(await mints({}), [shown, opened].sort())
+  assert.deepEqual(await mints({ filter: 'tracked' }), [shown, opened, plain].sort())
+  assert.ok(
+    (await indexer.list()).every((c) => c.external),
+    'listed coins stay external',
+  )
+  assert.ok(!(await indexer.list()).some((c) => c.mint === hidden))
+  assert.ok(tracks > 0)
+  const before = tracks
+  await indexer.sync({ budget: 0, timeMs: 5000 })
+  assert.equal(tracks, before, 'an untrackable mint is not retried')
+
+  // At the external cap, unlisted coins make room and listed coins stay.
+  const old = Array.from({ length: 400 }, address)
+  await store.set('coins:list', [
+    ...(await indexer.list()),
+    ...old.map((mint, i) => summarize({ mint, external: true, syncedAt: 1000 + i })),
+  ])
+  const next = address()
+  await chain.setAccounts(coinAccounts(next, { creator: address() }))
+  await indexer.track(next)
+  await idle(store)
+  const kept = (await indexer.list()).map((c) => c.mint)
+  assert.ok(kept.includes(shown) && kept.includes(opened))
+  assert.equal(kept.filter((m) => m !== shown && m !== opened).length, 400)
+})
+
 // ---- busy coins ---------------------------------------------------------------------------------
 test("a busy coin's 24h figures stay whole after its trade list is cut", async () => {
   const chain = await fakeChain()

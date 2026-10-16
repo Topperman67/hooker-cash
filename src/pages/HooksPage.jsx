@@ -22,7 +22,7 @@ const DETAIL = {
   burnBps:
     'Accumulates in the coin’s burn reserve. The keeper spends it in capped buys (on the Meteora bonding curve before graduation, on its DAMM v2 pool after) and burns every token bought in the same transaction. If the keeper stalls, anyone can run the burn after a grace period.',
   entangleBps:
-    'Accumulates in the holder reserve. About once a day (never more often than every 20 hours) the keeper snapshots wallet balances and posts a merkle root for the epoch on-chain. Its claims open after a short delay, and holders then claim their SOL from the coin page until the epoch expires 30 days after posting. Unclaimed SOL rolls into the next epoch.',
+    'Accumulates in the holder reserve. The keeper samples wallet balances about every 10 minutes (less often while the coin is quiet). About once a day (never more often than every 20 hours) it splits the reserve by each wallet’s average balance since the previous epoch and posts a merkle root for the epoch on-chain. Only tokens held through two samples in a row count, so tokens bought just before a sample and sold just after earn nothing. A wallet that sells keeps what it earned up to then. The epoch’s claims open after a short delay, and holders then claim their SOL from the coin page until the epoch expires 30 days after posting. Unclaimed SOL rolls into the next epoch.',
   fusionBps:
     'Before graduation it simply accumulates. After graduation the reserve buys tokens and adds both sides to the well’s Meteora DAMM v2 position, permanently locked; the program has no instruction to withdraw them.',
 }
@@ -111,8 +111,9 @@ export default function HooksPage() {
         <h2>What you should know</h2>
         <ul>
           <li>
-            The keeper decides who each Entanglement epoch pays, and epochs are at least 20 hours
-            apart. {claimWindowText(quantum.claimDelay)}
+            The keeper decides who each Entanglement epoch pays, from wallet balances it samples
+            itself, so the amounts can’t be recomputed from chain state. Epochs are at least 20
+            hours apart. {claimWindowText(quantum.claimDelay)}
           </li>
           <li>
             Meteora can upgrade its programs, and its operators can change a migrated pool’s fees or

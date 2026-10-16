@@ -5,7 +5,9 @@
 <!-- The link-preview image (public/og.png, og:image in index.html). plate.png is the earlier og.png
      with the first three headline lines removed: the lockup, chrome Q, "Quantum Hooks." and the
      sub-line stay baked in, and the lines above them are set here in the same Hubot Sans settings.
-     Render: node social/render.mjs social/og/og.html 1200 630 public/og.png -->
+     Render: node social/render.mjs social/og/og.html 1200 630 public/og.png
+     then bump the ?v= on og:image in index.html: link-preview apps (Telegram, X) keep a
+     picture they fetched before for as long as its URL stays the same. -->
 <style>
   @font-face { font-family: 'Hubot Sans'; src: url('../../node_modules/@fontsource-variable/hubot-sans/files/hubot-sans-latin-wdth-normal.woff2') format('woff2'); font-weight: 200 900; font-stretch: 75% 125%; }
   html, body { margin: 0; width: 1200px; height: 630px; overflow: hidden; background: #e9ecf0; }

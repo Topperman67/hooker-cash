@@ -167,6 +167,35 @@ test('market, coin lookups, hidden mints and unknown coins', async () => {
   }
 })
 
+test('listed mints join the market and stats; a hidden one stays hidden', async () => {
+  const listedMint = 'SysvarC1ock11111111111111111111111111111111'
+  const bothMint = 'So11111111111111111111111111111111111111112'
+  const { app, call, close } = await boot({
+    listedMints: `${listedMint}, ${bothMint}, not-a-mint`,
+    hiddenMints: bothMint,
+  })
+  try {
+    await app.store.set('coins:list', [
+      { mint: listedMint, name: 'Test', symbol: 'TST', external: true, createdAt: 3 },
+      { mint: bothMint, name: 'Both', symbol: 'BTH', external: true, createdAt: 2 },
+      {
+        mint: 'SysvarRent111111111111111111111111111111111',
+        name: 'Native',
+        symbol: 'NAT',
+        createdAt: 1,
+      },
+      { mint: 'Stake11111111111111111111111111111111111111', symbol: 'EXT', external: true },
+    ])
+    const symbols = async (path) => (await (await call(path)).json()).items.map((c) => c.symbol)
+    assert.deepEqual(await symbols('/api/market'), ['TST', 'NAT'])
+    assert.deepEqual(await symbols('/api/market?filter=tracked'), ['TST', 'EXT'])
+    assert.equal((await (await call('/api/stats')).json()).coins, 2)
+    assert.equal((await (await call(`/api/coins/${bothMint}`)).json()).code, 'HIDDEN')
+  } finally {
+    await close()
+  }
+})
+
 test('keeper tick requires the cron secret', async () => {
   process.env.CRON_SECRET = 'cron-test-secret'
   const { base, close } = await boot()

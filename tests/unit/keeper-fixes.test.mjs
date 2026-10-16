@@ -267,6 +267,8 @@ function makeKeeper(chain, store) {
     },
     log: (m) => chain.logged.push(m),
     pollMs: 1,
+    // One sample is a window: these tests are about posting, not holding time.
+    holdtime: { minCovered: 0 },
   })
 }
 
@@ -589,6 +591,8 @@ test('the keeper migrates full curves of Quant Pad launches, at most two a tick'
     },
     log: (m) => chain.logged.push(m),
     pollMs: 1,
+    // One sample is a window: these tests are about posting, not holding time.
+    holdtime: { minCovered: 0 },
   })
   await keeper.tick()
   // The coins Meteora already moved do not use up the tick's two migrations.

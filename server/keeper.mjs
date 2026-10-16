@@ -6,10 +6,12 @@
 // claims open only at its claimStart (the config's claim delay after the post); until then the
 // authority may cancel it, which returns its SOL to the coin's reserve and closes its account.
 // Each tick logs (and returns as `alerts`) any recent on-chain epoch this keeper did not post,
-// while it can still be cancelled, and a keeper wallet running low.
-import { createHash, randomBytes } from 'node:crypto'
+// while it can still be cancelled, and a keeper wallet running low. Entanglement pays by holding
+// time (server/holdtime.mjs): each tick samples the holder balances of coins whose turn has come.
+import { randomBytes } from 'node:crypto'
 import {
   ComputeBudgetProgram,
+  Connection,
   Keypair,
   PublicKey,
   TransactionMessage,
@@ -18,6 +20,16 @@ import {
 import bs58 from 'bs58'
 import { network } from '../shared/network.mjs'
 import { LAUNCH_CONFIG } from '../shared/dbc-config.mjs'
+import {
+  MAX_STEP,
+  MIN_COVERED,
+  SAMPLE_EVERY,
+  SAMPLE_IDLE_MAX,
+  allocate,
+  bucketOf,
+  createHoldtime,
+  step,
+} from './holdtime.mjs'
 
 const MIN_PULSE = 20_000_000n // 0.02 SOL of creator fees waiting outside the well
 // Burns wait out the launch config's anti-sniper fee window: early swaps pay up to 25%.
@@ -69,9 +81,37 @@ const SCAN_CHUNK = 25
 const DROP_MARGIN = 150
 const POLL_FAILURES = 10
 const GRACE_POLLS = 20
+// Holder sampling: at most SAMPLE_BUDGET coins a tick, SAMPLE_PARALLEL at once, within
+// SAMPLE_SHARE of the tick's time limit. Each holder scan is given up at SCAN_TIMEOUT_MS or where
+// that share ends, and none starts with under an eighth of SCAN_TIMEOUT_MS of it left. A coin
+// whose scan outlasts SCAN_TIMEOUT_MS is sampled by runCoin instead, which allows SLOW_SCAN_MS
+// within the tick's whole limit, at most every SAMPLE_IDLE_MAX. A post samples again unless the
+// last sample is under FRESH_SAMPLE seconds old. A coin with a reserve to pay and no sample for
+// SAMPLE_STALL seconds is an alert.
+const SAMPLE_BUDGET = 16
+const SAMPLE_PARALLEL = 3
+const SAMPLE_SHARE = 0.25
+const SCAN_TIMEOUT_MS = 8000
+const SLOW_SCAN_MS = 30_000
+const FRESH_SAMPLE = 60
+const SAMPLE_STALL = 3 * 3600
+// Epoch records read when epochs landed that the holding window did not pay for.
+const WINDOW_LOOKBACK = 8
+// Holder schedule entries (see holdtime.mjs): [nextDue, every, slow, next, at, cut], the last
+// three a summary of the coin's window as last read or written. Older two- and three-element
+// entries have no summary until the coin's header is next read.
+const isSlow = (e) => e?.[2] === 1
+const windowOf = (e) =>
+  e?.length >= 6 ? { next: e[3] < 0 ? null : e[3], at: e[4] || null, cut: e[5] === 1 } : null
+const reschedule = (e, nextDue, every, slow = isSlow(e)) => [
+  nextDue,
+  every,
+  slow ? 1 : 0,
+  ...(e?.length >= 6 ? e.slice(3, 6) : []),
+]
+const summarise = (e, h) => [e[0], e[1], isSlow(e) ? 1 : 0, h.next ?? -1, h.at ?? 0, h.cut ? 1 : 0]
 
 const hex = (bytes) => Buffer.from(bytes).toString('hex')
-const nowSecs = () => Math.floor(Date.now() / 1000)
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const settled = (s) => !!s && ['confirmed', 'finalized'].includes(s.confirmationStatus)
 const failed = (err) => Error(`Keeper transaction failed: ${JSON.stringify(err)}`)
@@ -80,8 +120,18 @@ const unconfirmed = (signature, why) =>
     code: 'KEEPER_UNCONFIRMED',
     signature,
   })
-const bucketOf = (wallet, buckets) =>
-  buckets > 1 ? createHash('sha256').update(wallet).digest().readUInt32BE(0) % buckets : 0
+// Rejects once `ms` pass, aborting `controller` when given; an operation that cannot be aborted
+// is left to finish.
+function within(promise, ms, what, controller) {
+  let timer
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      controller?.abort()
+      reject(Object.assign(Error(`${what} timed out after ${ms} ms`), { code: 'TIMEOUT' }))
+    }, ms)
+  })
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
+}
 // Runs task(0 .. count-1) with at most WRITE_BATCH in flight.
 async function batched(count, task) {
   for (let n = 0; n < count; n += WRITE_BATCH)
@@ -141,8 +191,34 @@ export function createKeeper({
   pollMs = 1500,
   // Serverless functions are killed at 60 s: stop starting work well before that.
   timeLimitMs = process.env.VERCEL ? 40_000 : 180_000,
+  // The keeper's clock (epoch pace, sample times). Deadlines and polling use real time.
+  now: clock = Date.now,
+  holdtime: holdOptions = {},
 }) {
   const enabled = !!(quantum && keeper)
+  const nowSecs = () => Math.floor(clock() / 1000)
+  const minCovered = holdOptions.minCovered ?? MIN_COVERED
+  const sampleEvery = holdOptions.sampleEvery ?? SAMPLE_EVERY
+  const sampleBudget = holdOptions.sampleBudget ?? SAMPLE_BUDGET
+  const maxStep = holdOptions.maxStep ?? MAX_STEP
+  const scanTimeoutMs = holdOptions.scanTimeoutMs ?? SCAN_TIMEOUT_MS
+  const slowScanMs = holdOptions.slowScanMs ?? SLOW_SCAN_MS
+  const minScanMs = scanTimeoutMs / 8
+  const idleMax = Math.max(SAMPLE_IDLE_MAX, sampleEvery)
+  // The schedule of the tick in progress: every holding-window header read or written updates
+  // its coin's summary there.
+  let ticking = null
+  const hold = createHoldtime({
+    store,
+    now: clock,
+    log,
+    opts: {
+      maxStep,
+      onHeader: (mint, header) => {
+        if (ticking?.[mint]) ticking[mint] = summarise(ticking[mint], header)
+      },
+    },
+  })
   // The program refuses a post within MIN_EPOCH_INTERVAL of the coin's last one (last_epoch_at).
   const minInterval = Number(quantum?.MIN_EPOCH_INTERVAL) || MIN_EPOCH_INTERVAL
   const epochGap = Math.max(EPOCH_EVERY, Number(quantum?.MIN_EPOCH_INTERVAL || 0) + CLOCK_SLACK)
@@ -229,7 +305,7 @@ export function createKeeper({
   async function record(mint, action, detail) {
     const key = `keeper:log:${mint}`
     const rows = (await store.get(key)) || []
-    rows.unshift({ action, at: Math.floor(Date.now() / 1000), ...detail })
+    rows.unshift({ action, at: nowSecs(), ...detail })
     await store.set(key, rows.slice(0, 100))
     log(`${action} ${mint} ${detail.signature || ''}`)
   }
@@ -261,34 +337,197 @@ export function createKeeper({
     return BigInt(pending) - BigInt(well?.unallocated ?? 0n)
   }
 
-  // Holder snapshot for Entanglement: token accounts for the mint owned by wallets (on-curve
-  // keys), under the mint's own token program (SPL Token for Quant Pad's DBC coins). PDAs — the
-  // Meteora vaults and pool authorities, the well and the lock vault — are excluded.
-  async function snapshot(mint) {
-    const program = quantum.mintTokenProgram(
-      await connection.getAccountInfo(new PublicKey(mint), 'confirmed'),
-    )
+  // Holder balances for Entanglement: token accounts for the mint under its own token program
+  // (SPL Token for Quant Pad's DBC coins; cached in the holdtime header), summed per owner.
+  // Owners the header knows are PDAs (the Meteora vaults and pool authorities, the well, the lock
+  // vault) are skipped; holdtime checks owners it has no record of, since checking every owner is
+  // on the curve costs about 70 µs each, over 2 s for a large coin.
+  async function holdings(mint, header, ms) {
+    const program = header.program
+      ? new PublicKey(header.program)
+      : quantum.mintTokenProgram(await connection.getAccountInfo(new PublicKey(mint), 'confirmed'))
+    const skip = new Set(header.offCurve)
+    const balances = new Map()
+    for (const data of await scanHolders(program, mint, ms)) {
+      const amount = data.readBigUInt64LE(32)
+      if (amount === 0n) continue
+      const owner = bs58.encode(data.subarray(0, 32))
+      if (!skip.has(owner)) balances.set(owner, (balances.get(owner) || 0n) + amount)
+    }
+    return { program: program.toBase58(), balances }
+  }
+
+  // The (owner, amount) slices of the mint's token accounts, given up after `ms`. A web3.js
+  // Connection is sent the JSON-RPC request directly: its own getProgramAccounts validates every
+  // account and builds two PublicKeys for each, seconds of CPU for a large coin that no timeout
+  // can interrupt, where decoding the response here takes about a twentieth of that. The request
+  // is aborted at the time limit, and a rate-limited one fails at once instead of being retried.
+  // It carries none of the Connection's own headers (createConnection sets none).
+  async function scanHolders(program, mint, ms) {
     const legacy = program.toBase58() === network.tokenProgram
-    const accounts = await connection.getProgramAccounts(program, {
+    const config = {
       commitment: 'confirmed',
       filters: [
         ...(legacy ? [{ dataSize: SPL_ACCOUNT_SIZE }] : []),
         { memcmp: { offset: 0, bytes: mint } },
       ],
       dataSlice: { offset: 32, length: 40 },
-    })
-    const balances = new Map()
-    for (const { account } of accounts) {
-      const owner = new PublicKey(account.data.subarray(0, 32))
-      const amount = account.data.readBigUInt64LE(32)
-      if (amount === 0n || !PublicKey.isOnCurve(owner.toBytes())) continue
-      const key = owner.toBase58()
-      balances.set(key, (balances.get(key) || 0n) + amount)
     }
-    return [...balances.entries()]
-      .map(([wallet, amount]) => ({ wallet, balance: amount }))
-      .sort((a, b) => (b.balance > a.balance ? 1 : -1))
-      .slice(0, MAX_LEAVES)
+    if (!(connection instanceof Connection)) {
+      const accounts = await within(
+        connection.getProgramAccounts(program, config),
+        ms,
+        'holder scan',
+      )
+      return accounts.map((a) => a.account.data)
+    }
+    const controller = new AbortController()
+    const request = async () => {
+      const response = await fetch(connection.rpcEndpoint, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'getProgramAccounts',
+          params: [program.toBase58(), { ...config, encoding: 'base64' }],
+        }),
+        signal: controller.signal,
+      })
+      if (!response.ok) throw Error(`holder scan failed: HTTP ${response.status}`)
+      return response.json()
+    }
+    const body = await within(request(), ms, 'holder scan', controller)
+    if (!Array.isArray(body?.result))
+      throw Error(`holder scan failed: ${body?.error?.message || 'no result'}`)
+    return body.result.map((a) => Buffer.from(a.account.data[0], 'base64'))
+  }
+
+  async function sampleHoldings(mint, header, ms) {
+    const { program, balances } = await holdings(mint, header, ms)
+    return hold.sample(mint, { ...header, program }, balances)
+  }
+
+  // Where the post of a cut window stands. Its record is saved right after the cut and before the
+  // send, so a missing record (or one with another root) means the post never went out or was
+  // dropped, and a cancelled one pays nothing: the window goes on. A pending record counts as
+  // posted once the chain's count is past its index (`epochCount`, when known).
+  async function cutStatus(mint, cut, epochCount) {
+    const rec = await store.get(keys.epoch(mint, cut.index))
+    if (!rec || rec.root !== cut.root || rec.cancelled) return 'dropped'
+    if (rec.status !== 'pending') return 'posted'
+    return epochCount > cut.index ? 'posted' : 'pending'
+  }
+
+  async function settleCut(mint, header, epochCount) {
+    if (!header.cut) return header
+    return hold.settle(mint, header, await cutStatus(mint, header.cut, epochCount))
+  }
+
+  // Samples one coin, unless its last window's post is unsettled. The pass reads nothing from the
+  // chain, so a pending post waits for runCoin (windowFor) to settle it by the epoch count.
+  async function sampleCoin(mint, ms) {
+    const header = await settleCut(mint, await hold.load(mint))
+    if (header.cut) return { paused: true }
+    return sampleHoldings(mint, header, ms)
+  }
+
+  // Samples the scheduled coins whose turn has come, oldest first, until `until` (real time),
+  // which also cuts off each scan. Coins no longer listed leave the schedule. A sample that finds
+  // no change doubles the coin's interval, up to SAMPLE_IDLE_MAX; one that does resets it. A coin
+  // whose scan used all of SCAN_TIMEOUT_MS is marked slow ([nextDue, every, 1]) and left to
+  // runCoin (tendWindow). Only coins this keeper may post for are sampled.
+  async function sampleDue(coins, schedule, until) {
+    const listed = new Set(coins.map((c) => c.mint))
+    for (const mint of Object.keys(schedule)) if (!listed.has(mint)) delete schedule[mint]
+    const t = nowSecs()
+    const due = Object.entries(schedule)
+      .filter(([, e]) => e[0] <= t && !isSlow(e))
+      .sort(([a, [x]], [b, [y]]) => x - y || (a < b ? -1 : 1))
+      .slice(0, sampleBudget)
+      .map(([mint]) => mint)
+    if (!due.length) return
+    const config = await quantum.fetchConfig(connection).catch(() => null)
+    if (!config || (config.keeper && config.keeper !== keeper.publicKey.toBase58())) return
+    let next = 0
+    async function worker() {
+      for (;;) {
+        const ms = Math.min(scanTimeoutMs, until - Date.now())
+        if (next >= due.length || ms < minScanMs) return
+        const mint = due[next++]
+        const every = schedule[mint][1]
+        try {
+          const { paused, changed } = await sampleCoin(mint, ms)
+          const gap = paused || changed ? sampleEvery : Math.min(every * 2, idleMax)
+          schedule[mint] = reschedule(schedule[mint], nowSecs() + gap, paused ? every : gap, false)
+        } catch (e) {
+          log(`holdtime ${mint}: ${e.message}`)
+          // A scan cut short by the end of the pass's share is no sign of a slow coin.
+          const slow = e.code === 'TIMEOUT' && ms >= scanTimeoutMs
+          schedule[mint] = reschedule(schedule[mint], nowSecs() + sampleEvery, every, slow)
+        }
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(SAMPLE_PARALLEL, due.length) }, worker))
+  }
+
+  // The coin's holding window, settled against the chain's epoch count. A cut whose post landed
+  // is finalized here even when the post's status and account cannot be read, so sampling does
+  // not wait for entangle to get that far again. Epochs that landed outside the window paid for
+  // its time already: when this store recorded any of them (an older keeper's posts, say), the
+  // window starts over. Ones it never recorded were posted elsewhere with the keeper key
+  // (watchRecent flags them) and paid none of the window's holders, so the window goes on.
+  async function windowFor(mint, state) {
+    const count = Number(state.epochCount)
+    const header = await settleCut(mint, await hold.load(mint), count)
+    if (header.cut || (header.next != null && count <= header.next)) return header
+    if (header.next == null) return hold.pays(mint, header, count)
+    const from = Math.max(header.next, count - WINDOW_LOOKBACK)
+    const records = await Promise.all(
+      Array.from({ length: count - from }, (_, i) => store.get(keys.epoch(mint, from + i))),
+    )
+    if (from > header.next || records.some((r) => r && !r.cancelled)) {
+      log(
+        `holdtime ${mint}: epochs ${header.next} to ${count - 1} were posted outside its ` +
+          `holding window, which starts over`,
+      )
+      return hold.restart(mint, header, count)
+    }
+    return hold.pays(mint, header, count)
+  }
+
+  // An Entanglement coin's window, each time runCoin reaches the coin: settled against the chain
+  // (windowFor), sampled here when its scan outlasts the pass's limit, and an alert when the
+  // coin has a reserve to pay but no sample for SAMPLE_STALL seconds. While the schedule's
+  // summary shows no unsettled post and no epoch the window has not accounted for, windowFor
+  // would return the stored header untouched, so it is not read: an idle tick costs nothing here.
+  async function tendWindow(mint, state, deadline, schedule, alerts) {
+    const entry = schedule?.[mint]
+    const known = windowOf(entry)
+    const quiet =
+      !!known && !known.cut && known.next != null && Number(state.epochCount) <= known.next
+    let header = quiet ? null : await windowFor(mint, state)
+    if (header?.cut) return
+    const ms = Math.min(slowScanMs, deadline - Date.now())
+    if (isSlow(entry) && entry[0] <= nowSecs() && ms >= minScanMs) {
+      const started = Date.now()
+      try {
+        header = (await sampleHoldings(mint, header ?? (await windowFor(mint, state)), ms)).header
+        // Back to the pass once the scan fits its limit with room to spare.
+        const slow = Date.now() - started > scanTimeoutMs / 2
+        schedule[mint] = reschedule(schedule[mint], nowSecs() + idleMax, idleMax, slow)
+      } catch (e) {
+        log(`holdtime ${mint}: ${e.message}`)
+        schedule[mint] = reschedule(schedule[mint], nowSecs() + sampleEvery, entry[1], true)
+      }
+    }
+    if (BigInt(state.entangleReserve) < MIN_EPOCH) return
+    const at = header ? header.at : known.at
+    const stalled = at == null ? isSlow(entry) : nowSecs() - at >= SAMPLE_STALL
+    if (!stalled) return
+    const when = at == null ? 'yet' : `since ${new Date(at * 1000).toISOString()}`
+    log(`holdtime ${mint}: no holder sample ${when}; Entanglement cannot post without them`)
+    alerts?.push({ kind: 'holdtime-stalled', mint, lastSample: at })
   }
 
   async function buildTree(entries) {
@@ -490,8 +729,9 @@ export function createKeeper({
   }
 
   // Nothing is spent on a post the program would refuse: only config.keeper may post, and not
-  // within the minimum interval of the coin's last post.
-  async function entangle(mint, key, state, deadline, config) {
+  // within the minimum interval of the coin's last post. The reserve is split by holding time over
+  // the window since the last post, which needs minCovered seconds of samples.
+  async function entangle(mint, key, state, deadline, config, schedule) {
     if (BigInt(state.entangleReserve) < MIN_EPOCH) return
     if (!config || (config.keeper && config.keeper !== keeper.publicKey.toBase58())) return
     const now = nowSecs()
@@ -519,12 +759,28 @@ export function createKeeper({
       }
     }
     const reserve = BigInt(state.entangleReserve)
-    const holders = await snapshot(mint)
-    const supply = holders.reduce((s, h) => s + h.balance, 0n)
-    if (!supply) return
-    const entries = holders
-      .map((h) => ({ wallet: h.wallet, amount: (reserve * h.balance) / supply }))
-      .filter((e) => e.amount >= MIN_CLAIM)
+    let header = await windowFor(mint, state)
+    if (header.cut) return // the last window's post may still land
+    // The first sample opens a window. A later one is taken only if the window would then be
+    // long enough, and the last is over a minute old; between posts the tick's pass samples.
+    // This runs within the tick's whole limit, so the scan may take up to SLOW_SCAN_MS.
+    if (
+      header.at == null ||
+      (now - header.at >= FRESH_SAMPLE &&
+        header.covered + step(header.at, now, maxStep) >= minCovered)
+    ) {
+      const ms = Math.min(slowScanMs, deadline - Date.now())
+      header = (await sampleHoldings(mint, header, ms)).header
+      if (schedule?.[mint])
+        schedule[mint] = reschedule(schedule[mint], nowSecs() + sampleEvery, sampleEvery)
+    }
+    if (header.covered < minCovered) return
+    const weighed = await hold.weights(mint, header)
+    header = weighed.header
+    const entries = allocate(weighed.weights, reserve, {
+      maxLeaves: MAX_LEAVES,
+      minClaim: MIN_CLAIM,
+    })
     if (!entries.length) return
     const tree = await buildTree(entries)
     const rec = {
@@ -535,6 +791,7 @@ export function createKeeper({
       buckets: Math.ceil(entries.length / LEAVES_PER_BUCKET),
       status: 'pending',
       createdAt: now,
+      window: { from: header.since, to: header.at, covered: header.covered },
     }
     const ix = await quantum.buildPostEpochInstruction({
       connection,
@@ -545,12 +802,15 @@ export function createKeeper({
       total: tree.total,
       leafCount: entries.length,
     })
-    // The leaves are a snapshot that cannot be rebuilt later: store them before sending.
+    // The leaves come from samples that cannot be taken again: store them before sending.
     await saveLeaves(mint, rec, entries, tree)
     const signature = await send([ix], [], {
       deadline,
-      beforeSend: ({ signature, lastValidBlockHeight }) =>
-        saveEpoch(mint, { ...rec, signature, lastValidBlockHeight }),
+      beforeSend: async ({ signature, lastValidBlockHeight }) => {
+        // The window ends here unless the post is dropped (settleCut then reopens it).
+        header = await hold.cut(mint, header, { index, root: rec.root })
+        await saveEpoch(mint, { ...rec, signature, lastValidBlockHeight })
+      },
     })
     const onchain = await epochAt(key, index).catch(() => null)
     await markPosted(
@@ -559,6 +819,7 @@ export function createKeeper({
       onchain && hex(onchain.root) === rec.root ? onchain : null,
       config.claimDelay,
     )
+    await hold.finalize(mint, header)
   }
 
   // Whether a stored epoch record is past its expiry (and close delay). Pending records and
@@ -703,10 +964,15 @@ export function createKeeper({
 
   // ---- tick ---------------------------------------------------------------------------------
 
-  async function runCoin(mint, deadline, alerts) {
+  async function runCoin(mint, deadline, alerts, schedule) {
     const key = new PublicKey(mint)
     let state = await quantum.fetchQuantum(connection, key)
     if (!state) return
+    // Only coins with Entanglement are sampled; a new one is due at once.
+    if (schedule) {
+      if (Number(state.entangleBps) > 0) schedule[mint] ??= [nowSecs(), sampleEvery]
+      else delete schedule[mint]
+    }
     const late = () => Date.now() >= deadline
     let mayPost = false
     try {
@@ -752,7 +1018,7 @@ export function createKeeper({
       venue?.kind === 'curve' ||
       (venue?.kind === 'pool' && !!state.dammPool && venue.damm?.poolStatus === DAMM_ENABLED)
     const config = await quantum.fetchConfig(connection)
-    const now = Math.floor(Date.now() / 1000)
+    const now = nowSecs()
     const interval = Number(config?.minActionInterval || 0)
     // The program caps a burn or Fusion at max_burn_lamports for config.keeper and a tenth of it
     // for anyone else (a keeper key that is not the config's acts as a public caller).
@@ -818,9 +1084,17 @@ export function createKeeper({
     }
     if (late()) return
     state = (await quantum.fetchQuantum(connection, key)) || state
+    const own = !!config && (!config.keeper || config.keeper === keeper.publicKey.toBase58())
+    if (own && Number(state.entangleBps) > 0) {
+      try {
+        await tendWindow(mint, state, deadline, schedule, alerts)
+      } catch (e) {
+        log(`holdtime ${mint}: ${e.message}`)
+      }
+    }
     if (mayPost) {
       try {
-        await entangle(mint, key, state, deadline, config)
+        await entangle(mint, key, state, deadline, config, schedule)
       } catch (e) {
         log(`entangle ${mint}: ${e.message}`)
       }
@@ -912,10 +1186,13 @@ export function createKeeper({
 
   async function tick({ budget = 6, timeLimitMs: limit = timeLimitMs } = {}) {
     if (!enabled) return { enabled: false }
-    const deadline = Date.now() + limit
+    const started = Date.now()
+    const deadline = started + limit
     const owner = randomBytes(8).toString('hex')
     if (!(await store.set('keeper:lease', owner, { nx: true, ttl: 240000 })))
       return { skipped: true }
+    let schedule = null
+    let loaded = ''
     try {
       const listed = await indexer.list()
       if (quantum.dbcMigrationInstructions) await migrateGraduates(listed, deadline)
@@ -924,6 +1201,16 @@ export function createKeeper({
       // their claimStart) and a keeper wallet running low. Each is also logged.
       const alerts = []
       await checkBalance(coins.length, alerts)
+      // Holder samples come first, within their share of the time limit, so slow hook
+      // transactions cannot starve them (a long gap between samples credits at most MAX_STEP).
+      try {
+        schedule = await hold.loadSchedule()
+        ticking = schedule
+        loaded = JSON.stringify(schedule)
+        await sampleDue(coins, schedule, Math.min(deadline, started + limit * SAMPLE_SHARE))
+      } catch (e) {
+        log(`holdtime: ${e.message}`)
+      }
       const start = Number((await store.get('keeper:cursor')) || 0) % Math.max(1, coins.length)
       let ran = 0
       for (let n = 0; n < Math.min(budget, coins.length); n++) {
@@ -931,13 +1218,17 @@ export function createKeeper({
         // Advance first: a coin that keeps outliving the function's time limit is passed over
         // next tick instead of starving every coin after it.
         await store.set('keeper:cursor', (start + n + 1) % coins.length)
-        await runCoin(coins[(start + n) % coins.length].mint, deadline, alerts).catch((e) =>
-          log(`keeper ${e.message}`),
+        await runCoin(coins[(start + n) % coins.length].mint, deadline, alerts, schedule).catch(
+          (e) => log(`keeper ${e.message}`),
         )
         ran++
       }
       return { enabled: true, ran, ...(alerts.length ? { alerts } : {}) }
     } finally {
+      ticking = null
+      // Saved while the lease is still held, and only when it changed.
+      if (schedule && JSON.stringify(schedule) !== loaded)
+        await hold.saveSchedule(schedule).catch((e) => log(`holdtime: ${e.message}`))
       await store.release('keeper:lease', owner)
     }
   }
@@ -995,6 +1286,7 @@ export function createKeeper({
 
   // Recent epoch summaries (never the leaves). claimStart (unix seconds) is when the epoch's
   // claims open, null for records from before the claim delay; a cancelled epoch is also closed.
+  // window ({from, to, covered}) is null for epochs from before holding time.
   async function epochs(mint) {
     address(mint, 'coin')
     const indexes = ((await store.get(keys.list(mint))) || []).slice(0, EPOCH_PAGE)
@@ -1008,6 +1300,8 @@ export function createKeeper({
         claimStart: e.claimStart ?? null,
         expiresAt: e.expiresAt ?? null,
         holders: e.holders ?? e.leaves?.length ?? 0,
+        // The holding window the epoch pays for: unix seconds and the seconds sampled in it.
+        window: e.window ?? null,
         closed: !!e.closed,
         cancelled: !!e.cancelled,
         signature: e.signature,

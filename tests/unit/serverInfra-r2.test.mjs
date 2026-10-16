@@ -584,13 +584,16 @@ test('the build makes og:image absolute and adds og:url when the public URL is k
 
   const html = readFileSync(join(root, 'index.html'), 'utf8')
   const built = absoluteOpenGraph(html, 'https://quantpad.test')
-  assert.match(built, /<meta property="og:image" content="https:\/\/quantpad\.test\/og\.png" \/>/)
+  assert.match(
+    built,
+    /<meta property="og:image" content="https:\/\/quantpad\.test\/og\.png\?v=\d+" \/>/,
+  )
   assert.match(built, /<meta property="og:url" content="https:\/\/quantpad\.test\/" \/>/)
-  assert.doesNotMatch(built, /content="\/og\.png"/)
+  assert.doesNotMatch(built, /content="\/og\.png/)
   assert.equal(absoluteOpenGraph(built, 'https://quantpad.test'), built, 'idempotent')
   assert.match(
     absoluteOpenGraph(html, 'https://q.test/?a="b"&c'),
-    /content="https:\/\/q\.test\/\?a=&quot;b&quot;&amp;c\/og\.png"/,
+    /content="https:\/\/q\.test\/\?a=&quot;b&quot;&amp;c\/og\.png\?v=\d+"/,
   )
 
   // Unknown origin: the page keeps its relative image (a sane fallback) and the build warns.
@@ -621,7 +624,7 @@ test('vite.config.js wires the Open Graph plugin from VITE_PUBLIC_URL at build t
   }
   const plugin = config.plugins.flat().find((p) => p?.name === 'quantpad-open-graph')
   const out = plugin.transformIndexHtml(readFileSync(join(root, 'index.html'), 'utf8'))
-  assert.match(out, /og:image" content="https:\/\/from-env\.test\/og\.png"/)
+  assert.match(out, /og:image" content="https:\/\/from-env\.test\/og\.png\?v=\d+"/)
   assert.match(out, /og:url" content="https:\/\/from-env\.test\/"/)
 })
 
