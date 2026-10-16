@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { ArrowUpRight } from 'lucide-react'
 import MarketChart from '../components/MarketChart.jsx'
+import QuantpLedger from '../components/QuantpLedger.jsx'
 import TradeTicket from '../components/TradeTicket.jsx'
 import TradesTable from '../components/TradesTable.jsx'
 import { Address, CurveProgress, Stat } from '../components/UI.jsx'
@@ -57,8 +58,9 @@ function TokenPrice({ usdValue, solValue }) {
 
 // $QUANTP, Quant Pad's own token: live figures from /api/quantp (chain, DexScreener and a holder
 // scan, never the store), its chart and trades from /api/quantp/* (the indexer, else
-// GeckoTerminal), and the trade ticket, which reads the chain itself and follows the token from
-// its bonding curve into its DAMM v2 pool. Every part keeps working while Redis is down.
+// GeckoTerminal), its payouts and burns from /api/quantp/ledger (the team's wallets), and the
+// trade ticket, which reads the chain itself and follows the token from its bonding curve into
+// its DAMM v2 pool. Every part keeps working while Redis is down.
 export default function QuantpPage() {
   const q = useQuantp()
   const d = q.data
@@ -254,7 +256,7 @@ export default function QuantpPage() {
                 </>
               ) : null}
               . The team pays it out: nothing on-chain enforces it, and these figures are fees
-              earned, not payouts.
+              earned, not payouts. <a href="#payouts">See what has been paid out and burned</a>.
             </p>
           </section>
 
@@ -374,6 +376,8 @@ export default function QuantpPage() {
               </ExternalButton>
             </div>
           </section>
+
+          <QuantpLedger symbol={q.symbol} decimals={q.decimals} fees={fees} burned={burned} />
         </aside>
       </div>
     </div>

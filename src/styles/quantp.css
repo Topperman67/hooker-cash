@@ -369,6 +369,60 @@
   gap: 4px;
 }
 
+/* payouts and burns (QuantpLedger), read from the team's wallets */
+#payouts {
+  scroll-margin-top: 110px;
+}
+.qp-ledger {
+  display: grid;
+  gap: 12px;
+}
+.qp-ledger .panel-head {
+  flex-wrap: wrap;
+  margin-bottom: 0;
+}
+.qp-ledger-totals {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  background: rgba(255, 255, 255, 0.42);
+  border: 1px solid var(--mercury-2);
+}
+/* a label that wraps keeps its value on the same line as the others' */
+.qp-ledger-totals .stat {
+  align-content: space-between;
+}
+.qp-ledger-totals dd {
+  font-size: var(--t-sm);
+}
+/* the side column is narrow: the rows keep the trades table's look with less air */
+.qp-ledger .table th,
+.qp-ledger .table td {
+  padding-left: 8px;
+  padding-right: 8px;
+}
+.qp-ledger .table th:first-child,
+.qp-ledger .table td:first-child {
+  padding-left: 0;
+}
+.qp-ledger .table th:last-child,
+.qp-ledger .table td:last-child {
+  padding-right: 0;
+}
+.qp-ledger-empty {
+  margin: 0;
+  font-size: var(--t-sm);
+}
+.qp-ledger-more {
+  justify-self: start;
+}
+.qp-ledger .qp-fine {
+  margin-top: 0;
+}
+
 /* GeckoTerminal credit under the chart and the trades (MarketChart, TradesTable) */
 .data-credit {
   margin: 8px 0 0;
@@ -433,6 +487,9 @@
   }
   .qp-about {
     order: 7;
+  }
+  .qp-ledger {
+    order: 8;
   }
 }
 @media (max-width: 640px) {
@@ -505,7 +562,8 @@
   border-color: rgba(255, 255, 255, 0.14);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
 }
-:root[data-theme='dark'] .qp-fee {
+:root[data-theme='dark'] .qp-fee,
+:root[data-theme='dark'] .qp-ledger-totals {
   background: rgba(255, 255, 255, 0.04);
 }
 :root[data-theme='dark'] .qp-fee.is-now {

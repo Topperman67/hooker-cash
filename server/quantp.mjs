@@ -9,7 +9,9 @@
 //   - holders: a Token-2022 getProgramAccounts scan of the mint's accounts, every 10 minutes;
 //   - SOL/USD: the app's price feed (prices.mjs);
 //   - GeckoTerminal: candles and trades for the token page when the indexer has none to give,
-//     within its free tier (30 calls a minute per IP).
+//     within its free tier (30 calls a minute per IP);
+//   - the team's wallets (QUANTP.creator and QUANTP.payoutWallet): the payouts to holders and the
+//     burns, from their transaction histories, each transaction read once.
 // Never used for transaction amounts: the trade ticket quotes from the chain itself.
 import { Buffer } from 'node:buffer'
 import { PublicKey } from '@solana/web3.js'
@@ -474,6 +476,251 @@ export function createQuantpFeed({
         { address: token.pool, venue: 'curve', done: !!c?.complete },
         ...(c?.dammPool ? [{ address: c.dammPool, venue: 'pool', done: false }] : []),
       ]
+    },
+  }
+}
+
+// ---- payouts and burns --------------------------------------------------------------------------
+
+const SYSTEM_PROGRAM = '11111111111111111111111111111111'
+// Programs a payout transaction may hold besides its SOL transfers.
+const PAYOUT_EXTRAS = new Set([
+  'ComputeBudget111111111111111111111111111111',
+  'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr',
+  'Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo',
+])
+const TOKEN_PROGRAMS = new Set([network.tokenProgram, network.token2022Program])
+// web3.js gives keys as PublicKeys, the RPC's JSON as strings.
+const key = (v) => (v == null ? null : String(v.toBase58?.() ?? v))
+
+/** The team wallets the payouts and burns are read from. */
+export function teamWallets(token = QUANTP) {
+  return {
+    payout: token.payoutWallet,
+    creator: token.creator,
+    all: [...new Set([token.payoutWallet, token.creator].filter(Boolean))],
+  }
+}
+
+/**
+ * What one transaction (getParsedTransaction's shape) did for the ledger, as entries:
+ *   - payout: a transaction of nothing but SOL transfers (compute budget and memos aside) out of
+ *     the payout wallet, as the team's payout page sends them. A transfer to one of the team's own
+ *     wallets counts only beside transfers to others (a holder paid in a round), never alone (SOL
+ *     moved back);
+ *   - burn: what a team wallet burned of the token (Burn, BurnChecked, or a transfer to the
+ *     incinerator), one entry per wallet. `solSpent` is what that wallet paid in the same
+ *     transaction for the tokens it burned, when it bought them there (a buy and burn): the drop in
+ *     the SOL it holds, its own and its token accounts' (so wrapped SOL and rent it keeps are not
+ *     spent), less the network fee, in proportion to the share of the tokens bought that it burned.
+ *     Null when it burned tokens it already held.
+ * Failed transactions give none.
+ */
+export function ledgerEntries(tx, { token = QUANTP, wallets = teamWallets(token) } = {}) {
+  const meta = tx?.meta
+  const message = tx?.transaction?.message
+  if (!meta || meta.err || !message) return []
+  const team = new Set(wallets.all)
+  const keys = message.accountKeys.map((k) => key(k.pubkey ?? k))
+  const base = {
+    signature: tx.transaction.signatures[0],
+    slot: tx.slot,
+    timestamp: tx.blockTime ?? null,
+  }
+  const top = message.instructions
+  const all = [...top, ...(meta.innerInstructions || []).flatMap((group) => group.instructions)]
+  const program = (ix) => key(ix.programId)
+  const isTransfer = (ix) => program(ix) === SYSTEM_PROGRAM && ix.parsed?.type === 'transfer'
+  const out = []
+
+  if (top.every((ix) => isTransfer(ix) || PAYOUT_EXTRAS.has(program(ix)))) {
+    const sent = top.filter(
+      (ix) =>
+        isTransfer(ix) &&
+        ix.parsed.info.source === wallets.payout &&
+        ix.parsed.info.destination !== wallets.payout,
+    )
+    const paid = sent.some((ix) => !team.has(ix.parsed.info.destination)) ? sent : []
+    if (paid.length)
+      out.push({
+        kind: 'payout',
+        ...base,
+        wallet: wallets.payout,
+        lamports: paid.reduce((s, ix) => s + big(ix.parsed.info.lamports), 0n),
+        recipients: [...new Set(paid.map((ix) => ix.parsed.info.destination))],
+      })
+  }
+
+  // Token accounts this transaction touched: their mint and owner, and their balance before/after.
+  const accounts = new Map()
+  for (const [field, list] of [
+    ['pre', meta.preTokenBalances],
+    ['post', meta.postTokenBalances],
+  ])
+    for (const b of list || []) {
+      const address = keys[b.accountIndex]
+      const entry = accounts.get(address) || {
+        index: b.accountIndex,
+        mint: b.mint,
+        owner: b.owner,
+        pre: 0n,
+        post: 0n,
+      }
+      entry[field] = big(b.uiTokenAmount?.amount)
+      accounts.set(address, entry)
+    }
+
+  const burned = new Map() // wallet -> { amount, method }
+  for (const ix of all) {
+    if (!TOKEN_PROGRAMS.has(program(ix)) || !ix.parsed?.info) continue
+    const { type, info } = ix.parsed
+    const wallet = info.authority ?? info.multisigAuthority
+    if (!team.has(wallet)) continue
+    const to = accounts.get(info.destination)
+    const method =
+      (type === 'burn' || type === 'burnChecked') && info.mint === token.mint
+        ? 'burn'
+        : (type === 'transfer' || type === 'transferChecked') &&
+            to?.owner === INCINERATOR &&
+            to.mint === token.mint
+          ? 'incinerator'
+          : null
+    const amount = big(info.amount ?? info.tokenAmount?.amount)
+    if (!method || amount <= 0n) continue
+    const prev = burned.get(wallet)
+    burned.set(wallet, {
+      amount: (prev?.amount || 0n) + amount,
+      method: prev && prev.method !== method ? 'burn' : method,
+    })
+  }
+
+  for (const [wallet, { amount, method }] of burned) {
+    const owned = [...accounts.values()].filter((a) => a.owner === wallet)
+    // Bought here: what it holds more of after the transaction, plus what it burned.
+    const bought =
+      owned.filter((a) => a.mint === token.mint).reduce((s, a) => s + a.post - a.pre, 0n) + amount
+    const at = keys.indexOf(wallet)
+    const held = (i) => big(meta.postBalances[i]) - big(meta.preBalances[i])
+    let change = held(at) + owned.reduce((s, a) => s + held(a.index), 0n)
+    if (at === 0) change += big(meta.fee) // the fee payer: the network fee is not part of the price
+    const share = bought < amount ? bought : amount
+    const solSpent = bought > 0n && change < 0n ? (-change * share) / bought : null
+    out.push({ kind: 'burn', ...base, wallet, amount, method, solSpent })
+  }
+  return out
+}
+
+/** The /api/quantp/ledger lists from every entry read so far (ledgerEntries), newest first. */
+export function quantpLedger(entries, { token = QUANTP, wallets = teamWallets(token) } = {}) {
+  const newest = (a, b) =>
+    b.slot - a.slot || (a.signature < b.signature ? 1 : a.signature > b.signature ? -1 : 0)
+  const payouts = entries.filter((e) => e.kind === 'payout').sort(newest)
+  const burns = entries.filter((e) => e.kind === 'burn').sort(newest)
+  const total = (list, field) => list.reduce((s, e) => s + (e[field] ?? 0n), 0n)
+  return {
+    mint: token.mint,
+    wallets: { payout: wallets.payout, creator: wallets.creator },
+    payouts: payouts.map((e) => ({
+      signature: e.signature,
+      slot: e.slot,
+      timestamp: e.timestamp,
+      lamports: e.lamports.toString(),
+      recipients: e.recipients.length,
+      recipient: e.recipients.length === 1 ? e.recipients[0] : null,
+    })),
+    burns: burns.map((e) => ({
+      signature: e.signature,
+      slot: e.slot,
+      timestamp: e.timestamp,
+      wallet: e.wallet,
+      method: e.method,
+      amount: e.amount.toString(),
+      solSpent: e.solSpent == null ? null : e.solSpent.toString(),
+    })),
+    totals: {
+      paidLamports: total(payouts, 'lamports').toString(),
+      recipients: new Set(payouts.flatMap((e) => e.recipients)).size,
+      burnedAmount: total(burns, 'amount').toString(),
+      buybackLamports: total(burns, 'solSpent').toString(),
+    },
+  }
+}
+
+/**
+ * $QUANTP's payouts and burns from the team wallets' histories. Each refresh (at most every `ttl`
+ * per instance) lists the signatures newer than the last one seen, one call per wallet, and reads
+ * only the transactions not read yet: a confirmed transaction never changes, so each is read once.
+ * ledger() resolves to quantpLedger's lists with `updatedAt` and `state`, or throws a 503 when
+ * nothing has been read on this instance yet.
+ */
+export function createQuantpLedger({
+  connection,
+  now = Date.now,
+  token = QUANTP,
+  ttl = 120_000,
+  pageLimit = 1000,
+  maxPages = 3,
+  concurrency = 4,
+} = {}) {
+  const wallets = teamWallets(token)
+  const listed = new Set() // successful transactions' signatures
+  const read = new Map() // signature -> its entries
+  const newest = new Map() // wallet -> the newest signature listed
+
+  async function signaturesOf(wallet) {
+    const until = newest.get(wallet)
+    const found = []
+    let before
+    for (let page = 0; page < maxPages; page++) {
+      const list = await connection.getSignaturesForAddress(
+        new PublicKey(wallet),
+        { limit: pageLimit, ...(before ? { before } : {}), ...(until ? { until } : {}) },
+        'confirmed',
+      )
+      found.push(...list)
+      if (list.length < pageLimit) break
+      before = list.at(-1).signature
+    }
+    return found
+  }
+
+  async function load() {
+    for (const wallet of wallets.all) {
+      const list = await signaturesOf(wallet)
+      for (const s of list) if (!s.err) listed.add(s.signature)
+      if (list.length) newest.set(wallet, list[0].signature)
+    }
+    // Read what has not been read (a transaction the node could not return yet is tried again).
+    const unread = [...listed].filter((s) => !read.has(s))
+    for (let i = 0; i < unread.length; i += concurrency) {
+      const batch = unread.slice(i, i + concurrency)
+      const txs = await Promise.all(
+        batch.map((s) =>
+          connection.getParsedTransaction(s, {
+            commitment: 'confirmed',
+            maxSupportedTransactionVersion: 0,
+          }),
+        ),
+      )
+      txs.forEach((tx, j) => tx && read.set(batch[j], ledgerEntries(tx, { token, wallets })))
+    }
+    return quantpLedger([...read.values()].flat(), { token, wallets })
+  }
+
+  const source = cachedSource(load, { ttl, retry: 30_000, wait: 8_000, now })
+  return {
+    async ledger() {
+      const r = await source()
+      if (r.state === 'down')
+        throw Object.assign(
+          Error('Payouts and burns are unavailable right now. Retrying shortly.'),
+          {
+            status: 503,
+            expose: true,
+            code: 'LEDGER_UNAVAILABLE',
+          },
+        )
+      return { ...r.value, updatedAt: Math.floor(r.at / 1000), state: r.state }
     },
   }
 }

@@ -46,6 +46,11 @@ export const QUANTP = Object.freeze({
   postGradFeeBps: 500, // the DAMM v2 pool's fee after graduation
   holdersShareBps: 6000, // of the creator's fee share, by the team's stated policy (off-chain)
   buybackShareBps: 4000,
+  // The team's wallets, whose histories the page's Payouts and Burns lists are read from
+  // (server/quantp.mjs createQuantpLedger): the pool's creator, which claims the creator's fee
+  // share, and the payout wallet it funds, which sent holders round 1 (0.55 SOL to 51 wallets).
+  creator: '3B53Qg1mrerKLhYNHuTH57cT4DhPgmaUvhm7Zx3zLvHc',
+  payoutWallet: 'GLAn4nGLTcwCmPJsTkLL4LrFaWCADb5dGXKjNCd2FAvn',
   dexscreener: 'https://dexscreener.com/solana/85tswjnucttvgvtqzwzchnbfmor4dv581a3wg7buzgvf',
   path: '/quantp',
 })

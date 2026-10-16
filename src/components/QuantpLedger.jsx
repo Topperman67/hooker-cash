@@ -1,0 +1,214 @@
+import { useState } from 'react'
+import { useResource } from '../lib/api.js'
+import { Address, Segmented, Stat } from './UI.jsx'
+import { ago, compact, formatUnits, short, sol, toSol } from '../lib/format.js'
+import { explorer } from '../../shared/network.mjs'
+
+// Rows shown before "Show all": the panel sits in the page's narrow side column.
+const FIRST_ROWS = 8
+
+const num = (v) => (v != null && Number.isFinite(Number(v)) ? Number(v) : null)
+const when = (seconds) =>
+  seconds
+    ? new Date(seconds * 1000).toLocaleString('en-US', {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+      })
+    : undefined
+
+function TxLink({ signature }) {
+  return (
+    <a href={explorer.tx(signature)} target="_blank" rel="noreferrer" className="faint">
+      {signature.slice(0, 6)}
+    </a>
+  )
+}
+
+function Rows({ rows, head, row }) {
+  const [all, setAll] = useState(false)
+  const shown = all ? rows : rows.slice(0, FIRST_ROWS)
+  return (
+    <>
+      <div className="table-wrap">
+        <table className="table">
+          <thead>
+            <tr>{head}</tr>
+          </thead>
+          <tbody>{shown.map(row)}</tbody>
+        </table>
+      </div>
+      {rows.length > FIRST_ROWS && (
+        <button type="button" className="btn btn-sm qp-ledger-more" onClick={() => setAll(!all)}>
+          {all ? 'Show fewer' : `Show all ${rows.length}`}
+        </button>
+      )}
+    </>
+  )
+}
+
+/**
+ * $QUANTP's payouts to holders and its burns, read from the team's wallets by /api/quantp/ledger,
+ * so holders can check the stated 60/40 split against what was actually paid and burned. `fees`
+ * is /api/quantp's fees earned so far, `burned` the whole tokens gone from the supply.
+ */
+export default function QuantpLedger({ symbol, decimals, fees, burned }) {
+  const [tab, setTab] = useState('payouts')
+  const ledger = useResource('/api/quantp/ledger', 30_000)
+  const d = ledger.data
+  const t = d?.totals
+  const teamBurned = t ? Number(t.burnedAmount) / 10 ** decimals : null
+  const othersBurned = burned != null && teamBurned != null ? burned - teamBurned : null
+
+  let body
+  if (!d)
+    body = (
+      <p className="muted qp-ledger-empty">
+        {ledger.loading ? 'Reading the team’s wallets…' : ledger.error}
+      </p>
+    )
+  else if (tab === 'payouts')
+    body = (
+      <>
+        <dl className="qp-ledger-totals">
+          <Stat label="Paid out">
+            <span className="num">{sol(toSol(t.paidLamports), { digits: 3 })}</span>
+          </Stat>
+          <Stat label="Wallets paid">
+            <span className="num">{t.recipients.toLocaleString('en-US')}</span>
+          </Stat>
+          <Stat label="Holders’ share earned">
+            <span className="num">{sol(num(fees?.holdersSol), { digits: 3 })}</span>
+          </Stat>
+        </dl>
+        {d.payouts.length ? (
+          <Rows
+            rows={d.payouts}
+            head={
+              <>
+                <th>Age</th>
+                <th className="right">SOL</th>
+                <th>Paid to</th>
+                <th className="right">Tx</th>
+              </>
+            }
+            row={(p) => (
+              <tr key={p.signature}>
+                <td className="num faint" title={when(p.timestamp)}>
+                  {ago(p.timestamp)}
+                </td>
+                <td className="right num">{sol(toSol(p.lamports), { unit: false })}</td>
+                <td>
+                  {p.recipient ? (
+                    <a
+                      href={explorer.account(p.recipient)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="num"
+                    >
+                      {short(p.recipient)}
+                    </a>
+                  ) : (
+                    `${p.recipients.toLocaleString('en-US')} wallets`
+                  )}
+                </td>
+                <td className="right">
+                  <TxLink signature={p.signature} />
+                </td>
+              </tr>
+            )}
+          />
+        ) : (
+          <p className="muted qp-ledger-empty">
+            No payouts yet. Each SOL payout to holders shows here once it confirms.
+          </p>
+        )}
+        <p className="faint qp-fine">
+          Every SOL transfer the team’s payout wallet{' '}
+          <Address value={d.wallets.payout} href={explorer.account(d.wallets.payout)} /> sends, read
+          from the chain.
+        </p>
+      </>
+    )
+  else
+    body = (
+      <>
+        <dl className="qp-ledger-totals">
+          <Stat label="Burned">
+            <span className="num">
+              {compact(teamBurned)} {symbol}
+            </span>
+          </Stat>
+          <Stat label="SOL spent">
+            <span className="num">{sol(toSol(t.buybackLamports), { digits: 3 })}</span>
+          </Stat>
+          <Stat label="Buyback share earned">
+            <span className="num">{sol(num(fees?.buybackSol), { digits: 3 })}</span>
+          </Stat>
+        </dl>
+        {d.burns.length ? (
+          <Rows
+            rows={d.burns}
+            head={
+              <>
+                <th>Age</th>
+                <th className="right">{symbol}</th>
+                <th className="right">SOL spent</th>
+                <th className="right">Tx</th>
+              </>
+            }
+            row={(b) => (
+              <tr key={`${b.signature}:${b.wallet}`}>
+                <td className="num faint" title={when(b.timestamp)}>
+                  {ago(b.timestamp)}
+                </td>
+                <td className="right num">{formatUnits(b.amount, decimals, 0)}</td>
+                <td className="right num">
+                  {b.solSpent == null ? '—' : sol(toSol(b.solSpent), { unit: false })}
+                </td>
+                <td className="right">
+                  <TxLink signature={b.signature} />
+                </td>
+              </tr>
+            )}
+          />
+        ) : (
+          <p className="muted qp-ledger-empty">
+            No burns yet. Each burn of ${symbol} by the team’s wallets shows here once it confirms.
+          </p>
+        )}
+        <p className="faint qp-fine">
+          Burns signed by the payout wallet{' '}
+          <Address value={d.wallets.payout} href={explorer.account(d.wallets.payout)} /> or the
+          creator wallet{' '}
+          <Address value={d.wallets.creator} href={explorer.account(d.wallets.creator)} />. SOL
+          spent is what the burn’s own transaction paid to buy the ${symbol} it burned.
+          {othersBurned >= 1 && ` Other wallets have burned ${compact(othersBurned)} ${symbol}.`}
+        </p>
+      </>
+    )
+
+  return (
+    <section id="payouts" className="panel qp-ledger" aria-labelledby="qp-ledger-title">
+      <div className="panel-head">
+        <h2 id="qp-ledger-title" className="h3">
+          Payouts & burns
+        </h2>
+        <Segmented
+          label="Show payouts or burns"
+          value={tab}
+          onChange={setTab}
+          options={[
+            ['payouts', 'Payouts'],
+            ['burns', 'Burns'],
+          ]}
+        />
+      </div>
+      {body}
+      {d?.state === 'stale' && (
+        <p className="faint qp-fine">
+          Updated {ago(d.updatedAt)} ago: the chain could not be read just now.
+        </p>
+      )}
+    </section>
+  )
+}

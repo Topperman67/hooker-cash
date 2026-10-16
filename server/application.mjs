@@ -15,7 +15,7 @@ import {
   quantumClientError,
 } from './keeper.mjs'
 import { createPriceFeed } from './prices.mjs'
-import { createGeckoFeed, createQuantpFeed } from './quantp.mjs'
+import { createGeckoFeed, createQuantpFeed, createQuantpLedger } from './quantp.mjs'
 import { createRpcProxy, globalRpcLimit, writeRpcResponse } from './rpc-proxy.mjs'
 import { configuredStore, createFileStore } from './storage.mjs'
 import * as requestLimits from './request-limits.mjs'
@@ -53,6 +53,9 @@ export const MEDIA_CACHE = 'public, max-age=31536000, s-maxage=31536000, immutab
 export const QUANTP_CACHE = 'public, max-age=0, s-maxage=10, stale-while-revalidate=50'
 // Its chart and trades from GeckoTerminal (30 calls a minute per IP) are held a little longer.
 export const QUANTP_MARKET_CACHE = 'public, max-age=0, s-maxage=15, stale-while-revalidate=45'
+// Its payouts and burns change a few times a week and are read from the team wallets' histories:
+// the CDN answers for a minute and revalidates in the background for 5 more.
+export const QUANTP_LEDGER_CACHE = 'public, max-age=0, s-maxage=60, stale-while-revalidate=300'
 
 const { clientKey, createLimiter, createWriteGuard } = requestLimits
 
@@ -93,6 +96,7 @@ const GET_ROUTES = new Set([
   '/api/quantp',
   '/api/quantp/candles',
   '/api/quantp/trades',
+  '/api/quantp/ledger',
 ])
 const COIN_ROUTE = /^\/api\/coins\/([^/]+)(?:\/(trades|candles))?$/
 const QUANTUM_ROUTE = /^\/api\/quantum\/([^/]+)(?:\/(claims))?$/
@@ -500,6 +504,7 @@ export async function createApplication(options = {}) {
   const quantpRequest = options.quantpFetch ? { request: options.quantpFetch } : {}
   const quantp = options.quantpFeed || createQuantpFeed({ connection, solUsd, ...quantpRequest })
   const gecko = options.geckoFeed || createGeckoFeed(quantpRequest)
+  const quantpLedger = options.quantpLedger || createQuantpLedger({ connection })
   const mediaLimit =
     options.mediaLimitBytes || Number(process.env.QUANTPAD_MEDIA_LIMIT_MB || 256) * 1024 * 1024
   // One visitor may use only a slice of the shared media quota per day. Every write is charged at
@@ -1356,6 +1361,10 @@ export async function createApplication(options = {}) {
           source: 'geckoterminal',
         }
         return json(res, 200, page, QUANTP_MARKET_CACHE)
+      }
+      if (req.method === 'GET' && path === '/api/quantp/ledger') {
+        await limitRead(req)
+        return json(res, 200, await quantpLedger.ledger(), QUANTP_LEDGER_CACHE)
       }
 
       // POST /api/coins/track is a POST route; every other /api/coins/<x> is a coin read.

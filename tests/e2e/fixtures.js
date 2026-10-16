@@ -15,7 +15,7 @@ import {
   decodeDbcPool,
   migratedPoolFor,
 } from '../../shared/meteora.mjs'
-import { launchTiers, tierFor } from '../../shared/network.mjs'
+import { QUANTP, launchTiers, tierFor } from '../../shared/network.mjs'
 import { quantumPda } from '../../shared/quantum.mjs'
 
 export const WALLET_ADDRESS = '7xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU'
@@ -403,4 +403,107 @@ export async function enter(page, { wallet = false, address = WALLET_ADDRESS } =
       window.addEventListener('wallet-standard:app-ready', ({ detail }) => register(detail))
       window.dispatchEvent(new CustomEvent('wallet-standard:register-wallet', { detail: register }))
     }, address)
+}
+
+// ---- $QUANTP's page -------------------------------------------------------------------------------
+
+// /api/quantp after graduation, with the fees earned the page showed on 2026-10-16.
+export const quantpSnapshot = (over = {}) => ({
+  mint: QUANTP.mint,
+  symbol: QUANTP.symbol,
+  name: QUANTP.name,
+  decimals: 6,
+  pool: QUANTP.pool,
+  config: QUANTP.config,
+  priceSol: 1.8e-7,
+  priceUsd: 0.000027,
+  change24h: 0.12,
+  marketCapSol: 180,
+  marketCapUsd: 27_000,
+  volume24hUsd: 61_000,
+  txns24h: { buys: 410, sells: 290 },
+  supply: QUANTP.supply,
+  burned: '0',
+  holders: 64,
+  curveProgress: 1,
+  migrated: true,
+  dammPool: 'EkUL2WDEKdJK3hxTxcfhqK7GbwwpPoTEzi4quEVCM5rw',
+  feeBps: 500,
+  postGradFeeBps: 500,
+  fees: { lifetimeSol: 4.416, creatorLifetimeSol: 3.228, holdersSol: 1.9368, buybackSol: 1.2912 },
+  launchedAt: QUANTP.launchedAt,
+  updatedAt: Math.floor(Date.now() / 1000),
+  sources: { chain: 'ok', dex: 'ok' },
+  ...over,
+})
+
+// /api/quantp/ledger as mainnet answers it after round 1: three batches, 51 wallets, no burns.
+export const quantpLedger = ({ payouts, burns = [] } = {}) => {
+  const now = Math.floor(Date.now() / 1000)
+  const rows =
+    payouts ??
+    [
+      [
+        '5qDPLwq9SdL1ABciwN8ovnjigV8NTk9ktX41DUHyZpsNkYSnjNzfDtWrp4sKWg6fUgQUBaocyvXZFRjo2pKg9JeR',
+        '15232167',
+        11,
+      ],
+      [
+        '5294RbYBiPA8MJZdV3ToY1U4N6XpLwxMSkjTgh2ySaW6Bawxf1bfrzBUV2WXts73QKgfpVDb9ZFHQAewG1Gf9r3u',
+        '176743573',
+        20,
+      ],
+      [
+        '5B9NLSK5dRt9Zp3j3b5is9oD6n8a7Wh4wdzczMGc3T7a181PCEZrLW6jJKxYwhPmgMFeH4ewjRcovFM2obXZM3sC',
+        '358024234',
+        20,
+      ],
+    ].map(([signature, lamports, recipients], i) => ({
+      signature,
+      slot: 457_511_740 - i * 20,
+      timestamp: now - 7200 - i * 4,
+      lamports,
+      recipients,
+      recipient: null,
+    }))
+  const sum = (list, field) => list.reduce((s, r) => s + BigInt(r[field] ?? 0), 0n).toString()
+  return {
+    mint: QUANTP.mint,
+    wallets: { payout: QUANTP.payoutWallet, creator: QUANTP.creator },
+    payouts: rows,
+    burns,
+    totals: {
+      paidLamports: sum(rows, 'lamports'),
+      recipients: rows.reduce((s, r) => s + r.recipients, 0),
+      burnedAmount: sum(burns, 'amount'),
+      buybackLamports: sum(burns, 'solSpent'),
+    },
+    updatedAt: now,
+    state: 'ok',
+  }
+}
+
+/** Answers $QUANTP's routes; `ledger` is the /api/quantp/ledger body, or a status to fail with. */
+export async function stubQuantp(
+  page,
+  { snapshot = quantpSnapshot(), ledger = quantpLedger() } = {},
+) {
+  await page.route('**/api/quantp', (route) => route.fulfill({ json: snapshot }))
+  await page.route('**/api/quantp/trades*', (route) =>
+    route.fulfill({ json: { items: [], total: 0, next: null, source: 'indexer' } }),
+  )
+  await page.route('**/api/quantp/candles*', (route) =>
+    route.fulfill({ json: { items: [], interval: 300, source: 'indexer' } }),
+  )
+  await page.route('**/api/quantp/ledger', (route) =>
+    typeof ledger === 'number'
+      ? route.fulfill({
+          status: ledger,
+          json: {
+            error: 'Payouts and burns are unavailable right now. Retrying shortly.',
+            code: 'LEDGER_UNAVAILABLE',
+          },
+        })
+      : route.fulfill({ json: ledger }),
+  )
 }
