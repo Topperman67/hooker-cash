@@ -9,6 +9,7 @@ import Glass from '../components/Glass.jsx'
 import { compact, sol, usd } from '../lib/format.js'
 import { MeteoraMark } from '../components/Meteora.jsx'
 import Flywheel from '../components/Flywheel.jsx'
+import { DOCS_URL } from '../lib/links.js'
 
 export default function HomePage() {
   const latest = useResource('/api/market?sort=newest', 15000)
@@ -40,9 +41,9 @@ export default function HomePage() {
               <Link to="/launch" className="btn btn-primary btn-lg">
                 Launch a coin
               </Link>
-              <Link to="/hooks" className="btn btn-lg">
+              <a href={DOCS_URL} target="_blank" rel="noreferrer" className="btn btn-lg">
                 See how the hooks work
-              </Link>
+              </a>
             </div>
             {s && (
               <Glass variant="panel" className="hero-stats-glass" radius={20}>
