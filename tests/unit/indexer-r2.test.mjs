@@ -255,6 +255,7 @@ test('K5: tracked Quantum coins are announced, including ones upgraded by a sync
     uri: 'https://quantpad.test/m/' + '2'.repeat(32),
     creator: quantum.well(stale),
     dbcPool: dbcPoolFor(stale),
+    dbcConfig: CONFIG,
     quantum: false,
     external: true,
     source: 'meteora',

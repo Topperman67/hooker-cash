@@ -24,8 +24,9 @@ import {
 } from './market-math.mjs'
 import { curveProgress, isAddress, isSignature, launchTiers } from '../shared/network.mjs'
 
-// Quant Pad's DBC launch configs (QUANTPAD_DBC_CONFIG, comma-separated): a coin under one of them
-// is found by its pool address without a program scan.
+// Quant Pad's DBC launch configs (QUANTPAD_DBC_CONFIG, comma-separated, and the launch tiers'): a
+// coin under one of them is found by its pool address without a program scan, and only such a coin
+// can be a native launch.
 const envLaunchConfigs = () => [
   ...new Set([
     ...String(process.env.QUANTPAD_DBC_CONFIG || '')
@@ -127,7 +128,8 @@ const needsIdentity = (r) =>
  * launches, say) that its lists show anyway: tracked by the background pass even when nobody has
  * opened them, and never dropped at the external cap. A hidden mint stays hidden. `maxNative`,
  * `staleVolume` (SOL) and `launchesPerWallet` override the native-cap settings.
- * `launchConfigs` (default QUANTPAD_DBC_CONFIG) are Quant Pad's DBC configs.
+ * `launchConfigs` (default QUANTPAD_DBC_CONFIG and the launch tiers) are Quant Pad's DBC configs:
+ * only a coin under one of them can be a native launch.
  */
 export function createIndexer({
   connection,
@@ -163,6 +165,12 @@ export function createIndexer({
   const isListed = (mint) => listedMints.includes(mint)
   // Shown in Quant Pad's own lists: its launches and the operator's listed coins.
   const inLists = (c) => !c.external || isListed(c.mint)
+  // Launch provenance: only a coin whose DBC pool was created under one of Quant Pad's own configs
+  // (the operator created them and claims their fees) can be a Quant Pad launch. /api/metadata is
+  // public, so an issued URI alone does not make a coin under someone else's config (and fee terms)
+  // one; a verified Quantum coin is held to the same rule.
+  const ownConfigs = new Set(launchConfigs)
+  const ownConfig = (dbcConfig) => !!dbcConfig && ownConfigs.has(dbcConfig)
   // Fields that start a native launch's onNativeLaunch notice (nothing to track without a callback).
   const notice = (at = now()) =>
     onNativeLaunch ? { nativeNotice: 'pending', nativeNoticeAt: at } : {}
@@ -229,7 +237,8 @@ export function createIndexer({
 
   // Settles the quantum flag of a stored record: re-checked whenever it is not true and the creator
   // is the coin's well, so a transient failure heals. A verified Quantum coin becomes a native
-  // launch with the launcher from its Quantum account. Returns the fields to change.
+  // launch with the launcher from its Quantum account, when its pool is under one of Quant Pad's
+  // configs. Returns the fields to change.
   async function healQuantum(record) {
     if (!record?.creator || (record.quantum === true && !record.external)) return {}
     const unknown = record.quantum === undefined ? { quantum: null } : {}
@@ -240,7 +249,11 @@ export function createIndexer({
     if (q.quantum === null) return unknown
     if (q.quantum === false) return record.quantum === false ? {} : { quantum: false }
     const patch = { quantum: true }
-    if (record.external && (await admitNative(record.mint, q.launcher)).ok)
+    if (
+      record.external &&
+      ownConfig(record.dbcConfig) &&
+      (await admitNative(record.mint, q.launcher)).ok
+    )
       Object.assign(patch, {
         external: false,
         source: 'quantpad',
@@ -688,8 +701,9 @@ export function createIndexer({
 
   // C2. Registers a native Quant Pad launch from its Meteora DBC create transaction. The signature
   // is optional when the mint is given (the create is then its DBC pool's first transaction). A
-  // coin is native only when it is a verified Quantum coin or its metadata URI was issued by this
-  // server; otherwise 409 not_indexed_yet (retry later) or 400 not_quantpad (track it instead).
+  // coin is native only when its DBC pool was created under one of Quant Pad's configs and it is a
+  // verified Quantum coin or its metadata URI was issued by this server; otherwise 409
+  // not_indexed_yet (retry later) or 400 not_quantpad (track it instead).
   async function registerLaunch(signature, { mint } = {}) {
     signature = signature ? String(signature) : ''
     mint = mint ? String(mint) : ''
@@ -743,6 +757,8 @@ export function createIndexer({
       return noticeDue(record) ? announce(record) : record
     }
 
+    if (!ownConfig(base.dbcConfig))
+      throw fail(400, 'This coin was not launched on Quant Pad.', 'not_quantpad')
     const q = await verifyQuantum(base.mint, base.creator, { minContextSlot: found.tx.slot })
     // Issued by /api/metadata, or already bound to this coin by an earlier registration that a
     // cap refused (the issued-uri record lasts a day; the binding lasts CLAIM_TTL_MS).
@@ -820,7 +836,8 @@ export function createIndexer({
   }
 
   // Tracks any SOL-quoted Meteora DBC coin a visitor opens: external unless it is a verified
-  // Quantum coin. Responds with the live on-chain price (the DAMM v2 pool's once migrated).
+  // Quantum coin under one of Quant Pad's configs. Responds with the live on-chain price (the DAMM
+  // v2 pool's once migrated).
   async function track(mint) {
     if (!isAddress(mint)) throw fail(400, 'Enter a valid Solana mint address.', 'invalid_mint')
     const existing = await store.get(keys.coin(mint))
@@ -846,7 +863,8 @@ export function createIndexer({
     // A failed identity read is not "no metadata": the record says so and syncs read it again.
     const identity = await identityPatch(mint)
     const q = await verifyQuantum(mint, curve.creator)
-    const admitted = q.quantum === true ? await admitNative(mint, q.launcher) : null
+    const admitted =
+      q.quantum === true && ownConfig(curve.dbcConfig) ? await admitNative(mint, q.launcher) : null
     const native = !!admitted?.ok
     const draft = {
       mint,
