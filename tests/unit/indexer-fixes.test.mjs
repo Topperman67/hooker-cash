@@ -5,8 +5,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
-import { network, priceFromSqrtPrice } from '../../shared/network.mjs'
+import { launchTiers, network, priceFromSqrtPrice } from '../../shared/network.mjs'
 import {
+  CONFIG,
   NOW,
   WSOL,
   address,
@@ -40,14 +41,22 @@ installFetch(test)
 
 // A launch: the DBC create by `launcher`, handed to `creator` (a Quantum coin's well) when that is
 // someone else.
-const launchIxs = (mint, { creator, launcher = creator, ...rest }) => [
-  createIx(mint, { creator: launcher, ...rest }),
+const launchIxs = (mint, { creator, launcher = creator, config, ...rest }) => [
+  createIx(mint, { creator: launcher, config, ...rest }),
   ...(launcher === creator
     ? []
-    : [transferCreatorIx(mint, { creator: launcher, newCreator: creator })]),
+    : [transferCreatorIx(mint, { creator: launcher, newCreator: creator, config })]),
 ]
 // A curve trade that leaves the coin at `price` SOL per whole token (1 SOL in).
 const tradeIxs = (mint, options) => [swapIx(mint, options)]
+// The config of mainnet's one Quantum coin (DMMg…KSQP): a Quant Pad launch tier.
+const QUANTUM_TIER = 'J25Zk92d9DBJJ5eWggmQN3yBe8tC6iuxs61FsefFSHNd'
+// A DBC config that is not Quant Pad's (someone else's fee terms), quoting SOL.
+async function foreignConfig(chain) {
+  const config = address()
+  chain.accounts.set(config, await dbcConfigAccount())
+  return config
+}
 
 async function syncUntilCaughtUp(indexer, mint, max = 200) {
   for (let n = 0; n < max; n++) {
@@ -158,6 +167,61 @@ test('C2: native registrations are capped', async () => {
   await assert.rejects(indexer.registerLaunch(sig), { status: 429, code: 'launch_cap' })
 })
 
+test("C2: an issued URI lists a coin only when its DBC pool is under one of Quant Pad's configs", async () => {
+  const chain = await fakeChain()
+  const store = memoryStore()
+  const indexer = createIndexer({
+    connection: chain.connection,
+    store,
+    quantum: fakeQuantum(chain),
+  })
+  const user = address()
+  const uri = 'https://quantpad.test/m/' + '7'.repeat(32)
+  await store.set(issuedUriKey(uri), { at: Date.now() })
+
+  // A URI fetched from the public /api/metadata on a coin launched under someone else's config:
+  // refused by signature and by mint, so the client tracks it as an external coin.
+  const config = await foreignConfig(chain)
+  const foreign = address()
+  await chain.setAccounts(coinAccounts(foreign, { creator: user, config }))
+  const foreignSig = chain.add([dbcPoolFor(foreign, config)], {
+    ixs: launchIxs(foreign, { creator: user, uri, config }),
+  })
+  for (const call of [
+    () => indexer.registerLaunch(foreignSig),
+    () => indexer.registerLaunch('', { mint: foreign }),
+  ])
+    await assert.rejects(call(), { status: 400, code: 'not_quantpad' })
+  assert.equal(await indexer.coin(foreign), null)
+  assert.deepEqual(await indexer.list(), [])
+  const tracked = await indexer.track(foreign)
+  assert.deepEqual([tracked.external, tracked.source, tracked.dbcConfig], [true, 'meteora', config])
+  await idle(store)
+  await assert.rejects(indexer.registerLaunch(foreignSig), { status: 400, code: 'not_quantpad' })
+  assert.equal((await indexer.coin(foreign)).external, true, 'still a tracked coin')
+
+  // The refusal did not take the URI: a launch under a Quant Pad tier with it still registers.
+  assert.ok(launchTiers.some((t) => t.config === QUANTUM_TIER))
+  const mint = address()
+  await chain.setAccounts(coinAccounts(mint, { creator: user, config: QUANTUM_TIER }))
+  const create = chain.add([dbcPoolFor(mint, QUANTUM_TIER)], {
+    ixs: launchIxs(mint, { creator: user, uri, config: QUANTUM_TIER }),
+  })
+  const coin = await indexer.registerLaunch('', { mint })
+  assert.deepEqual(
+    [coin.external, coin.source, coin.provenance, coin.dbcConfig, coin.signature],
+    [false, 'quantpad', 'issued-uri', QUANTUM_TIER, create],
+  )
+  await idle(store)
+  assert.deepEqual(
+    (await indexer.list()).map((c) => [c.mint, c.external]).sort(),
+    [
+      [foreign, true],
+      [mint, false],
+    ].sort(),
+  )
+})
+
 // ---- C3 -----------------------------------------------------------------------------------------
 test('C3: a failed Quantum check is stored as unknown and healed on sync', async () => {
   const chain = await fakeChain()
@@ -219,6 +283,7 @@ test('C3: track and sync upgrade verified Quantum coins to native launches', asy
     name: 'Stale',
     creator: quantum.well(stale),
     dbcPool: dbcPoolFor(stale),
+    dbcConfig: CONFIG,
     quantum: false,
     external: true,
     source: 'meteora',
@@ -236,6 +301,53 @@ test('C3: track and sync upgrade verified Quantum coins to native launches', asy
   await chain.setAccounts(coinAccounts(plain, { creator: address() }))
   assert.equal((await indexer.track(plain)).quantum, false)
   await idle(store)
+})
+
+test("C3: a verified Quantum coin is a native launch only under one of Quant Pad's configs", async () => {
+  const chain = await fakeChain()
+  const store = memoryStore()
+  const quantum = fakeQuantum(chain)
+  const indexer = createIndexer({ connection: chain.connection, store, quantum })
+  const launcher = address()
+
+  // Its pool under someone else's config: registration, track and sync all keep it external.
+  const config = await foreignConfig(chain)
+  const foreign = address()
+  quantum.register(foreign, launcher)
+  await chain.setAccounts(coinAccounts(foreign, { creator: quantum.well(foreign), config }))
+  const foreignSig = chain.add([dbcPoolFor(foreign, config)], {
+    ixs: launchIxs(foreign, { creator: quantum.well(foreign), launcher, config }),
+  })
+  await assert.rejects(indexer.registerLaunch(foreignSig), { status: 400, code: 'not_quantpad' })
+  const tracked = await indexer.track(foreign)
+  assert.deepEqual(
+    [tracked.quantum, tracked.external, tracked.source, tracked.provenance],
+    [true, true, 'meteora', undefined],
+  )
+  await idle(store)
+  const synced = await indexer.syncCoin(foreign)
+  assert.deepEqual([synced.quantum, synced.external], [true, true], 'sync does not upgrade it')
+  assert.equal((await indexer.track(foreign)).external, true)
+  assert.equal((await indexer.list()).find((c) => c.mint === foreign).external, true)
+
+  // Mainnet's Quantum coin is under J25Z…, a Quant Pad tier: registered and tracked as native.
+  for (const how of ['register', 'track']) {
+    const mint = address()
+    quantum.register(mint, launcher)
+    await chain.setAccounts(
+      coinAccounts(mint, { creator: quantum.well(mint), config: QUANTUM_TIER }),
+    )
+    const sig = chain.add([dbcPoolFor(mint, QUANTUM_TIER)], {
+      ixs: launchIxs(mint, { creator: quantum.well(mint), launcher, config: QUANTUM_TIER }),
+    })
+    const coin = how === 'register' ? await indexer.registerLaunch(sig) : await indexer.track(mint)
+    assert.deepEqual(
+      [coin.quantum, coin.external, coin.provenance, coin.launcher, coin.dbcConfig],
+      [true, false, 'quantum', launcher, QUANTUM_TIER],
+      how,
+    )
+    await idle(store)
+  }
 })
 
 // ---- cursors ------------------------------------------------------------------------------------
