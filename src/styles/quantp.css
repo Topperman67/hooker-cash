@@ -383,8 +383,8 @@
 }
 .qp-ledger-totals {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 14px;
   margin: 0;
   padding: 12px 14px;
   border-radius: var(--r-md);
@@ -411,6 +411,34 @@
 .qp-ledger .table th:last-child,
 .qp-ledger .table td:last-child {
   padding-right: 0;
+}
+/* a burst sent in several transactions opens to list them */
+.qp-ledger-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--steel);
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.qp-ledger-toggle:hover {
+  color: var(--ink);
+}
+.qp-ledger-toggle svg {
+  transition: transform 0.15s ease;
+}
+.qp-ledger-toggle[aria-expanded='true'] svg {
+  transform: rotate(180deg);
+}
+.qp-ledger .qp-ledger-sub td {
+  padding-top: 6px;
+  padding-bottom: 6px;
+  color: var(--steel);
+  font-size: var(--t-xs);
 }
 .qp-ledger-empty {
   margin: 0;

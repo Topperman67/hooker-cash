@@ -509,11 +509,10 @@ export function teamWallets(token = QUANTP) {
  *     wallets counts only beside transfers to others (a holder paid in a round), never alone (SOL
  *     moved back);
  *   - burn: what a team wallet burned of the token (Burn, BurnChecked, or a transfer to the
- *     incinerator), one entry per wallet. `solSpent` is what that wallet paid in the same
- *     transaction for the tokens it burned, when it bought them there (a buy and burn): the drop in
- *     the SOL it holds, its own and its token accounts' (so wrapped SOL and rent it keeps are not
- *     spent), less the network fee, in proportion to the share of the tokens bought that it burned.
- *     Null when it burned tokens it already held.
+ *     incinerator), one entry per wallet;
+ *   - buy: a team wallet ending up with more of the token (counting what it burned here) for less
+ *     SOL. `lamports` is the drop in the SOL it holds, its own and its token accounts' (so wrapped
+ *     SOL and rent it keeps are not spent), less the network fee.
  * Failed transactions give none.
  */
 export function ledgerEntries(tx, { token = QUANTP, wallets = teamWallets(token) } = {}) {
@@ -594,41 +593,94 @@ export function ledgerEntries(tx, { token = QUANTP, wallets = teamWallets(token)
     })
   }
 
-  for (const [wallet, { amount, method }] of burned) {
-    const owned = [...accounts.values()].filter((a) => a.owner === wallet)
-    // Bought here: what it holds more of after the transaction, plus what it burned.
-    const bought =
-      owned.filter((a) => a.mint === token.mint).reduce((s, a) => s + a.post - a.pre, 0n) + amount
+  for (const wallet of wallets.all) {
     const at = keys.indexOf(wallet)
+    if (at < 0) continue
+    const owned = [...accounts.values()].filter((a) => a.owner === wallet)
+    const bought =
+      owned.filter((a) => a.mint === token.mint).reduce((s, a) => s + a.post - a.pre, 0n) +
+      (burned.get(wallet)?.amount || 0n)
+    if (bought <= 0n) continue
     const held = (i) => big(meta.postBalances[i]) - big(meta.preBalances[i])
     let change = held(at) + owned.reduce((s, a) => s + held(a.index), 0n)
     if (at === 0) change += big(meta.fee) // the fee payer: the network fee is not part of the price
-    const share = bought < amount ? bought : amount
-    const solSpent = bought > 0n && change < 0n ? (-change * share) / bought : null
-    out.push({ kind: 'burn', ...base, wallet, amount, method, solSpent })
+    if (change < 0n) out.push({ kind: 'buy', ...base, wallet, lamports: -change, amount: bought })
   }
+  for (const [wallet, { amount, method }] of burned)
+    out.push({ kind: 'burn', ...base, wallet, amount, method })
   return out
 }
 
-/** The /api/quantp/ledger lists from every entry read so far (ledgerEntries), newest first. */
-export function quantpLedger(entries, { token = QUANTP, wallets = teamWallets(token) } = {}) {
-  const newest = (a, b) =>
-    b.slot - a.slot || (a.signature < b.signature ? 1 : a.signature > b.signature ? -1 : 0)
-  const payouts = entries.filter((e) => e.kind === 'payout').sort(newest)
-  const burns = entries.filter((e) => e.kind === 'burn').sort(newest)
-  const total = (list, field) => list.reduce((s, e) => s + (e[field] ?? 0n), 0n)
+// Payout transactions this close together (seconds) are one burst: a round split over several
+// transactions, or resumed after an interruption.
+const BURST_GAP = 1800
+
+/**
+ * The /api/quantp/ledger lists from every entry read so far (ledgerEntries), newest first.
+ *   - payouts: bursts, each the payout transactions sent within BURST_GAP of the one before.
+ *   - burns: each with `solSpent`, what the team's wallets paid for the tokens they bought since
+ *     the burn before (the buyback, in small buys or in the burn's own transaction), in proportion
+ *     to the amount burned; null when nothing was bought for it. Buys in the launch (the creator's
+ *     dev buy) are not buybacks. `totals.unburned` is what was bought and not burned yet.
+ * `payoutLamports` is the payout wallet's balance now (null when unknown).
+ */
+export function quantpLedger(
+  entries,
+  { token = QUANTP, wallets = teamWallets(token), payoutLamports = null } = {},
+) {
+  const order = { buy: 0, payout: 1, burn: 2 } // within a transaction, a buy comes before its burn
+  const chronological = [...entries].sort(
+    (a, b) =>
+      a.slot - b.slot ||
+      (a.signature < b.signature ? -1 : a.signature > b.signature ? 1 : 0) ||
+      order[a.kind] - order[b.kind],
+  )
+  const pending = { lamports: 0n, amount: 0n } // bought back and not burned yet
+  const bursts = []
+  const burns = []
+  for (const e of chronological) {
+    if (e.kind === 'buy') {
+      if (!(e.timestamp > token.launchedAt)) continue
+      pending.lamports += e.lamports
+      pending.amount += e.amount
+    } else if (e.kind === 'payout') {
+      const last = bursts.at(-1)
+      if (last && e.timestamp - last.at(-1).timestamp <= BURST_GAP) last.push(e)
+      else bursts.push([e])
+    } else if (e.kind === 'burn') {
+      let solSpent = null
+      if (pending.amount > 0n) {
+        const take = e.amount < pending.amount ? e.amount : pending.amount
+        solSpent = (pending.lamports * take) / pending.amount
+        pending.lamports -= solSpent
+        pending.amount -= take
+      }
+      burns.push({ ...e, solSpent })
+    }
+  }
+  const sum = (list, field) => list.reduce((s, e) => s + (e[field] ?? 0n), 0n)
+  const paid = bursts.flat()
   return {
     mint: token.mint,
     wallets: { payout: wallets.payout, creator: wallets.creator },
-    payouts: payouts.map((e) => ({
-      signature: e.signature,
-      slot: e.slot,
-      timestamp: e.timestamp,
-      lamports: e.lamports.toString(),
-      recipients: e.recipients.length,
-      recipient: e.recipients.length === 1 ? e.recipients[0] : null,
-    })),
-    burns: burns.map((e) => ({
+    payoutLamports: payoutLamports == null ? null : payoutLamports.toString(),
+    payouts: bursts.reverse().map((burst) => {
+      const recipients = new Set(burst.flatMap((e) => e.recipients))
+      return {
+        timestamp: burst[0].timestamp,
+        lamports: sum(burst, 'lamports').toString(),
+        recipients: recipients.size,
+        recipient: recipients.size === 1 ? [...recipients][0] : null,
+        transactions: burst.map((e) => ({
+          signature: e.signature,
+          slot: e.slot,
+          timestamp: e.timestamp,
+          lamports: e.lamports.toString(),
+          recipients: e.recipients.length,
+        })),
+      }
+    }),
+    burns: burns.reverse().map((e) => ({
       signature: e.signature,
       slot: e.slot,
       timestamp: e.timestamp,
@@ -638,10 +690,12 @@ export function quantpLedger(entries, { token = QUANTP, wallets = teamWallets(to
       solSpent: e.solSpent == null ? null : e.solSpent.toString(),
     })),
     totals: {
-      paidLamports: total(payouts, 'lamports').toString(),
-      recipients: new Set(payouts.flatMap((e) => e.recipients)).size,
-      burnedAmount: total(burns, 'amount').toString(),
-      buybackLamports: total(burns, 'solSpent').toString(),
+      paidLamports: sum(paid, 'lamports').toString(),
+      payoutTxs: paid.length,
+      recipients: new Set(paid.flatMap((e) => e.recipients)).size,
+      burnedAmount: sum(burns, 'amount').toString(),
+      buybackLamports: sum(burns, 'solSpent').toString(),
+      unburned: { lamports: pending.lamports.toString(), amount: pending.amount.toString() },
     },
   }
 }
@@ -650,6 +704,7 @@ export function quantpLedger(entries, { token = QUANTP, wallets = teamWallets(to
  * $QUANTP's payouts and burns from the team wallets' histories. Each refresh (at most every `ttl`
  * per instance) lists the signatures newer than the last one seen, one call per wallet, and reads
  * only the transactions not read yet: a confirmed transaction never changes, so each is read once.
+ * It also reads the payout wallet's balance (one call).
  * ledger() resolves to quantpLedger's lists with `updatedAt` and `state`, or throws a 503 when
  * nothing has been read on this instance yet.
  */
@@ -704,7 +759,13 @@ export function createQuantpLedger({
       )
       txs.forEach((tx, j) => tx && read.set(batch[j], ledgerEntries(tx, { token, wallets })))
     }
-    return quantpLedger([...read.values()].flat(), { token, wallets })
+    // what the payout wallet holds for the next bursts (unknown if it cannot be read)
+    const payoutLamports = wallets.payout
+      ? await Promise.resolve()
+          .then(() => connection.getBalance(new PublicKey(wallets.payout), 'confirmed'))
+          .then(BigInt, () => null)
+      : null
+    return quantpLedger([...read.values()].flat(), { token, wallets, payoutLamports })
   }
 
   const source = cachedSource(load, { ttl, retry: 30_000, wait: 8_000, now })

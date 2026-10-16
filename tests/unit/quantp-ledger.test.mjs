@@ -1,9 +1,10 @@
 // $QUANTP's payouts and burns (server/quantp.mjs ledgerEntries, quantpLedger, createQuantpLedger)
-// and GET /api/quantp/ledger while Redis refuses every command. The payouts are mainnet
-// transactions of round 1 (tests/fixtures/quantp-ledger.json, read with getTransaction in
-// jsonParsed encoding, logs dropped): two of its three batches from the payout wallet and the
-// creator wallet's transfer that funded it. No burn has happened yet, so burns are built in the
-// same shape.
+// and GET /api/quantp/ledger while Redis refuses every command: payouts in bursts, buys before a
+// burn counted as its buyback (the launch dev buy aside), the payout wallet's balance. The payouts
+// are mainnet transactions of round 1 (tests/fixtures/quantp-ledger.json, read with
+// getTransaction in jsonParsed encoding, logs dropped): two of its three batches from the payout
+// wallet and the creator wallet's transfer that funded it. No burn has happened yet, so burns are
+// built in the same shape.
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
@@ -26,7 +27,8 @@ const REAL = JSON.parse(
 const PAYOUT = QUANTP.payoutWallet
 const CREATOR = QUANTP.creator
 const INCINERATOR = '1nc1nerator11111111111111111111111111111111'
-const HOLDER = '57uMvKGYH1xcrwPSXHjtQFbzApmDGhQi1RVa6pzvXb2u'
+const HOLDER = '57uMvKGYH1xcrwPSXHjtQFbzApmDGhQi1RVa6pzvXb2u' // paid in round 1
+const NEW_HOLDER = 'NewHo1der1111111111111111111111111111111111'
 const OWN_ATA = 'BurnerQuantpAta11111111111111111111111111111'
 const WSOL_ATA = 'BurnerWsolAta111111111111111111111111111111'
 const VAULT_A = 'PoolVaultA111111111111111111111111111111111'
@@ -164,50 +166,123 @@ test('only plain SOL transfers out of the payout wallet are payouts', () => {
   )
 })
 
-test('a buy and burn: the tokens burned and the SOL its swap spent, fee and kept rent aside', () => {
-  const [burn] = ledgerEntries(buyAndBurn())
-  assert.equal(burn.kind, 'burn')
-  assert.equal(burn.wallet, PAYOUT)
-  assert.equal(burn.method, 'burn')
-  assert.equal(burn.amount, 2_000_000_000_000n)
-  assert.equal(burn.solSpent, 500_000_000n)
-  // burning half of what it bought spends half of the SOL on the burn
-  const [half] = ledgerEntries(buyAndBurn({ burn: 1_000_000_000_000n }))
-  assert.equal(half.amount, 1_000_000_000_000n)
-  assert.equal(half.solSpent, 250_000_000n)
+/** `wallet` buys `tokens` for `lamports` in the DAMM v2 pool, into the $QUANTP account it has. */
+function buy({
+  wallet = CREATOR,
+  lamports = 100_000_000,
+  tokens = 1_000_000_000_000n,
+  held = 0n,
+  slot,
+  blockTime,
+} = {}) {
+  return tx({
+    slot,
+    blockTime,
+    keys: [wallet, OWN_ATA, VAULT_A, VAULT_B, network.dammV2Program, T22],
+    instructions: [
+      { programId: network.dammV2Program, data: 'swap', accounts: [VAULT_A, VAULT_B] },
+    ],
+    pre: [2_000_000_000, RENT, 2_000_000, 60_000_000_000, 1, 1],
+    post: [2_000_000_000 - lamports - 5000, RENT, 2_000_000, 60_000_000_000 + lamports, 1, 1],
+    preTokens: [balance(1, wallet, held), balance(2, 'PoolAuthority', 300_000_000_000_000n)],
+    postTokens: [
+      balance(1, wallet, held + tokens),
+      balance(2, 'PoolAuthority', 300_000_000_000_000n - tokens),
+    ],
+  })
+}
+
+/** `wallet` burns `amount` of the $QUANTP it holds. */
+function burnHeld({
+  wallet = CREATOR,
+  amount = 1_000_000_000_000n,
+  held = 5_000_000_000_000n,
+  slot,
+  blockTime,
+} = {}) {
+  return tx({
+    slot,
+    blockTime,
+    keys: [wallet, OWN_ATA, T22],
+    instructions: [
+      {
+        program: 'spl-token-2022',
+        programId: T22,
+        parsed: {
+          type: 'burn',
+          info: { account: OWN_ATA, authority: wallet, mint: QUANTP.mint, amount: String(amount) },
+        },
+      },
+    ],
+    pre: [1_000_000_000, RENT, 1],
+    post: [1_000_000_000 - 5000, RENT, 1],
+    preTokens: [balance(1, wallet, held)],
+    postTokens: [balance(1, wallet, held - amount)],
+  })
+}
+
+test('a buy and burn in one transaction: the SOL its swap spent, fee and kept rent aside', () => {
+  const entries = ledgerEntries(buyAndBurn())
+  assert.deepEqual(
+    entries.map((e) => [e.kind, e.wallet, e.amount, e.lamports]),
+    [
+      ['buy', PAYOUT, 2_000_000_000_000n, 500_000_000n],
+      ['burn', PAYOUT, 2_000_000_000_000n, undefined],
+    ],
+  )
+  assert.equal(entries[1].method, 'burn')
+  assert.equal(quantpLedger(entries).burns[0].solSpent, '500000000')
+  // burning half of what it bought spends half of the SOL on the burn; the rest waits
+  const half = quantpLedger(ledgerEntries(buyAndBurn({ burn: 1_000_000_000_000n })))
+  assert.equal(half.burns[0].amount, '1000000000000')
+  assert.equal(half.burns[0].solSpent, '250000000')
+  assert.deepEqual(half.totals.unburned, { lamports: '250000000', amount: '1000000000000' })
 })
 
-test('burning tokens already held, by Burn or into the incinerator, spends no SOL', () => {
-  const [held] = ledgerEntries(
-    tx({
-      keys: [CREATOR, OWN_ATA, T22],
-      instructions: [
-        {
-          program: 'spl-token-2022',
-          programId: T22,
-          parsed: {
-            type: 'burn',
-            info: {
-              account: OWN_ATA,
-              authority: CREATOR,
-              mint: QUANTP.mint,
-              amount: '1000000000000',
-            },
-          },
-        },
-      ],
-      pre: [1_000_000_000, RENT, 1],
-      post: [1_000_000_000 - 5000, RENT, 1],
-      preTokens: [balance(1, CREATOR, 5_000_000_000_000n)],
-      postTokens: [balance(1, CREATOR, 4_000_000_000_000n)],
-    }),
-  )
+test('small buys before a burn are its buyback; the launch dev buy is not', () => {
+  const t = QUANTP.launchedAt
+  const devBuy = buy({ lamports: 118_128_240, tokens: 3_500_001_616_770n, slot: 1, blockTime: t })
+  const entries = [
+    devBuy,
+    buy({ lamports: 100_000_000, slot: 10, blockTime: t + 3600 }),
+    // the payout wallet buys too: the team's buys are pooled
+    buy({ wallet: PAYOUT, lamports: 200_000_000, slot: 11, blockTime: t + 3700 }),
+    burnHeld({ slot: 12, blockTime: t + 3800 }),
+  ].flatMap((x) => ledgerEntries(x))
+  const ledger = quantpLedger(entries)
+  // 2M bought for 0.3 SOL, 1M burned: half of it
+  assert.equal(ledger.burns[0].solSpent, '150000000')
+  assert.deepEqual(ledger.totals.unburned, { lamports: '150000000', amount: '1000000000000' })
+
+  const more = [
+    ...entries,
+    ...ledgerEntries(burnHeld({ slot: 13, blockTime: t + 3900 })),
+    ...ledgerEntries(burnHeld({ slot: 14, blockTime: t + 4000 })),
+  ]
+  const after = quantpLedger(more)
   assert.deepEqual(
-    { kind: held.kind, wallet: held.wallet, amount: held.amount, solSpent: held.solSpent },
-    { kind: 'burn', wallet: CREATOR, amount: 1_000_000_000_000n, solSpent: null },
+    after.burns.map((b) => b.solSpent),
+    [null, '150000000', '150000000'],
+  )
+  assert.equal(after.totals.burnedAmount, '3000000000000')
+  assert.equal(after.totals.buybackLamports, '300000000')
+  assert.deepEqual(after.totals.unburned, { lamports: '0', amount: '0' })
+  // with only the dev buy before it, a burn bought nothing
+  assert.equal(
+    quantpLedger(
+      [devBuy, burnHeld({ slot: 2, blockTime: t + 60 })].flatMap((x) => ledgerEntries(x)),
+    ).burns[0].solSpent,
+    null,
+  )
+})
+
+test('burning tokens already held, by Burn or into the incinerator, is a burn and no buy', () => {
+  assert.deepEqual(
+    ledgerEntries(burnHeld()).map((e) => [e.kind, e.wallet, e.amount, e.method]),
+    [['burn', CREATOR, 1_000_000_000_000n, 'burn']],
   )
   // sent to the incinerator from inside a wallet app's instruction, rent for its account paid
-  const [incinerated] = ledgerEntries(
+  const incinerated = ledgerEntries(
     tx({
       keys: [CREATOR, OWN_ATA, INCINERATOR_ATA, T22],
       instructions: [{ programId: 'WalletApp1111111111111111111111111111111111', accounts: [] }],
@@ -236,58 +311,74 @@ test('burning tokens already held, by Burn or into the incinerator, spends no SO
       ],
     }),
   )
-  assert.equal(incinerated.method, 'incinerator')
-  assert.equal(incinerated.amount, 500_000_000_000n)
-  assert.equal(incinerated.solSpent, null)
-  // someone else's burn, or another mint's, is not the team's
+  assert.deepEqual(
+    incinerated.map((e) => [e.kind, e.amount, e.method]),
+    [['burn', 500_000_000_000n, 'incinerator']],
+  )
+  // someone else's burn, or another mint's, is not the team's (nor is the buy then)
   const other = buyAndBurn()
   other.transaction.message.instructions[3].parsed.info.authority = HOLDER
-  assert.deepEqual(ledgerEntries(other), [])
+  assert.deepEqual(
+    ledgerEntries(other).map((e) => e.kind),
+    [],
+  )
   const otherMint = buyAndBurn()
   otherMint.transaction.message.instructions[3].parsed.info.mint = network.wsolMint
-  assert.deepEqual(ledgerEntries(otherMint), [])
+  assert.deepEqual(
+    ledgerEntries(otherMint).map((e) => e.kind),
+    [],
+  )
 })
 
-test('the ledger lists newest first with totals, amounts as strings', () => {
-  const entries = [
-    REAL.payout1,
-    REAL.payout3,
-    REAL.funding,
-    buyAndBurn({ slot: 457_700_000 }),
-  ].flatMap((t) => ledgerEntries(t))
-  const ledger = quantpLedger(entries)
+test('payouts come in bursts: transactions sent together are one, newest first', () => {
+  const later = tx({
+    slot: 457_800_000,
+    blockTime: REAL.payout3.blockTime + 7200,
+    keys: [PAYOUT, NEW_HOLDER],
+    instructions: [transfer(PAYOUT, NEW_HOLDER, 1_000_000)],
+    pre: [9, 0],
+    post: [9, 0],
+  })
+  const entries = [REAL.payout3, REAL.funding, later, REAL.payout1].flatMap((t) => ledgerEntries(t))
+  const ledger = quantpLedger(entries, { payoutLamports: 1_580_000_000n })
   assert.deepEqual(ledger.wallets, { payout: PAYOUT, creator: CREATOR })
+  assert.equal(ledger.payoutLamports, '1580000000')
+  assert.equal(ledger.payouts.length, 2)
+  // the later one, to a single holder
   assert.deepEqual(
-    ledger.payouts.map((p) => [p.signature, p.lamports, p.recipients]),
+    [ledger.payouts[0].lamports, ledger.payouts[0].recipients, ledger.payouts[0].recipient],
+    ['1000000', 1, NEW_HOLDER],
+  )
+  // round 1: its batches 9 s apart, in the order sent
+  const round = ledger.payouts[1]
+  assert.equal(round.timestamp, REAL.payout1.blockTime)
+  assert.equal(round.lamports, '373256401')
+  assert.equal(round.recipients, 31)
+  assert.equal(round.recipient, null)
+  assert.deepEqual(
+    round.transactions.map((x) => [x.signature, x.lamports, x.recipients]),
     [
-      [REAL.payout3.transaction.signatures[0], '15232167', 11],
       [REAL.payout1.transaction.signatures[0], '358024234', 20],
+      [REAL.payout3.transaction.signatures[0], '15232167', 11],
     ],
   )
-  assert.equal(ledger.payouts[0].recipient, null)
-  assert.equal(ledger.burns.length, 1)
-  assert.equal(ledger.burns[0].amount, '2000000000000')
-  assert.equal(ledger.burns[0].solSpent, '500000000')
   assert.deepEqual(ledger.totals, {
-    paidLamports: '373256401',
-    recipients: 31,
-    burnedAmount: '2000000000000',
-    buybackLamports: '500000000',
-  })
-  assert.deepEqual(quantpLedger([]).totals, {
-    paidLamports: '0',
-    recipients: 0,
+    paidLamports: '374256401',
+    payoutTxs: 3,
+    recipients: 32,
     burnedAmount: '0',
     buybackLamports: '0',
+    unburned: { lamports: '0', amount: '0' },
   })
+  assert.equal(quantpLedger([]).payoutLamports, null)
   assert.deepEqual(teamWallets().all, [PAYOUT, CREATOR])
 })
 
 // ---- the cached reader --------------------------------------------------------------------------
 
 /** A connection answering the two wallets' histories (newest first) and their transactions. */
-function historyConnection(histories, transactions) {
-  const calls = { signatures: [], transactions: [] }
+function historyConnection(histories, transactions, lamports = 1_580_000_000) {
+  const calls = { signatures: [], transactions: [], balances: 0 }
   return {
     calls,
     histories,
@@ -312,6 +403,12 @@ function historyConnection(histories, transactions) {
       if (t instanceof Error) throw t
       return t ?? null
     },
+    async getBalance(address) {
+      calls.balances++
+      assert.equal(address.toBase58(), PAYOUT)
+      if (lamports instanceof Error) throw lamports
+      return lamports
+    },
   }
 }
 const listing = (t, err = null) => ({ signature: t.transaction.signatures[0], err })
@@ -334,18 +431,22 @@ test('each transaction is read once; refreshes list only what is newer, one call
   const first = await ledger.ledger()
   assert.equal(first.state, 'ok')
   assert.equal(first.updatedAt, 1000)
-  assert.equal(first.payouts.length, 2)
+  assert.equal(first.payouts.length, 1)
+  assert.equal(first.payouts[0].transactions.length, 2)
   assert.equal(first.totals.paidLamports, '373256401')
+  assert.equal(first.payoutLamports, '1580000000')
   // a transaction in both histories is read once, a failed one never
   assert.equal(connection.calls.signatures.length, 2)
   assert.deepEqual(
     connection.calls.transactions.sort(),
     [s(REAL.payout1), s(REAL.payout3), s(REAL.funding)].sort(),
   )
+  assert.equal(connection.calls.balances, 1)
 
   // within the TTL: no calls
   await ledger.ledger()
   assert.equal(connection.calls.signatures.length, 2)
+  assert.equal(connection.calls.balances, 1)
 
   // after it: one listing per wallet from the newest seen, and only the new burn is read
   clock.t += 121_000
@@ -363,16 +464,23 @@ test('each transaction is read once; refreshes list only what is newer, one call
   assert.deepEqual(connection.calls.transactions.slice(3), [s(burn)])
   assert.equal(second.burns.length, 1)
   assert.equal(second.totals.buybackLamports, '500000000')
-  assert.equal(second.payouts.length, 2)
+  assert.equal(second.payouts.length, 1)
 })
 
 test('a transaction the node cannot return yet is read again; a failed refresh serves the last lists', async () => {
   const clock = { t: 5_000_000 }
   const s = REAL.payout1.transaction.signatures[0]
   const txs = {}
-  const connection = historyConnection({ [PAYOUT]: [listing(REAL.payout1)], [CREATOR]: [] }, txs)
+  const connection = historyConnection(
+    { [PAYOUT]: [listing(REAL.payout1)], [CREATOR]: [] },
+    txs,
+    Error('balance unavailable'),
+  )
   const ledger = createQuantpLedger({ connection, now: () => clock.t, ttl: 60_000 })
-  assert.equal((await ledger.ledger()).payouts.length, 0)
+  const empty = await ledger.ledger()
+  assert.equal(empty.payouts.length, 0)
+  // the balance could not be read: unknown, and the lists still answer
+  assert.equal(empty.payoutLamports, null)
   clock.t += 61_000
   txs[s] = REAL.payout1
   assert.equal((await ledger.ledger()).payouts.length, 1)
@@ -429,8 +537,10 @@ test('GET /api/quantp/ledger answers from the chain while Redis refuses every co
     assert.equal(QUANTP_LEDGER_CACHE, 'public, max-age=0, s-maxage=60, stale-while-revalidate=300')
     const body = await r.json()
     assert.equal(body.mint, QUANTP.mint)
-    assert.equal(body.payouts.length, 2)
+    assert.equal(body.payouts.length, 1)
+    assert.equal(body.payouts[0].transactions.length, 2)
     assert.equal(body.totals.recipients, 31)
+    assert.equal(body.payoutLamports, '1580000000')
     assert.deepEqual(body.burns, [])
     assert.equal((await fetch(base + '/api/quantp/ledger', { method: 'POST' })).status, 405)
   } finally {

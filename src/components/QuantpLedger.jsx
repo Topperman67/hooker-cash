@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { ChevronDown } from 'lucide-react'
 import { useResource } from '../lib/api.js'
 import { Address, Segmented, Stat } from './UI.jsx'
 import { ago, compact, formatUnits, short, sol, toSol } from '../lib/format.js'
@@ -15,6 +16,7 @@ const when = (seconds) =>
         timeStyle: 'short',
       })
     : undefined
+const wallets = (n) => `${n.toLocaleString('en-US')} ${n === 1 ? 'wallet' : 'wallets'}`
 
 function TxLink({ signature }) {
   return (
@@ -42,6 +44,61 @@ function Rows({ rows, head, row }) {
           {all ? 'Show fewer' : `Show all ${rows.length}`}
         </button>
       )}
+    </>
+  )
+}
+
+/** One burst of payouts; a burst sent in several transactions opens to list each of them. */
+function Burst({ burst }) {
+  const [open, setOpen] = useState(false)
+  const txs = burst.transactions
+  return (
+    <>
+      <tr>
+        <td className="num faint" title={when(burst.timestamp)}>
+          {ago(burst.timestamp)}
+        </td>
+        <td className="right num">{sol(toSol(burst.lamports), { unit: false })}</td>
+        <td>
+          {burst.recipient ? (
+            <a
+              href={explorer.account(burst.recipient)}
+              target="_blank"
+              rel="noreferrer"
+              className="num"
+            >
+              {short(burst.recipient)}
+            </a>
+          ) : (
+            wallets(burst.recipients)
+          )}
+        </td>
+        <td className="right">
+          {txs.length === 1 ? (
+            <TxLink signature={txs[0].signature} />
+          ) : (
+            <button
+              type="button"
+              className="qp-ledger-toggle"
+              aria-expanded={open}
+              onClick={() => setOpen(!open)}
+            >
+              {txs.length} txs <ChevronDown size={14} aria-hidden="true" />
+            </button>
+          )}
+        </td>
+      </tr>
+      {open &&
+        txs.map((x) => (
+          <tr key={x.signature} className="qp-ledger-sub">
+            <td />
+            <td className="right num">{sol(toSol(x.lamports), { unit: false })}</td>
+            <td>{wallets(x.recipients)}</td>
+            <td className="right">
+              <TxLink signature={x.signature} />
+            </td>
+          </tr>
+        ))}
     </>
   )
 }
@@ -79,6 +136,9 @@ export default function QuantpLedger({ symbol, decimals, fees, burned }) {
           <Stat label="Holders’ share earned">
             <span className="num">{sol(num(fees?.holdersSol), { digits: 3 })}</span>
           </Stat>
+          <Stat label="In the payout wallet">
+            <span className="num">{sol(toSol(d.payoutLamports), { digits: 3 })}</span>
+          </Stat>
         </dl>
         {d.payouts.length ? (
           <Rows
@@ -91,31 +151,7 @@ export default function QuantpLedger({ symbol, decimals, fees, burned }) {
                 <th className="right">Tx</th>
               </>
             }
-            row={(p) => (
-              <tr key={p.signature}>
-                <td className="num faint" title={when(p.timestamp)}>
-                  {ago(p.timestamp)}
-                </td>
-                <td className="right num">{sol(toSol(p.lamports), { unit: false })}</td>
-                <td>
-                  {p.recipient ? (
-                    <a
-                      href={explorer.account(p.recipient)}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="num"
-                    >
-                      {short(p.recipient)}
-                    </a>
-                  ) : (
-                    `${p.recipients.toLocaleString('en-US')} wallets`
-                  )}
-                </td>
-                <td className="right">
-                  <TxLink signature={p.signature} />
-                </td>
-              </tr>
-            )}
+            row={(burst) => <Burst key={burst.transactions[0].signature} burst={burst} />}
           />
         ) : (
           <p className="muted qp-ledger-empty">
@@ -123,9 +159,10 @@ export default function QuantpLedger({ symbol, decimals, fees, burned }) {
           </p>
         )}
         <p className="faint qp-fine">
-          Every SOL transfer the team’s payout wallet{' '}
-          <Address value={d.wallets.payout} href={explorer.account(d.wallets.payout)} /> sends, read
-          from the chain.
+          The team pays holders in bursts: small ones now, bigger ones as the market cap grows. Each
+          row is one burst of SOL from its payout wallet{' '}
+          <Address value={d.wallets.payout} href={explorer.account(d.wallets.payout)} />, read from
+          the chain.
         </p>
       </>
     )
@@ -143,6 +180,14 @@ export default function QuantpLedger({ symbol, decimals, fees, burned }) {
           </Stat>
           <Stat label="Buyback share earned">
             <span className="num">{sol(num(fees?.buybackSol), { digits: 3 })}</span>
+          </Stat>
+          <Stat label="Bought, not burned yet">
+            <span
+              className="num"
+              title={`${formatUnits(t.unburned.amount, decimals, 0)} ${symbol}`}
+            >
+              {sol(toSol(t.unburned.lamports), { digits: 3 })}
+            </span>
           </Stat>
         </dl>
         {d.burns.length ? (
@@ -177,11 +222,12 @@ export default function QuantpLedger({ symbol, decimals, fees, burned }) {
           </p>
         )}
         <p className="faint qp-fine">
-          Burns signed by the payout wallet{' '}
-          <Address value={d.wallets.payout} href={explorer.account(d.wallets.payout)} /> or the
+          Buys and burns by the payout wallet{' '}
+          <Address value={d.wallets.payout} href={explorer.account(d.wallets.payout)} /> and the
           creator wallet{' '}
           <Address value={d.wallets.creator} href={explorer.account(d.wallets.creator)} />. SOL
-          spent is what the burn’s own transaction paid to buy the ${symbol} it burned.
+          spent is what they paid for the ${symbol} they bought since the burn before, the launch’s
+          dev buy aside.
           {othersBurned >= 1 && ` Other wallets have burned ${compact(othersBurned)} ${symbol}.`}
         </p>
       </>

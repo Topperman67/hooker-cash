@@ -5,7 +5,7 @@ import { enter, quantpLedger, quantpSnapshot, stubApi, stubQuantp } from './fixt
 
 const ledgerPanel = (page) => page.getByRole('region', { name: 'Payouts & burns' })
 
-test('payouts list round 1 with totals, and Burns says plainly there are none yet', async ({
+test('payouts list round 1 as one burst with its totals, and Burns says plainly there are none yet', async ({
   page,
 }) => {
   await stubApi(page)
@@ -29,13 +29,26 @@ test('payouts list round 1 with totals, and Burns says plainly there are none ye
   await expect(panel.locator('.qp-ledger-totals')).toContainText('Paid out0.55 SOL')
   await expect(panel.locator('.qp-ledger-totals')).toContainText('Wallets paid51')
   await expect(panel.locator('.qp-ledger-totals')).toContainText('Holders’ share earned1.937 SOL')
+  await expect(panel.locator('.qp-ledger-totals')).toContainText('In the payout wallet1.58 SOL')
+  await expect(panel).toContainText(
+    'The team pays holders in bursts: small ones now, bigger ones as the market cap grows.',
+  )
+  // the burst is one row; its three transactions open under it, in the order sent
   const rows = panel.locator('tbody tr')
-  await expect(rows).toHaveCount(3)
+  await expect(rows).toHaveCount(1)
   await expect(rows.nth(0)).toContainText('2h')
-  await expect(rows.nth(0)).toContainText('0.0152')
-  await expect(rows.nth(0)).toContainText('11 wallets')
-  await expect(rows.nth(2)).toContainText('0.358')
-  await expect(rows.nth(0).getByRole('link', { name: '5qDPLw' })).toHaveAttribute(
+  await expect(rows.nth(0)).toContainText('0.55')
+  await expect(rows.nth(0)).toContainText('51 wallets')
+  const toggle = rows.nth(0).getByRole('button', { name: '3 txs' })
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  await toggle.click()
+  await expect(toggle).toHaveAttribute('aria-expanded', 'true')
+  await expect(rows).toHaveCount(4)
+  await expect(rows.nth(1)).toContainText('0.358')
+  await expect(rows.nth(1)).toContainText('20 wallets')
+  await expect(rows.nth(3)).toContainText('0.0152')
+  await expect(rows.nth(3)).toContainText('11 wallets')
+  await expect(rows.nth(3).getByRole('link', { name: '5qDPLw' })).toHaveAttribute(
     'href',
     'https://solscan.io/tx/5qDPLwq9SdL1ABciwN8ovnjigV8NTk9ktX41DUHyZpsNkYSnjNzfDtWrp4sKWg6fUgQUBaocyvXZFRjo2pKg9JeR',
   )
@@ -50,6 +63,7 @@ test('payouts list round 1 with totals, and Burns says plainly there are none ye
   await expect(panel).toContainText('No burns yet.')
   await expect(panel.locator('.qp-ledger-totals')).toContainText('Burned0 QUANTP')
   await expect(panel.locator('.qp-ledger-totals')).toContainText('Buyback share earned1.291 SOL')
+  await expect(panel.locator('.qp-ledger-totals')).toContainText('Bought, not burned yet0 SOL')
   await expect(panel.getByRole('link', { name: '3B53…LvHc' })).toBeVisible()
 
   // the tokenomics fine print links here
@@ -57,7 +71,7 @@ test('payouts list round 1 with totals, and Burns says plainly there are none ye
   await expect(page).toHaveURL(/#payouts$/)
 })
 
-test('burns show the tokens burned and the SOL a buy and burn spent; burns by others are noted', async ({
+test('burns show the tokens burned and the SOL their buyback spent; burns by others are noted', async ({
   page,
 }) => {
   const now = Math.floor(Date.now() / 1000)
@@ -85,7 +99,11 @@ test('burns show the tokens burned and the SOL a buy and burn spent; burns by ot
   // 5M are gone from the supply: 3M by the team, 2M by others
   await stubQuantp(page, {
     snapshot: quantpSnapshot({ burned: '5000000000000' }),
-    ledger: quantpLedger({ payouts: [], burns }),
+    ledger: quantpLedger({
+      payouts: [],
+      burns,
+      unburned: { lamports: '150000000', amount: '1000000000000' },
+    }),
   })
   await enter(page)
   await page.goto(QUANTP.path)
@@ -103,19 +121,30 @@ test('burns show the tokens burned and the SOL a buy and burn spent; burns by ot
   await expect(rows.nth(1).locator('td').nth(2)).toHaveText('—')
   await expect(panel.locator('.qp-ledger-totals')).toContainText('Burned3M QUANTP')
   await expect(panel.locator('.qp-ledger-totals')).toContainText('SOL spent0.5 SOL')
+  await expect(panel.locator('.qp-ledger-totals')).toContainText('Bought, not burned yet0.15 SOL')
   await expect(panel).toContainText('Other wallets have burned 2M QUANTP.')
 })
 
 test('long lists show the first rows, then all of them on request', async ({ page }) => {
   const now = Math.floor(Date.now() / 1000)
-  const payouts = Array.from({ length: 12 }, (_, i) => ({
-    signature: `${i + 2}pp${'1'.repeat(84)}`,
-    slot: 457_600_000 - i,
-    timestamp: now - 600 * (i + 1),
-    lamports: '10000000',
-    recipients: 1,
-    recipient: '57uMvKGYH1xcrwPSXHjtQFbzApmDGhQi1RVa6pzvXb2u',
-  }))
+  // twelve bursts of one transaction each, to one wallet
+  const payouts = Array.from({ length: 12 }, (_, i) => {
+    const timestamp = now - 3600 * (i + 1)
+    const tx = {
+      signature: `${i + 2}pp${'1'.repeat(84)}`,
+      slot: 457_600_000 - i,
+      timestamp,
+      lamports: '10000000',
+      recipients: 1,
+    }
+    return {
+      timestamp,
+      lamports: '10000000',
+      recipients: 1,
+      recipient: '57uMvKGYH1xcrwPSXHjtQFbzApmDGhQi1RVa6pzvXb2u',
+      transactions: [tx],
+    }
+  })
   await stubApi(page)
   await stubQuantp(page, { ledger: quantpLedger({ payouts }) })
   await enter(page)
@@ -123,9 +152,11 @@ test('long lists show the first rows, then all of them on request', async ({ pag
   const panel = ledgerPanel(page)
   await expect(panel.locator('tbody tr')).toHaveCount(8)
   // a payout to one wallet names it
-  await expect(
-    panel.locator('tbody tr').first().getByRole('link', { name: '57uM…Xb2u' }),
-  ).toBeVisible()
+  const first = panel.locator('tbody tr').first()
+  await expect(first.getByRole('link', { name: '57uM…Xb2u' })).toBeVisible()
+  // a burst of one transaction links it straight away
+  await expect(first.getByRole('link', { name: '2pp111' })).toBeVisible()
+  await expect(first.getByRole('button')).toHaveCount(0)
   await panel.getByRole('button', { name: 'Show all 12' }).click()
   await expect(panel.locator('tbody tr')).toHaveCount(12)
   await panel.getByRole('button', { name: 'Show fewer' }).click()
@@ -151,7 +182,7 @@ test('the $QUANTP page headings never skip a level', async ({ page }) => {
   await stubQuantp(page)
   await enter(page)
   await page.goto(QUANTP.path)
-  await expect(ledgerPanel(page).locator('tbody tr')).toHaveCount(3)
+  await expect(ledgerPanel(page).locator('tbody tr')).toHaveCount(1)
   const levels = await page.evaluate(() =>
     [...document.querySelectorAll('main h1, main h2, main h3, main h4, main h5, main h6')]
       .filter((h) => h.getClientRects().length)
@@ -173,8 +204,11 @@ for (const theme of ['light', 'dark'])
     await enter(page)
     await page.goto(QUANTP.path)
     const panel = ledgerPanel(page)
-    await expect(panel.locator('tbody tr')).toHaveCount(3)
+    await expect(panel.locator('tbody tr')).toHaveCount(1)
     await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
+    // with the burst open too
+    await panel.getByRole('button', { name: '3 txs' }).click()
+    await expect(panel.locator('tbody tr')).toHaveCount(4)
     const [about, ledger] = await Promise.all(
       ['.qp-about', '.qp-ledger'].map((s) =>
         page.locator(s).evaluate((el) => el.getBoundingClientRect().top),

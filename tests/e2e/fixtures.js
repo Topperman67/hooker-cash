@@ -437,46 +437,62 @@ export const quantpSnapshot = (over = {}) => ({
   ...over,
 })
 
-// /api/quantp/ledger as mainnet answers it after round 1: three batches, 51 wallets, no burns.
-export const quantpLedger = ({ payouts, burns = [] } = {}) => {
+// /api/quantp/ledger as mainnet answers it after round 1: one burst of three transactions to 51
+// wallets, 1.58 SOL left in the payout wallet, no burns. `payouts` are bursts, `unburned` what
+// the team bought and has not burned yet.
+export const quantpLedger = ({
+  payouts,
+  burns = [],
+  unburned = { lamports: '0', amount: '0' },
+  payoutLamports = '1580000000',
+} = {}) => {
   const now = Math.floor(Date.now() / 1000)
-  const rows =
-    payouts ??
+  const round1 = [
     [
-      [
-        '5qDPLwq9SdL1ABciwN8ovnjigV8NTk9ktX41DUHyZpsNkYSnjNzfDtWrp4sKWg6fUgQUBaocyvXZFRjo2pKg9JeR',
-        '15232167',
-        11,
-      ],
-      [
-        '5294RbYBiPA8MJZdV3ToY1U4N6XpLwxMSkjTgh2ySaW6Bawxf1bfrzBUV2WXts73QKgfpVDb9ZFHQAewG1Gf9r3u',
-        '176743573',
-        20,
-      ],
-      [
-        '5B9NLSK5dRt9Zp3j3b5is9oD6n8a7Wh4wdzczMGc3T7a181PCEZrLW6jJKxYwhPmgMFeH4ewjRcovFM2obXZM3sC',
-        '358024234',
-        20,
-      ],
-    ].map(([signature, lamports, recipients], i) => ({
-      signature,
-      slot: 457_511_740 - i * 20,
-      timestamp: now - 7200 - i * 4,
-      lamports,
-      recipients,
+      '5B9NLSK5dRt9Zp3j3b5is9oD6n8a7Wh4wdzczMGc3T7a181PCEZrLW6jJKxYwhPmgMFeH4ewjRcovFM2obXZM3sC',
+      '358024234',
+      20,
+    ],
+    [
+      '5294RbYBiPA8MJZdV3ToY1U4N6XpLwxMSkjTgh2ySaW6Bawxf1bfrzBUV2WXts73QKgfpVDb9ZFHQAewG1Gf9r3u',
+      '176743573',
+      20,
+    ],
+    [
+      '5qDPLwq9SdL1ABciwN8ovnjigV8NTk9ktX41DUHyZpsNkYSnjNzfDtWrp4sKWg6fUgQUBaocyvXZFRjo2pKg9JeR',
+      '15232167',
+      11,
+    ],
+  ].map(([signature, lamports, recipients], i) => ({
+    signature,
+    slot: 457_511_697 + i * 20,
+    timestamp: now - 7200 + i * 4,
+    lamports,
+    recipients,
+  }))
+  const bursts = payouts ?? [
+    {
+      timestamp: now - 7200,
+      lamports: '549999974',
+      recipients: 51,
       recipient: null,
-    }))
+      transactions: round1,
+    },
+  ]
   const sum = (list, field) => list.reduce((s, r) => s + BigInt(r[field] ?? 0), 0n).toString()
   return {
     mint: QUANTP.mint,
     wallets: { payout: QUANTP.payoutWallet, creator: QUANTP.creator },
-    payouts: rows,
+    payoutLamports,
+    payouts: bursts,
     burns,
     totals: {
-      paidLamports: sum(rows, 'lamports'),
-      recipients: rows.reduce((s, r) => s + r.recipients, 0),
+      paidLamports: sum(bursts, 'lamports'),
+      payoutTxs: bursts.reduce((s, b) => s + b.transactions.length, 0),
+      recipients: bursts.reduce((s, b) => s + b.recipients, 0),
       burnedAmount: sum(burns, 'amount'),
       buybackLamports: sum(burns, 'solSpent'),
+      unburned,
     },
     updatedAt: now,
     state: 'ok',
