@@ -9,8 +9,8 @@ import { explorer, QUANTP } from '../../shared/network.mjs'
 
 const finite = (v) => (v != null && Number.isFinite(Number(v)) ? Number(v) : null)
 
-// The disclosure every $QUANTP surface carries in some form: it is the platform's own token, it is
-// not one of the Quantum Hooks coins the site sells, and its fee split is a promise, not code.
+// The disclosure every $QUANTP surface carries in some form: it is the platform's own token, and
+// its fee split is a promise, not code.
 export const QUANTP_DISCLOSURE =
   'Quant Pad’s own token. The team pays out its 60/40 fee split; nothing on-chain enforces it. Memecoins are extremely risky. Not financial advice.'
 

@@ -85,7 +85,7 @@
   flex-wrap: wrap;
   gap: 6px;
 }
-/* cobalt, not the Quantum chip's light lines: $QUANTP is not a Quantum Hooks coin */
+/* cobalt, not the Quantum chip's light lines */
 .chip.chip-own {
   background: var(--cobalt-anodised);
   border-color: rgba(160, 178, 255, 0.9);

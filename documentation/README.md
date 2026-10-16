@@ -78,7 +78,7 @@ Creator share, Quantum Burn, Entanglement and Fusion. The launcher sets the spli
     </tr>
     <tr>
       <td><i class="fa-coins">:coins:</i> <strong>$QUANTP</strong></td>
-      <td>Quant Pad's own token, launched via Midas: its contract, real fees and risks. Not a Quantum Hooks coin.</td>
+      <td>Quant Pad's own token, launched via Midas: its contract, real fees and risks.</td>
       <td></td>
       <td><a href="quantp/the-quantp-token.md">the-quantp-token.md</a></td>
     </tr>

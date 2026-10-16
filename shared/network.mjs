@@ -30,7 +30,7 @@ export const brand = Object.freeze({
 // Midas's own DBC config. Its pool charges a flat 2% per trade in SOL until the curve graduates to
 // a DAMM v2 pool that charges 5%; nothing on-chain charges more. The team says the creator's share
 // of those fees goes 60% to holders in SOL and 40% to buying back and burning $QUANTP, paid out
-// off-chain. It is not a Quantum Hooks coin. Never add `config` to QUANTPAD_DBC_CONFIG: that would
+// off-chain. Never add `config` to QUANTPAD_DBC_CONFIG: that would
 // point new launches at Midas's config.
 export const QUANTP = Object.freeze({
   mint: '7cAJWZyyG7VqFJ4HzAxKNG8Xch6mJY4CfwPbfP6cJKiy',

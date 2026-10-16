@@ -8,7 +8,7 @@ icon: coins
 $QUANTP is Quant Pad's own token. It launched via [Midas](https://trymidas.fun) on Meteora's Dynamic Bonding Curve, not through Quant Pad's launch flow, and its curve has since graduated to a Meteora DAMM v2 pool.
 
 {% hint style="warning" %}
-**$QUANTP is not a Quantum Hooks coin.** No on-chain hook routes its fees: the team pays out its fee split off-chain. Quant Pad is promoting its own token here, memecoins are extremely risky, and nothing on this page is financial advice.
+The team pays out $QUANTP's fee split off-chain; nothing on-chain enforces it. Quant Pad is promoting its own token here, memecoins are extremely risky, and nothing on this page is financial advice.
 {% endhint %}
 
 <a href="https://www.quantpad.company/quantp" class="button primary" data-icon="arrow-right-arrow-left">Trade $QUANTP on Quant Pad</a> <a href="https://dexscreener.com/solana/85tswjnucttvgvtqzwzchnbfmor4dv581a3wg7buzgvf" class="button secondary" data-icon="chart-line">Chart</a> <a href="https://solscan.io/token/7cAJWZyyG7VqFJ4HzAxKNG8Xch6mJY4CfwPbfP6cJKiy" class="button secondary" data-icon="magnifying-glass">Solscan</a>
