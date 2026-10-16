@@ -14,12 +14,47 @@ import { useQuantp } from '../context/QuantpContext.jsx'
 import { DOCS_URL } from '../lib/links.js'
 import { QUANTP } from '../../shared/network.mjs'
 
+// $QUANTP as a coin card, from /api/quantp (which never reads the store), in the units the market
+// API uses: SOL for market cap and volume, percent for change and curve progress.
+function quantpCoin(qp, solUsd) {
+  if (!qp?.priceSol) return null
+  return {
+    mint: QUANTP.mint,
+    name: QUANTP.name,
+    symbol: QUANTP.symbol,
+    image: '/brand/mark.svg',
+    marketCap: qp.marketCapSol ?? null,
+    volume24h: qp.volume24hUsd != null && solUsd ? qp.volume24hUsd / solUsd : null,
+    trades24h: qp.txns24h ? qp.txns24h.buys + qp.txns24h.sells : null,
+    change24h: qp.change24h != null ? qp.change24h * 100 : null,
+    createdAt: qp.launchedAt ?? QUANTP.launchedAt,
+    progress: Math.min(1, qp.curveProgress ?? 0) * 100,
+    complete: !!qp.migrated || (qp.curveProgress ?? 0) >= 1,
+    migrated: !!qp.migrated,
+  }
+}
+
+// $QUANTP joins Trending now (it trades on Quant Pad) where the server's trending order
+// (server/indexer.mjs SORTS) would put it, even while the market list cannot load. It stays out of
+// Just launched, which lists coins launched through Quant Pad.
+const trendingOrder = (a, b) =>
+  (b.trades24h || 0) - (a.trades24h || 0) || (b.volume24h || 0) - (a.volume24h || 0)
+function withQuantp(items = [], coin) {
+  if (!coin) return items
+  const rest = items.filter((c) => c.mint !== coin.mint)
+  const at = rest.findIndex((c) => trendingOrder(coin, c) < 0)
+  return at < 0 ? [...rest, coin] : [...rest.slice(0, at), coin, ...rest.slice(at)]
+}
+
 export default function HomePage() {
   const latest = useResource('/api/market?sort=newest', 15000)
   const trending = useResource('/api/market?sort=trending', 20000)
   const stats = useResource('/api/stats', 30000)
   const { solUsd, quantum } = usePlatform()
   const qp = useQuantp().data
+  const qpCoin = quantpCoin(qp, solUsd)
+  const trendingItems = withQuantp(trending.data?.items, qpCoin)
+  const latestItems = latest.data?.items || []
   const s = stats.data
   // The hero's fee pill names the newest coin as one whose creator fee Quantum Hooks route, so it
   // never names $QUANTP (launched via Midas, no hooks).
@@ -103,11 +138,11 @@ export default function HomePage() {
             Full market
           </Link>
         </div>
-        {trending.loading && !trending.data ? (
+        {trending.loading && !trending.data && !qpCoin ? (
           <CoinSkeletons count={3} />
-        ) : trending.data?.items?.length ? (
+        ) : trendingItems.length ? (
           <div className="coin-grid">
-            {trending.data.items.slice(0, 6).map((c) => (
+            {trendingItems.slice(0, 6).map((c) => (
               <CoinCard key={c.mint} coin={c} />
             ))}
           </div>
@@ -126,7 +161,7 @@ export default function HomePage() {
         )}
       </section>
 
-      {latest.data?.items?.length > 0 && (
+      {latestItems.length > 0 && (
         <section className="wrap section">
           <div className="section-head">
             <h2>Just launched</h2>
@@ -135,7 +170,7 @@ export default function HomePage() {
             </Link>
           </div>
           <div className="coin-grid">
-            {latest.data.items.slice(0, 6).map((c) => (
+            {latestItems.slice(0, 6).map((c) => (
               <CoinCard key={c.mint} coin={c} />
             ))}
           </div>
