@@ -25,6 +25,31 @@ export const brand = Object.freeze({
   tagline: 'Launch on Meteora. Wire it with Quantum Hooks.',
 })
 
+// $QUANTP, Quant Pad's own token. It launched through Midas (not Quant Pad's launch flow) on a
+// Meteora DBC transfer-hook pool: a Token-2022 mint whose transfers run Midas's hook program, under
+// Midas's own DBC config. Its pool charges a flat 2% per trade in SOL until the curve graduates to
+// a DAMM v2 pool that charges 5%; nothing on-chain charges more. The team says the creator's share
+// of those fees goes 60% to holders in SOL and 40% to buying back and burning $QUANTP, paid out
+// off-chain. It is not a Quantum Hooks coin. Never add `config` to QUANTPAD_DBC_CONFIG: that would
+// point new launches at Midas's config.
+export const QUANTP = Object.freeze({
+  mint: '7cAJWZyyG7VqFJ4HzAxKNG8Xch6mJY4CfwPbfP6cJKiy',
+  pool: '85TSwjnucTtvgvtqzWzChNBfmoR4Dv581A3WG7Buzgvf',
+  config: 'FKVEdYr8tKgdpCsaLGoMGmgHYMV6kYamJJoCRzvgEDm5',
+  hookProgram: '4xh25C2V65F5buKwKzYpSKHdhz7xTfNTJofCgB1WTDrE',
+  symbol: 'QUANTP',
+  name: 'Quant Pad',
+  decimals: 6,
+  supply: '1000000000000000',
+  launchedAt: 1792115973,
+  feeBps: 200, // the curve's flat fee (config FKVEdYr8…); the live value comes from /api/quantp
+  postGradFeeBps: 500, // the DAMM v2 pool's fee after graduation
+  holdersShareBps: 6000, // of the creator's fee share, by the team's stated policy (off-chain)
+  buybackShareBps: 4000,
+  dexscreener: 'https://dexscreener.com/solana/85tswjnucttvgvtqzwzchnbfmor4dv581a3wg7buzgvf',
+  path: '/quantp',
+})
+
 // Quant Pad's Meteora launch configs on mainnet, one per trading tax a launcher can pick, with and
 // without the opt-in anti-sniper tax (scripts/create-dbc-config.mjs --fee N --pool-fee N, plus
 // --launch-fee 0 for the ones without). With it, the tax starts at 25% and falls to the chosen tax
