@@ -39,7 +39,7 @@ test('failure reasons are short codes for each way Upstash fails', () => {
   assert.equal(failureReason({ error: new TypeError('fetch failed') }), 'unreachable')
 })
 
-test('a used-up Upstash plan: 503 for callers, a reason code in health and logs, then back-off', async () => {
+test('a used-up Upstash plan: 503 for callers, a reason code in health and logs', async () => {
   let clock = 1_000_000
   let calls = 0
   let answer = quotaResponse
@@ -59,20 +59,58 @@ test('a used-up Upstash plan: 503 for callers, a reason code in health and logs,
   assert.deepEqual(store.health(), { healthy: false, reason: 'quota-requests', at: clock })
   assert.deepEqual(logs, ['[storage] Redis command failed: quota-requests (HTTP 400).'])
 
-  // The second failure in a row opens the circuit: commands fail without asking Upstash.
-  await assert.rejects(() => store.get('k'), { code: 'STORAGE_UNAVAILABLE' })
-  assert.equal(calls, 2)
-  await assert.rejects(() => store.incrementExpiring('r', 1000), { code: 'STORAGE_UNAVAILABLE' })
-  assert.equal(calls, 2, 'no request while backing off')
+  // Refusals come back at once, so they are never short-circuited: at its limit Upstash refuses
+  // only some commands, and the others must still be sent.
+  for (let n = 0; n < 5; n++)
+    await assert.rejects(() => store.get('k'), { code: 'STORAGE_UNAVAILABLE' })
+  assert.equal(calls, 6)
   assert.equal(logs.length, 1, 'the same cause is logged once a minute')
 
-  clock += 1_001
+  // A command that goes through does not make the store look healthy while it still refuses
+  // others: health turns only after a minute without failures, and recovery is logged once.
   answer = () => new Response(JSON.stringify({ result: 0 }))
+  clock += 1_000
   await store.check()
-  assert.equal(calls, 3)
-  assert.equal(store.health().healthy, true)
+  assert.deepEqual(store.health(), { healthy: false, reason: 'quota-requests', at: clock })
+  assert.equal(logs.length, 1)
+  clock += 60_000
+  await store.check()
+  assert.deepEqual(store.health(), { healthy: true, reason: null, at: clock })
   assert.equal(logs.at(-1), '[storage] Redis is answering again.')
+  await store.check()
+  assert.equal(logs.length, 2, 'recovery is logged once')
   for (const line of logs) assert.doesNotMatch(line, /secret|Usage|500000/)
+})
+
+test('slow failures (timeouts, unreachable) stop commands for a while; refusals do not', async () => {
+  let clock = 1_000_000
+  let calls = 0
+  let fail = () => Promise.reject(Object.assign(Error('timed out'), { name: 'TimeoutError' }))
+  const store = createRedisStore({
+    url: 'https://redis.invalid',
+    token: 't',
+    request: async () => {
+      calls++
+      return fail()
+    },
+    log: () => {},
+    now: () => clock,
+  })
+  await assert.rejects(() => store.get('k'), { code: 'STORAGE_UNAVAILABLE' })
+  await assert.rejects(() => store.get('k'), { code: 'STORAGE_UNAVAILABLE' })
+  assert.equal(calls, 2)
+  assert.equal(store.health().reason, 'timeout')
+  // Two in a row: the next second fails at once, without a 10 s wait on Upstash.
+  await assert.rejects(() => store.get('k'), { code: 'STORAGE_UNAVAILABLE' })
+  assert.equal(calls, 2, 'no request while backing off')
+  clock += 1_001
+  fail = async () => new Response(JSON.stringify({ result: JSON.stringify(1) }))
+  assert.equal(await store.get('k'), 1)
+  assert.equal(calls, 3)
+  // A refusal after that is sent and answered every time.
+  fail = async () => quotaResponse()
+  for (let n = 0; n < 3; n++) await assert.rejects(() => store.get('k'))
+  assert.equal(calls, 6)
 })
 
 test('incrementExpiring adds any amount in one command', async () => {

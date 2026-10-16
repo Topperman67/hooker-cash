@@ -57,32 +57,55 @@ export function createRedisStore({
   if (!url?.startsWith('https://') || !token) throw Error('Configure both Redis REST credentials.')
   const key = (name) => `${prefix}:${name}`
   let syncToken
-  // How the last command went, for /api/status: healthy is null until a command has run.
-  const health = { healthy: null, reason: null, at: 0 }
-  // After two failures in a row, commands fail at once for a while (1 s, doubling up to 30 s)
-  // instead of each waiting on Upstash: a used-up plan is not asked again on every request, and
-  // callers that can go on without storage (rate limits) do so without a 10 s timeout first.
-  let failures = 0
+  // For /api/status: storage counts as unhealthy until a minute has passed without a failure, so a
+  // store that refuses some commands (Upstash at its plan limit refuses about half) does not look
+  // healthy because the last one went through. healthy is null until a command has run.
+  const HEALTHY_AFTER_MS = 60_000
+  let lastAt = 0
+  let failedAt = 0
+  let failedReason = null
+  // Only slow failures (timeouts, an unreachable host) stop commands for a while (1 s, doubling up
+  // to 30 s, after two in a row), so callers that can go on without storage (rate limits) do not
+  // wait 10 s each. Refusals come back at once and are not short-circuited: a store that refuses
+  // some commands still answers the others.
+  const SLOW = new Set(['timeout', 'unreachable'])
+  let slowFailures = 0
   let retryAt = 0
   let loggedReason = null
   let loggedAt = 0
+  let degraded = false
   function recordSuccess() {
-    if (health.healthy === false) log('[storage] Redis is answering again.')
-    failures = 0
+    const at = now()
+    lastAt = at
+    slowFailures = 0
     retryAt = 0
-    Object.assign(health, { healthy: true, reason: null, at: now() })
+    if (degraded && at - failedAt >= HEALTHY_AFTER_MS) {
+      degraded = false
+      log('[storage] Redis is answering again.')
+    }
   }
   function recordFailure(reason, status) {
     const at = now()
-    failures++
-    if (failures >= 2) retryAt = at + Math.min(30_000, 1000 * 2 ** (failures - 2))
-    Object.assign(health, { healthy: false, reason, at })
+    lastAt = failedAt = at
+    failedReason = reason
+    degraded = true
+    if (SLOW.has(reason)) {
+      slowFailures++
+      if (slowFailures >= 2) retryAt = at + Math.min(30_000, 1000 * 2 ** (slowFailures - 2))
+    } else slowFailures = 0
     // Once per cause, then at most once a minute.
     if (reason !== loggedReason || at - loggedAt >= 60_000) {
       loggedReason = reason
       loggedAt = at
       log(`[storage] Redis command failed: ${reason}${status ? ` (HTTP ${status})` : ''}.`)
     }
+  }
+  function health() {
+    if (!lastAt) return { healthy: null, reason: null, at: 0 }
+    const failing = failedAt && now() - failedAt < HEALTHY_AFTER_MS
+    return failing
+      ? { healthy: false, reason: failedReason, at: lastAt }
+      : { healthy: true, reason: null, at: lastAt }
   }
   // This message is written for users, so the API may show it (`expose`).
   const unavailable = () =>
@@ -125,7 +148,7 @@ export function createRedisStore({
   }
   return {
     mode: 'redis',
-    health: () => ({ ...health }),
+    health,
     // A health check that counts as a command: Upstash still answers PING (and ECHO) once a plan's
     // commands are used up, but refuses EXISTS like any data command.
     async check() {
