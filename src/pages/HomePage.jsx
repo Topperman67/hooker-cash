@@ -31,8 +31,7 @@ export default function HomePage() {
               <span className="hero-chrome chrome-text">Quantum Hooks.</span>
             </h1>
             <p className="hero-lede">
-              Quant Pad creates your coin on Meteora and points its creator fees at an on-chain
-              program. Every pulse of fees is split by rules you lock at launch:{' '}
+              Creator fees split on-chain by rules you lock at launch:{' '}
               <b>buy back and burn</b>, <b>pay holders in SOL</b>, <b>lock liquidity</b>,{' '}
               <b>pay your team</b>.
             </p>
