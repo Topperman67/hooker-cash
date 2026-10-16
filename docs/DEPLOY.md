@@ -162,7 +162,15 @@ lost: at 50 bps that is every trade under about 0.18 SOL, including the 0.01 SOL
 ## 6. Moderation
 
 Add mints to `QUANTPAD_HIDDEN_MINTS` (comma-separated) to remove them from Quant Pad's lists and coin
-pages. They remain on-chain and on pump.fun.
+pages. They remain on-chain and on Meteora.
+
+A coin the server did not see launched through Quant Pad (a test launch by script, say) is
+external: it opens at `/coin/<mint>`, but the home page, the market's default list, the tape and
+`/api/stats` leave it out, and only the market's Tracked filter lists it. Add such mints to
+`QUANTPAD_LISTED_MINTS` (comma-separated) to show them there too. The background pass tracks a
+listed mint nobody has opened yet (about 45 RPC calls, once), and listed coins never drop out at
+the 400-coin cap on external coins. Their pages still say they launched outside Quant Pad. A mint
+in both lists stays hidden. Redeploy after changing either list.
 
 ## 7. Limits and tuning
 

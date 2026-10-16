@@ -452,6 +452,14 @@ export async function createApplication(options = {}) {
       .map((s) => s.trim())
       .filter(isAddress),
   )
+  // Operator showcase: coins launched outside Quant Pad's launch flow (test launches, say) that its
+  // own lists and stats show anyway. A hidden mint stays hidden.
+  const listed = new Set(
+    String(options.listedMints ?? process.env.QUANTPAD_LISTED_MINTS ?? '')
+      .split(',')
+      .map((s) => s.trim())
+      .filter((mint) => isAddress(mint) && !hidden.has(mint)),
+  )
   const solUsd = options.priceFeed || createPriceFeed()
   const mediaLimit =
     options.mediaLimitBytes || Number(process.env.QUANTPAD_MEDIA_LIMIT_MB || 256) * 1024 * 1024
@@ -564,6 +572,7 @@ export async function createApplication(options = {}) {
     onNativeLaunch: (launch) => keepLaunchMedia(launch),
     // The same moderation list as the routes (QUANTPAD_HIDDEN_MINTS or options.hiddenMints).
     hidden,
+    listed,
   })
   let keeperKey = null
   try {
@@ -1128,6 +1137,7 @@ export async function createApplication(options = {}) {
     store: Object.create(store, { get: { value: sharedGet } }),
     quantum: null,
     hidden,
+    listed,
   })
   // Runs `read` (calls on `reads`) for one request, charging its visitor if it reads the store.
   const publicRead = (req, read) =>
@@ -1244,7 +1254,7 @@ export async function createApplication(options = {}) {
       if (req.method === 'GET' && path === '/api/stats') {
         await limitRead(req)
         const coins = (await publicRead(req, () => reads.list())).filter(
-          (c) => !c.external && !hidden.has(c.mint),
+          (c) => (!c.external || listed.has(c.mint)) && !hidden.has(c.mint),
         )
         const stats = {
           coins: coins.length,
