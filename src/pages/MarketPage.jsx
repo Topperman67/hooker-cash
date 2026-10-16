@@ -3,8 +3,9 @@ import { useNavigate, useSearchParams } from 'react-router-dom'
 import { LayoutGrid, List } from 'lucide-react'
 import { CoinCard, CoinSkeletons, CoinTable } from '../components/CoinList.jsx'
 import { Empty, Segmented } from '../components/UI.jsx'
+import { isQuantpQuery, QuantpFeature } from '../components/QuantpShowcase.jsx'
 import { useResource } from '../lib/api.js'
-import { isAddress } from '../../shared/network.mjs'
+import { isAddress, QUANTP } from '../../shared/network.mjs'
 
 const SORTS = [
   ['trending', 'Trending'],
@@ -53,6 +54,9 @@ export default function MarketPage() {
     } catch {}
   }
   const items = market.data?.items || []
+  // $QUANTP is pinned first in the default view (and when searched for). It reads /api/quantp, not
+  // the store, so it stays put through loading, empty and store-down states.
+  const featured = filter === 'all' && !offset && (!q || isQuantpQuery(q))
 
   return (
     <div className="wrap market">
@@ -71,7 +75,8 @@ export default function MarketPage() {
           onSubmit={(e) => {
             e.preventDefault()
             const value = text.trim()
-            if (isAddress(value)) navigate(`/coin/${value}`)
+            if (value === QUANTP.mint) navigate(QUANTP.path)
+            else if (isAddress(value)) navigate(`/coin/${value}`)
             else update({ q: value })
           }}
         >
@@ -118,6 +123,7 @@ export default function MarketPage() {
         </div>
       </div>
 
+      {featured && <QuantpFeature />}
       {market.loading && !market.data ? (
         <CoinSkeletons />
       ) : market.error && !market.data ? (

@@ -1,10 +1,22 @@
+// Buy and sell a Meteora coin from the wallet: quotes, the fees the trade pays and the swap itself
+// all come from the chain (src/lib/trade.js through /api/rpc), never from the indexer, so a coin
+// trades even while the store behind /api/coins is down.
+//
+// `coin` needs only:
+//   mint       the coin's mint (base58)
+//   symbol     its ticker, for labels ("QUANTP")
+//   dbcPool    its Meteora DBC pool; or `dbcConfig`, its DBC config, to derive the pool from
+//   decimals   optional, the coin's decimals (default 6)
+// Any other field of a /api/coins record is ignored. A coin record (CoinPage) and a fixed object
+// such as { mint: QUANTP.mint, symbol: QUANTP.symbol, decimals: QUANTP.decimals, dbcPool:
+// QUANTP.pool } (the $QUANTP page) both work. `onTraded` runs after a confirmed trade.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useWallet } from '../context/WalletContext.jsx'
 import { usePlatform } from '../context/PlatformContext.jsx'
 import { useToast } from './Toasts.jsx'
 import { Segmented, Spinner } from './UI.jsx'
 import { api } from '../lib/api.js'
-import { formatUnits, parseUnits, sol, toSol, bps } from '../lib/format.js'
+import { formatUnits, parseUnits, pct, sol, toSol, bps } from '../lib/format.js'
 import { packTransactions, friendlyWalletError } from '../lib/solana.js'
 import { buyExceedsBalance, maxBuy } from '../lib/amounts.js'
 import { useChargedPlatformFee } from '../lib/useChargedFee.js'
@@ -13,6 +25,9 @@ import { explorer, tierForConfig } from '../../shared/network.mjs'
 const SOL_PRESETS = ['0.1', '0.5', '1', '2']
 const SELL_PRESETS = [25, 50, 75, 100]
 const SIDES = ['buy', 'sell']
+
+// Price impact as text: under a hundredth of a percent reads "<0.01%".
+const impactText = (impact) => (impact < 0.0001 ? '<0.01%' : pct(impact * 100, { sign: false }))
 
 export default function TradeTicket({ coin, onTraded }) {
   const { connected, address, balance, openDialog, sendTransactions } = useWallet()
@@ -38,6 +53,11 @@ export default function TradeTicket({ coin, onTraded }) {
     import('../lib/trade.js').then(setTrade)
   }, [])
 
+  const tokenDecimals = coin.decimals ?? 6
+  // A coin known only by its config (no indexed record) trades in the pool derived from it.
+  const dbcPool =
+    coin.dbcPool || (trade && coin.dbcConfig ? trade.dbcPoolFor(coin.dbcConfig, coin.mint) : null)
+
   // Results are applied only if they are for the coin and wallet shown now.
   const current = useRef('')
   const key = `${coin.mint}|${address || ''}`
@@ -53,7 +73,7 @@ export default function TradeTicket({ coin, onTraded }) {
     const requested = `${coin.mint}|${address || ''}`
     try {
       const [state, tokens] = await Promise.all([
-        trade.marketState(coin.mint, address, coin.dbcPool),
+        trade.marketState(coin.mint, address, dbcPool),
         address ? trade.tokenBalance(coin.mint, address) : Promise.resolve(0n),
       ])
       if (current.current !== requested) return
@@ -69,7 +89,7 @@ export default function TradeTicket({ coin, onTraded }) {
           : 'Could not read this coin’s market from Solana. Retrying shortly.',
       )
     }
-  }, [trade, coin.mint, address])
+  }, [trade, coin.mint, address, dbcPool])
 
   useEffect(() => {
     refresh()
@@ -77,7 +97,7 @@ export default function TradeTicket({ coin, onTraded }) {
     return () => clearInterval(timer)
   }, [refresh, migrated])
 
-  const decimals = side === 'buy' ? 9 : 6
+  const decimals = side === 'buy' ? 9 : tokenDecimals
   const raw = parseUnits(amount, decimals)
   const quote = useMemo(() => {
     if (!trade || !market || !raw) return null
@@ -91,7 +111,8 @@ export default function TradeTicket({ coin, onTraded }) {
   }, [trade, market, raw, side, slippage])
 
   const venue = market?.venue === 'pool' ? 'pool' : 'curve'
-  // A market Quant Pad cannot trade (a Token-2022 coin); the migrating state has its own note.
+  // A market Quant Pad cannot trade (a Token-2022 extension it does not handle, or a transfer hook
+  // it cannot serve); the migrating state has its own note.
   const unsupported = !migrated && trade && market ? trade.tradeBlocker(market) : null
   const ready = !!market && !unsupported
   // A curve buy larger than what is left fills to the threshold and refunds the rest.
@@ -104,6 +125,15 @@ export default function TradeTicket({ coin, onTraded }) {
   const tier = tierForConfig(coin.dbcConfig || market?.pool?.config)
   // In a launch's first 2 minutes the curve's tax is higher (anti-sniper), falling to the tier's.
   const taxNow = trade && market ? trade.currentTaxBps(market) : null
+  // A coin outside Quant Pad's tiers shows its pool's own fee, read from the pool (a flat 2% on
+  // $QUANTP's curve, 5% in its DAMM v2 pool), with the amount this trade pays from the quote.
+  const poolFee = !tier && trade && market ? trade.poolFeeBps(market, side) : null
+  const poolFeeAmount =
+    quote?.fee > 0n
+      ? quote.feeToken === 'token'
+        ? `${formatUnits(quote.fee, tokenDecimals, 2)} ${coin.symbol}`
+        : sol(toSol(quote.fee))
+      : null
   // The amount entered is the most a buy spends on either venue; the check adds the fee, network
   // fees and the token (and, for a pool, temporary WSOL) account rent.
   // Boolean, not `raw &&`: an amount of 0 is 0n, which React would render as a stray "0".
@@ -163,7 +193,7 @@ export default function TradeTicket({ coin, onTraded }) {
         ...(side === 'buy' ? { lamports: raw } : { tokens: raw }),
         slippagePct: slippage,
         platform,
-        dbcPool: coin.dbcPool,
+        dbcPool,
       })
       const { transactions, lastValidBlockHeight } = await packTransactions(
         address,
@@ -273,7 +303,9 @@ export default function TradeTicket({ coin, onTraded }) {
                     className="btn btn-sm"
                     disabled={migrated || !held}
                     onClick={() =>
-                      setAmount(formatUnits((held * BigInt(p)) / 100n, 6).replace(/,/g, ''))
+                      setAmount(
+                        formatUnits((held * BigInt(p)) / 100n, tokenDecimals).replace(/,/g, ''),
+                      )
                     }
                   >
                     {p === 100 ? 'Max' : `${p}%`}
@@ -300,7 +332,7 @@ export default function TradeTicket({ coin, onTraded }) {
               <Spinner />
             ) : quote ? (
               side === 'buy' ? (
-                `${formatUnits(quote.tokens, 6, 2)} ${coin.symbol}`
+                `${formatUnits(quote.tokens, tokenDecimals, 2)} ${coin.symbol}`
               ) : (
                 sol(toSol(quote.lamports))
               )
@@ -328,6 +360,15 @@ export default function TradeTicket({ coin, onTraded }) {
               <dd className="num">{sol(toSol(fee))}</dd>
             </>
           )}
+          {poolFee != null && (
+            <>
+              <dt>Pool fee</dt>
+              <dd className="num">
+                {bps(poolFee)}
+                {poolFeeAmount && ` · ${poolFeeAmount}`}
+              </dd>
+            </>
+          )}
           {tier && (
             <>
               <dt>Trading tax</dt>
@@ -340,13 +381,23 @@ export default function TradeTicket({ coin, onTraded }) {
               </dd>
             </>
           )}
+          {quote?.impact != null && (
+            <>
+              <dt>Price impact</dt>
+              <dd className="num">{impactText(quote.impact)}</dd>
+            </>
+          )}
           <dt>Route</dt>
           <dd>{migrated ? 'Moving to Meteora DAMM v2' : market ? venueLabel : '—'}</dd>
           {connected && (
             <>
               <dt>{side === 'buy' ? 'SOL balance' : `${coin.symbol} balance`}</dt>
               <dd className="num">
-                {migrated ? '—' : side === 'buy' ? sol(toSol(balance)) : formatUnits(held, 6, 2)}
+                {migrated
+                  ? '—'
+                  : side === 'buy'
+                    ? sol(toSol(balance))
+                    : formatUnits(held, tokenDecimals, 2)}
               </dd>
             </>
           )}

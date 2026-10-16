@@ -269,3 +269,50 @@ test('the night model can tell: light muted text fails on the night studio', () 
   // and a muted grey a step darker than --steel-2 would fail on the pools
   assert.ok(contrast(hex('#8c95a3'), NIGHT_POOLS_BRIGHTEST) < 4.5)
 })
+
+// ---------- $QUANTP surfaces (showcase.css) ----------
+
+// The token's surfaces sit on smoked glass (instruments, the tape, the footer, the menu row) or on
+// the header bar. Their text uses the instrument tokens, white or one link tint, and each keeps
+// 4.5:1 on the lightest smoke it can sit on: day smoke over a white studio, night smoke over the
+// brightest pool.
+test('$QUANTP surfaces use instrument text colours that keep 4.5:1 on smoke, day and night', () => {
+  const showcase = readCss('showcase.css')
+  const glass = readCss('glass.css')
+  const LINK_TINT = '#a9b9ff'
+  const onSmoke = [
+    'var(--on-graphite)',
+    'var(--on-graphite-2)',
+    'var(--buy-bright)',
+    'var(--sell-bright)',
+    '#fff',
+    LINK_TINT,
+  ]
+  // the header pill sits on the header's pearl glass, so it uses the page's text tokens
+  const onBar = ['var(--ink)', 'var(--ink-2)']
+  for (const rule of showcase)
+    if ('color' in rule.decls) {
+      const bar = rule.selectors.every((s) => /\.qp-pill/.test(s))
+      const allowed = bar ? onBar : onSmoke
+      assert.ok(
+        allowed.includes(rule.decls.color),
+        `${rule.selectors.join(', ')}: ${rule.decls.color}`,
+      )
+    }
+
+  const lightest = (fill, behind) => {
+    const [sheen, ...stops] = rgbas(fill)
+    return stops
+      .map((stop) => over(sheen, over(stop, behind)))
+      .sort((a, b) => luminance(b) - luminance(a))[0]
+  }
+  const daySmoke = lightest(decl(glass, ':root', '--smoke-fill'), [255, 255, 255])
+  const nightSmoke = lightest(darkToken('--smoke-fill'), NIGHT_POOLS_BRIGHTEST)
+  const dayToken = (name) => hex(decl(base, ':root', name))
+  for (const name of ['--on-graphite', '--on-graphite-2', '--buy-bright', '--sell-bright']) {
+    assert.ok(contrast(dayToken(name), daySmoke) >= 4.5, `${name} on day smoke`)
+    assert.ok(ratio(name, nightSmoke) >= 4.5, `${name} on night smoke`)
+  }
+  for (const bg of [daySmoke, nightSmoke])
+    assert.ok(contrast(hex(LINK_TINT), bg) >= 4.5, `${LINK_TINT} on smoke`)
+})

@@ -1,6 +1,9 @@
 // Turns wallet, RPC and on-chain errors into short messages for people. Custom program errors are
-// mapped by the program that raised them (Meteora DBC, DAMM v2, Quantum Hooks, System, Token), never
-// by number alone, and raw simulation logs are never shown. Pure: no RPC, safe to unit test.
+// mapped by the program that raised them (Meteora DBC, DAMM v2, Quantum Hooks, System, Token, a
+// coin's transfer hook), never by number alone, and raw simulation logs are never shown. Pure: no
+// RPC, safe to unit test.
+
+import { QUANTP } from '../../shared/network.mjs'
 
 // Quantum Hooks' error table comes from its IDL, registered when the Quantum client loads (see
 // quantum.js) so the main bundle does not carry the whole IDL. Every Quantum transaction is built
@@ -25,6 +28,10 @@ const PROGRAM_NAMES = {
   [PROGRAMS.token2022]: 'the Token-2022 Program',
   [PROGRAMS.associatedToken]: 'the Associated Token Program',
 }
+// Transfer-hook programs a Token-2022 coin runs on every transfer: $QUANTP's (Midas's) and any the
+// trade ticket meets (registerTransferHook). Their errors come from rules Quant Pad does not set.
+const HOOK_NAME = 'this coin’s transfer hook'
+const transferHooks = new Set()
 
 export const MESSAGES = {
   slippage: 'Price moved beyond your slippage limit. Raise slippage or try a smaller amount.',
@@ -41,6 +48,12 @@ export const MESSAGES = {
   compute: 'The transaction ran out of compute budget. Try again.',
   tokens: 'Your token balance is too low for this transaction.',
   busy: 'The Solana network is busy right now. Wait a moment and try again.',
+  hookAccounts:
+    'This coin’s transfer hook needs accounts Quant Pad did not send. Refresh and try again.',
+  hookRefused:
+    'This coin’s transfer hook refused the transfer. Its owner can change its rules at any time; try again later.',
+  hookWhitelist:
+    'This coin’s transfer hook only lets whitelisted wallets trade until its open time. Try again once it opens.',
 }
 
 const TOO_LARGE = 'That amount is too large for this pool. Try a smaller amount.'
@@ -52,6 +65,15 @@ const DBC_ERRORS = {
   6012: 'Not enough tokens left on the curve for that amount.', // NotEnoughLiquidity
   6013: MESSAGES.graduated, // PoolIsCompleted
   6033: 'Not enough liquidity on the curve for that amount.', // InsufficientLiquidity
+  // Transfer-hook pools (a Token-2022 coin with a hook, such as $QUANTP)
+  6070: MESSAGES.hookAccounts, // InvalidRemainingAccountsLength
+  6071: MESSAGES.hookAccounts, // MissingRemainingAccountForTransferHook
+  6072: 'This coin no longer has a transfer hook. Refresh and try again.', // NoTransferHookProgram
+  6073: MESSAGES.hookAccounts, // DuplicatedRemainingAccountTypes
+  6074: MESSAGES.hookAccounts, // InvalidTransferHookProgram
+  6075: 'Quant Pad sent the wrong Meteora pool for this coin. Refresh and try again.', // InvalidPoolAccount
+  6076: 'This coin’s Meteora pool needs a different kind of swap. Refresh and try again.', // PoolTypeMismatch
+  6077: MESSAGES.hookAccounts, // InvalidRemainingAccountSliceType
 }
 const DAMM_ERRORS = {
   6000: TOO_LARGE, // MathOverflow
@@ -101,10 +123,22 @@ export function registerQuantumIdl(idl) {
   quantumErrors = Array.isArray(idl.errors) ? idl.errors : []
 }
 
+/** Names `programId` (base58) as a coin's transfer hook in error messages. */
+export function registerTransferHook(programId) {
+  if (!programId || PROGRAM_NAMES[programId]) return
+  transferHooks.add(programId)
+  PROGRAM_NAMES[programId] = HOOK_NAME
+}
+registerTransferHook(QUANTP.hookProgram)
+
+// Midas's hook ($QUANTP's) turns away wallets off its whitelist until its open time, with this log.
+const HOOK_WHITELIST = /isn['’]t whitelisted before the open time/i
+
 /** Message for custom error `code` raised by `programId` (base58). */
 export function explainCustomError(programId, code) {
   code = Number(code)
   const name = programId ? PROGRAM_NAMES[programId] : null
+  if (transferHooks.has(programId)) return MESSAGES.hookRefused
   let message
   if (programId === PROGRAMS.dbc) message = DBC_ERRORS[code]
   else if (programId === PROGRAMS.damm) message = DAMM_ERRORS[code]
@@ -137,7 +171,9 @@ export function failingProgram(logs) {
   return null
 }
 
-function explainFailure({ programId, code, reason }) {
+function explainFailure({ programId, code, reason }, logs = []) {
+  if (logs.some((line) => HOOK_WHITELIST.test(String(line)))) return MESSAGES.hookWhitelist
+  if (transferHooks.has(programId)) return MESSAGES.hookRefused
   if (code != null) return explainCustomError(programId, code)
   if (/insufficient funds for rent/i.test(reason)) return MESSAGES.accountRent
   if (/insufficient (funds|lamports)/i.test(reason)) return MESSAGES.noSol
@@ -187,7 +223,7 @@ export function explainError(err, { programIds } = {}) {
  */
 export function explainSimulation({ err, logs } = {}, { programIds } = {}) {
   const failure = failingProgram(logs)
-  if (failure) return explainFailure(failure)
+  if (failure) return explainFailure(failure, logs)
   if (err === 'BlockhashNotFound') return MESSAGES.sendExpired
   return explainError(err, { programIds })
 }
@@ -252,7 +288,7 @@ export function friendlyWalletError(e, { programIds } = {}) {
     return MESSAGES.declined
 
   const failure = failingProgram(logs)
-  if (failure) return explainFailure(failure)
+  if (failure) return explainFailure(failure, logs)
   const instruction =
     /Error processing Instruction (\d+): custom program error: 0x([0-9a-f]+)/i.exec(head)
   if (instruction)

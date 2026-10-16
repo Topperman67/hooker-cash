@@ -4,15 +4,26 @@ import { tiltHandlers } from '../lib/glint.js'
 import { bps } from '../lib/format.js'
 
 // Holographic launch card: the coin's identity and its hook loadout on a tilting graphite
-// card whose four light lines follow the pointer.
-export default function HoloCard({ name, symbol, image, hooks, quantum, footer, compact = false }) {
+// card whose four light lines follow the pointer. `label` and `plain` replace the header and the
+// no-hooks line for a coin that is neither (Quant Pad's own $QUANTP).
+export default function HoloCard({
+  name,
+  symbol,
+  image,
+  hooks,
+  quantum,
+  footer,
+  label,
+  plain,
+  compact = false,
+}) {
   const rows = quantum && hooks ? MODULES.filter((m) => Number(hooks[m.key]) > 0) : []
   return (
     <article className={`holo ${compact ? 'holo-compact' : ''}`} {...tiltHandlers()}>
       <div className="holo-inner">
         <header className="holo-head">
           <img src="/brand/mark.svg" alt="" className="holo-mark" />
-          <span>{quantum ? 'Quantum Hooks' : 'Standard Meteora'}</span>
+          <span>{label || (quantum ? 'Quantum Hooks' : 'Standard Meteora')}</span>
         </header>
         <div className="holo-art">
           <CoinAvatar src={image} symbol={symbol} size={compact ? 84 : 112} eager />
@@ -30,7 +41,9 @@ export default function HoloCard({ name, symbol, image, hooks, quantum, footer, 
             ))}
           </ul>
         ) : (
-          <p className="holo-plain">The creator claims fees directly on Meteora. No hooks run.</p>
+          <p className="holo-plain">
+            {plain || 'The creator claims fees directly on Meteora. No hooks run.'}
+          </p>
         )}
         {footer && <footer className="holo-foot">{footer}</footer>}
       </div>

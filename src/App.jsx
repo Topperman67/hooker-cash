@@ -8,6 +8,7 @@ import MarketPage from './pages/MarketPage.jsx'
 import { Spinner } from './components/UI.jsx'
 import { lazyPage } from './components/recovery.js'
 import { useGlobalGlint } from './lib/glint.js'
+import { QUANTP } from '../shared/network.mjs'
 
 // Launch and coin pages pull in the Meteora SDKs and charting; load them on demand. lazyPage lets
 // the ErrorBoundary retry a chunk that failed to load instead of caching the failure.
@@ -17,6 +18,7 @@ const HooksPage = lazyPage(() => import('./pages/HooksPage.jsx'))
 const DocsPage = lazyPage(() => import('./pages/DocsPage.jsx'))
 const TermsPage = lazyPage(() => import('./pages/TermsPage.jsx'))
 const PortfolioPage = lazyPage(() => import('./pages/PortfolioPage.jsx'))
+const QuantpPage = lazyPage(() => import('./pages/QuantpPage.jsx'))
 
 export default function App() {
   useGlobalGlint()
@@ -30,6 +32,12 @@ export default function App() {
               <Route path="/" element={<HomePage />} />
               <Route path="/launch" element={<LaunchPage />} />
               <Route path="/market" element={<MarketPage />} />
+              {/* $QUANTP has its own page, which works without the store: its coin page goes there. */}
+              <Route path={QUANTP.path} element={<QuantpPage />} />
+              <Route
+                path={`/coin/${QUANTP.mint}`}
+                element={<Navigate to={QUANTP.path} replace />}
+              />
               <Route path="/coin/:mint" element={<CoinPage />} />
               <Route path="/hooks" element={<HooksPage />} />
               <Route path="/portfolio" element={<PortfolioPage />} />

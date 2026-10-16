@@ -11,14 +11,20 @@ import {
   PublicKey,
   SystemProgram,
   SYSVAR_INSTRUCTIONS_PUBKEY,
+  TransactionInstruction,
 } from '@solana/web3.js'
 import {
   NATIVE_MINT,
+  TOKEN_2022_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
+  addExtraAccountMetasForExecute,
   createAssociatedTokenAccountIdempotentInstruction,
   createCloseAccountInstruction,
   createSyncNativeInstruction,
   getAssociatedTokenAddressSync,
+  getExtraAccountMetaAddress,
+  getTransferHook,
+  unpackMint,
 } from '@solana/spl-token'
 import {
   DAMM_V2_MIGRATION_FEE_ADDRESS,
@@ -26,6 +32,8 @@ import {
   swapQuoteExactIn as dbcSwapQuoteExactIn,
 } from '@meteora-ag/dynamic-bonding-curve-sdk'
 import {
+  getMaxFeeNumerator,
+  getTotalTradingFeeFromIncludedFeeAmount,
   getUnClaimLpFee,
   swapQuoteExactInput as dammSwapQuoteExactIn,
 } from '@meteora-ag/cp-amm-sdk'
@@ -212,6 +220,69 @@ export function pendingPositionFees(dammPool, position) {
   return { a: big(feeTokenA), b: big(feeTokenB) }
 }
 
+// ---- Token-2022 transfer hooks ------------------------------------------------------------------
+
+const readonlyMeta = (pubkey) => ({ pubkey: pk(pubkey), isSigner: false, isWritable: false })
+
+/**
+ * The program a Token-2022 mint calls on every transfer (a PublicKey), or null: an SPL Token mint,
+ * a mint without the TransferHook extension, or one whose hook was revoked. DBC revokes a
+ * TransferHookPool coin's hook after the curve's last swap, which leaves the extension in place
+ * with no program, so the coin trades as plain Token-2022 in its DAMM v2 pool.
+ */
+export function transferHookProgram(mint, mintInfo) {
+  if (!mintInfo?.owner || !pk(mintInfo.owner).equals(TOKEN_2022_PROGRAM_ID)) return null
+  const info = { ...mintInfo, owner: TOKEN_2022_PROGRAM_ID, data: Buffer.from(mintInfo.data) }
+  const hook = getTransferHook(unpackMint(pk(mint), info, TOKEN_2022_PROGRAM_ID))
+  return hook && !hook.programId.equals(PublicKey.default) ? hook.programId : null
+}
+
+/**
+ * The extra accounts a transfer of `mint` from `source` to `destination`, authorised by `owner`,
+ * needs for the mint's transfer hook, in the order Token-2022 takes them after the transfer's own
+ * accounts: the extras resolved from the hook's extra-account-metas account, then the hook program
+ * and that account. Always read from the chain, never hard-coded: whoever controls the hook can
+ * upgrade it and change them. [] when the mint has no active hook. `mintInfo` saves the mint read.
+ */
+export async function transferHookAccounts(
+  connection,
+  mint,
+  { source, destination, owner, amount = 0n, mintInfo } = {},
+) {
+  mint = pk(mint)
+  const info = mintInfo ?? (await connection.getAccountInfo(mint))
+  if (!info) throw new Error('That mint does not exist on Solana.')
+  const program = transferHookProgram(mint, info)
+  if (!program) return []
+  const metas = getExtraAccountMetaAddress(mint, program)
+  const metasInfo = await connection.getAccountInfo(metas)
+  // A hook without a metas account takes no extras, but Token-2022 still looks for the program
+  // (and, in older versions, for the metas address).
+  if (!metasInfo) return [readonlyMeta(program), readonlyMeta(metas)]
+  const base = [source, mint, destination, owner].map(readonlyMeta)
+  const transfer = new TransactionInstruction({
+    programId: TOKEN_2022_PROGRAM_ID,
+    keys: [...base],
+    data: Buffer.alloc(0),
+  })
+  // spl-token's resolver (every seed kind) re-reads the metas account: answer it from this read.
+  const reader = {
+    getAccountInfo: (key, commitment) =>
+      key.equals(metas) ? Promise.resolve(metasInfo) : connection.getAccountInfo(key, commitment),
+  }
+  await addExtraAccountMetasForExecute(
+    reader,
+    transfer,
+    program,
+    base[0].pubkey,
+    mint,
+    base[2].pubkey,
+    base[3].pubkey,
+    BigInt(amount),
+  )
+  return transfer.keys.slice(base.length)
+}
+
 /**
  * Where a DBC coin trades now. `kind`: 'curve' (DBC, before the threshold), 'migrating' (curve
  * full, waiting for migration: nothing can trade), 'pool' (DAMM v2), or 'none'.
@@ -256,10 +327,39 @@ export function freshDbcPool(config) {
   }
 }
 
+// Both programs price the coin in SOL as (sqrtPrice / 2^64)^2 raw lamports per raw token.
+const spotPrice = (sqrtPrice) => (Number(big(sqrtPrice)) / 2 ** 64) ** 2
+
+/**
+ * The pool fee and price impact of an SDK quote `q` (either program's swap result). `fee` is the
+ * whole pool fee in bigint raw units of `feeToken`: 'sol', or 'token' when the pool takes it from
+ * the coin (a DAMM v2 pool that collects both tokens takes a buy's fee from the coins it pays out).
+ * `impact` is how far the trade's price before fees sits from the pool price, as a fraction
+ * (0.01 = 1%): what the trade's size costs on top of the fee. Null when it cannot be priced.
+ */
+export function swapQuoteDetails(q, side, sqrtPrice) {
+  const fee = ['tradingFee', 'claimingFee', 'compoundingFee', 'protocolFee', 'referralFee'].reduce(
+    (sum, key) => sum + (q[key] ? big(q[key]) : 0n),
+    0n,
+  )
+  const out = big(q.outputAmount)
+  const netIn = big(q.excludedFeeInputAmount ?? q.includedFeeInputAmount ?? 0)
+  const feeOnInput = big(q.includedFeeInputAmount ?? netIn) > netIn
+  const feeToken = fee === 0n || (side === 'buy') === feeOnInput ? 'sol' : 'token'
+  const grossOut = feeOnInput ? out : out + fee
+  const [tokens, lamports] = side === 'buy' ? [grossOut, netIn] : [netIn, grossOut]
+  const spot = spotPrice(sqrtPrice ?? 0)
+  const paid = tokens > 0n ? Number(lamports) / Number(tokens) : 0
+  const impact =
+    spot > 0 && paid > 0 ? Math.max(0, side === 'buy' ? paid / spot - 1 : 1 - paid / spot) : null
+  return { fee, feeToken, impact }
+}
+
 /**
  * DBC quote, exact SOL in (`buy`) or exact tokens in (sell). `pool` null = the first trade on a
  * new pool (`firstSwap`: DBC charges the minimum fee when the swap shares the create's
- * transaction). Returns bigint { out, minOut }.
+ * transaction). Returns bigint { out, minOut, fee } with `feeToken` and `impact`
+ * (swapQuoteDetails).
  */
 export function dbcQuote({
   pool,
@@ -282,6 +382,7 @@ export function dbcQuote({
     firstSwap,
   )
   return {
+    ...swapQuoteDetails(q, side, state.poolState.sqrtPrice),
     out: big(q.outputAmount),
     minOut: big(q.minimumAmountOut),
     fee: big(q.tradingFee) + big(q.protocolFee),
@@ -314,7 +415,10 @@ export async function dbcMigrationInstructions({ connection, payer, dbcPool }) {
   }
 }
 
-/** DAMM v2 quote, exact in. Token A is the coin, B is WSOL. */
+/**
+ * DAMM v2 quote, exact in. Token A is the coin, B is WSOL. Returns bigint { out, minOut } with
+ * `fee`, `feeToken` and `impact` (swapQuoteDetails).
+ */
 export function dammQuote({ damm, side, amountIn, slippageBps = 0, currentPoint, decimals = 6 }) {
   const q = dammSwapQuoteExactIn(
     damm.raw,
@@ -326,17 +430,38 @@ export function dammQuote({ damm, side, amountIn, slippageBps = 0, currentPoint,
     decimals,
     9,
   )
+  const outputAmount = q.outputAmount ?? q.outAmount
   return {
-    out: big(q.outputAmount ?? q.outAmount),
+    ...swapQuoteDetails({ ...q, outputAmount }, side, damm.raw.sqrtPrice),
+    out: big(outputAmount),
     minOut: big(q.minimumAmountOut ?? q.minOutAmount),
     nextSqrtPrice: q.nextSqrtPrice ? big(q.nextSqrtPrice) : null,
   }
 }
 
+/**
+ * The fee a DAMM v2 pool charges a trade at `currentPoint`, in bps: its base fee (on a schedule
+ * for some pools) plus any dynamic fee, priced on a 1 SOL buy or the same in tokens for a sell.
+ */
+export function dammFeeBps(damm, currentPoint, side = 'buy') {
+  const s = damm.raw
+  const numerator = getTotalTradingFeeFromIncludedFeeAmount(
+    s.poolFees,
+    bn(currentPoint ?? 0),
+    s.activationPoint,
+    new BN(1_000_000_000),
+    side === 'sell' ? 0 : 1, // AtoB sells the coin (A) for SOL (B)
+    getMaxFeeNumerator(s.feeVersion),
+    s.poolFees.initSqrtPrice,
+    s.sqrtPrice,
+  )
+  return Number(numerator.toString()) / 100_000 // fee numerators are over 1e9
+}
+
 // ---- instructions -----------------------------------------------------------------------------
 
-const ata = (mint, owner) =>
-  getAssociatedTokenAddressSync(pk(mint), pk(owner), true, TOKEN_PROGRAM_ID)
+const ata = (mint, owner, program = TOKEN_PROGRAM_ID) =>
+  getAssociatedTokenAddressSync(pk(mint), pk(owner), true, pk(program))
 
 /** Wraps `lamports` into `owner`'s WSOL ATA (created if needed). */
 export function wrapSolInstructions(owner, lamports) {
@@ -407,6 +532,12 @@ export async function dbcTransferCreatorInstruction({ config, mint, creator, new
  * `mode` is a SWAP_MODE; for EXACT_OUT `amountIn` is the max input and `minOut` the exact output.
  * `firstSwap` passes the Instructions sysvar so a dev buy in the create's transaction pays DBC's
  * minimum fee. Wraps / unwraps SOL around the swap.
+ *
+ * A Token-2022 coin passes `tokenBaseProgram` (its token account and the swap use it). A coin in a
+ * TransferHookPool also passes `transferHookAccounts` (from transferHookAccounts(), for this
+ * trade's direction): the swap is then swap2_with_transfer_hook, which DBC requires for that pool
+ * and which hands the accounts on to the hook. Without them it is a plain swap2 on SPL Token
+ * accounts, as for Quant Pad's own launches.
  */
 export async function dbcSwapInstructions({
   config,
@@ -417,16 +548,34 @@ export async function dbcSwapInstructions({
   minOut = 0n,
   mode = SWAP_MODE.EXACT_IN,
   firstSwap = false,
+  tokenBaseProgram = TOKEN_PROGRAM_ID,
+  transferHookAccounts: hookAccounts = null,
 }) {
   user = pk(user)
   mint = pk(mint)
+  tokenBaseProgram = pk(tokenBaseProgram)
   const pool = dbcPoolPda(config, mint)
   const buy = side === 'buy'
   const wsol = ata(NATIVE_MINT, user)
-  const coin = ata(mint, user)
+  const coin = ata(mint, user, tokenBaseProgram)
   const [amount0, amount1] = mode === SWAP_MODE.EXACT_OUT ? [minOut, amountIn] : [amountIn, minOut]
-  const swap = await dbcProgram()
-    .methods.swap2({ amount0: bn(amount0), amount1: bn(amount1), swapMode: mode })
+  const params = { amount0: bn(amount0), amount1: bn(amount1), swapMode: mode }
+  const hook = hookAccounts?.map((a) => ({
+    pubkey: pk(a.pubkey),
+    isSigner: !!a.isSigner,
+    isWritable: !!a.isWritable,
+  }))
+  const methods = dbcProgram().methods
+  // The hook's accounts follow the optional sysvar, described by one TransferHookBase slice.
+  const swap = await (
+    hook
+      ? methods.swap2WithTransferHook(params, {
+          slices: hook.length
+            ? [{ accountsType: { transferHookBase: {} }, length: hook.length }]
+            : [],
+        })
+      : methods.swap2(params)
+  )
     .accountsPartial({
       poolAuthority: DBC_POOL_AUTHORITY,
       config: pk(config),
@@ -438,28 +587,32 @@ export async function dbcSwapInstructions({
       baseMint: mint,
       quoteMint: NATIVE_MINT,
       payer: user,
-      tokenBaseProgram: TOKEN_PROGRAM_ID,
+      tokenBaseProgram,
       tokenQuoteProgram: TOKEN_PROGRAM_ID,
       referralTokenAccount: null,
       eventAuthority: DBC_EVENT_AUTHORITY,
       program: DBC_PROGRAM_ID,
     })
-    .remainingAccounts(
-      firstSwap ? [{ pubkey: SYSVAR_INSTRUCTIONS_PUBKEY, isSigner: false, isWritable: false }] : [],
-    )
+    .remainingAccounts([
+      ...(firstSwap ? [readonlyMeta(SYSVAR_INSTRUCTIONS_PUBKEY)] : []),
+      ...(hook ?? []),
+    ])
     .instruction()
-  const wrapIn = mode === SWAP_MODE.EXACT_OUT ? amountIn : amountIn
   return [
     ...(buy
-      ? wrapSolInstructions(user, wrapIn)
+      ? wrapSolInstructions(user, amountIn)
       : [createAssociatedTokenAccountIdempotentInstruction(user, wsol, user, NATIVE_MINT)]),
-    createAssociatedTokenAccountIdempotentInstruction(user, coin, user, mint),
+    createAssociatedTokenAccountIdempotentInstruction(user, coin, user, mint, tokenBaseProgram),
     swap,
     unwrapSolInstruction(user),
   ]
 }
 
-/** A DAMM v2 trade by `user` on the migrated pool (exact in, min out). */
+/**
+ * A DAMM v2 trade by `user` on the migrated pool (exact in, min out). `tokenAProgram` is the
+ * coin's token program (Token-2022 for a coin that graduated from a TransferHookPool, whose hook
+ * DBC revoked on the way); WSOL is always SPL Token.
+ */
 export async function dammSwapInstructions({
   damm,
   dammPool,
@@ -468,12 +621,14 @@ export async function dammSwapInstructions({
   side,
   amountIn,
   minOut = 0n,
+  tokenAProgram = TOKEN_PROGRAM_ID,
 }) {
   user = pk(user)
   mint = pk(mint)
+  tokenAProgram = pk(tokenAProgram)
   const buy = side === 'buy'
   const wsol = ata(NATIVE_MINT, user)
-  const coin = ata(mint, user)
+  const coin = ata(mint, user, tokenAProgram)
   const swap = await dammProgram()
     .methods.swap2({ amount0: bn(amountIn), amount1: bn(minOut), swapMode: SWAP_MODE.EXACT_IN })
     .accountsPartial({
@@ -486,7 +641,7 @@ export async function dammSwapInstructions({
       tokenAMint: pk(damm.tokenAMint),
       tokenBMint: pk(damm.tokenBMint),
       payer: user,
-      tokenAProgram: TOKEN_PROGRAM_ID,
+      tokenAProgram,
       tokenBProgram: TOKEN_PROGRAM_ID,
       referralTokenAccount: null,
       eventAuthority: DAMM_EVENT_AUTHORITY,
@@ -497,7 +652,7 @@ export async function dammSwapInstructions({
     ...(buy
       ? wrapSolInstructions(user, amountIn)
       : [createAssociatedTokenAccountIdempotentInstruction(user, wsol, user, NATIVE_MINT)]),
-    createAssociatedTokenAccountIdempotentInstruction(user, coin, user, mint),
+    createAssociatedTokenAccountIdempotentInstruction(user, coin, user, mint, tokenAProgram),
     swap,
     unwrapSolInstruction(user),
   ]

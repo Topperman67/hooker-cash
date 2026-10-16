@@ -15,6 +15,7 @@ import {
   quantumClientError,
 } from './keeper.mjs'
 import { createPriceFeed } from './prices.mjs'
+import { createGeckoFeed, createQuantpFeed } from './quantp.mjs'
 import { createRpcProxy, globalRpcLimit, writeRpcResponse } from './rpc-proxy.mjs'
 import { configuredStore, createFileStore } from './storage.mjs'
 import * as requestLimits from './request-limits.mjs'
@@ -24,6 +25,7 @@ import {
   storageDirectory,
   isAddress,
   launchTiers,
+  QUANTP,
   DEFAULT_PLATFORM_FEE_BPS,
   MAX_PLATFORM_FEE_BPS,
 } from '../shared/network.mjs'
@@ -46,6 +48,11 @@ export const PUBLIC_READ_CACHE = 'public, max-age=0, s-maxage=5, stale-while-rev
 // Media names are content hashes, so a blob never changes. Without s-maxage Vercel's CDN does not
 // cache function responses, and every view would read the store again.
 export const MEDIA_CACHE = 'public, max-age=31536000, s-maxage=31536000, immutable'
+// $QUANTP's live figures change every few seconds but cost RPC and DexScreener calls: the CDN
+// answers for 10 s and revalidates in the background for 50 more.
+export const QUANTP_CACHE = 'public, max-age=0, s-maxage=10, stale-while-revalidate=50'
+// Its chart and trades from GeckoTerminal (30 calls a minute per IP) are held a little longer.
+export const QUANTP_MARKET_CACHE = 'public, max-age=0, s-maxage=15, stale-while-revalidate=45'
 
 const { clientKey, createLimiter, createWriteGuard } = requestLimits
 
@@ -78,7 +85,15 @@ const POST_ROUTES = new Set([
   '/api/metadata',
   '/api/sync',
 ])
-const GET_ROUTES = new Set(['/api/status', '/api/market', '/api/coins', '/api/stats'])
+const GET_ROUTES = new Set([
+  '/api/status',
+  '/api/market',
+  '/api/coins',
+  '/api/stats',
+  '/api/quantp',
+  '/api/quantp/candles',
+  '/api/quantp/trades',
+])
 const COIN_ROUTE = /^\/api\/coins\/([^/]+)(?:\/(trades|candles))?$/
 const QUANTUM_ROUTE = /^\/api\/quantum\/([^/]+)(?:\/(claims))?$/
 function allowedMethods(path) {
@@ -101,6 +116,23 @@ const MAX_MARKET_OFFSET = 10_000
 const MAX_TRADE_OFFSET = 4_000
 // Trades per /trades page (the response size is fixed whatever the request asks).
 const TRADE_PAGE = 50
+// Candle intervals the chart asks for, in seconds; anything else gets 5 minutes.
+const CANDLE_INTERVALS = [15, 60, 300, 900, 3600, 14400, 86400]
+const candleInterval = (value) => {
+  const n = Number(value)
+  return CANDLE_INTERVALS.includes(n) ? n : 300
+}
+// Resolves like `promise`, or rejects after `ms`.
+function within(promise, ms) {
+  let timer
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      timer = setTimeout(() => reject(Error('timed out')), ms)
+      timer.unref?.()
+    }),
+  ]).finally(() => clearTimeout(timer))
+}
 
 // Internal bookkeeping that never leaves the server: signature cursors, backlog anchors (`gaps`
 // holds signatures too), the indexer's sync state and its onNativeLaunch notice state (K5).
@@ -460,7 +492,14 @@ export async function createApplication(options = {}) {
       .map((s) => s.trim())
       .filter((mint) => isAddress(mint) && !hidden.has(mint)),
   )
+  // /api/stats also counts $QUANTP, Quant Pad's own token (an external coin to the indexer).
+  const statsListed = new Set([...listed, ...(hidden.has(QUANTP.mint) ? [] : [QUANTP.mint])])
   const solUsd = options.priceFeed || createPriceFeed()
+  // $QUANTP's figures, chart and trades read without the store (server/quantp.mjs), so its page
+  // keeps working while Redis is down.
+  const quantpRequest = options.quantpFetch ? { request: options.quantpFetch } : {}
+  const quantp = options.quantpFeed || createQuantpFeed({ connection, solUsd, ...quantpRequest })
+  const gecko = options.geckoFeed || createGeckoFeed(quantpRequest)
   const mediaLimit =
     options.mediaLimitBytes || Number(process.env.QUANTPAD_MEDIA_LIMIT_MB || 256) * 1024 * 1024
   // One visitor may use only a slice of the shared media quota per day. Every write is charged at
@@ -1155,6 +1194,23 @@ export async function createApplication(options = {}) {
   const limitRead = (req) => limiter(req, { bucket: 'read', limit: READ_LIMIT })
   const invalidMint = () => clientError('Enter a valid Solana mint address.', 400, 'invalid_mint')
 
+  // $QUANTP's chart or trades from the indexer, when the store answers and holds the coin's whole
+  // history (from its first transaction on each venue, nothing left to read) with something in
+  // it; null otherwise, and the caller asks GeckoTerminal. Bounded in time so a slow store never
+  // holds up the fallback.
+  async function indexedQuantp(req, read) {
+    try {
+      const record = await within(indexer.coin(QUANTP.mint), 2_500)
+      const from = (field) => record?.historyFrom?.[field] ?? (record?.external ? null : 0)
+      if (!record || record.behind || from('cursor') !== 0) return null
+      if (record.migrated && from('poolCursor') !== 0) return null
+      const result = await within(publicRead(req, read), 4_000)
+      return result?.items?.length ? result : null
+    } catch {
+      return null
+    }
+  }
+
   async function status() {
     const [price, q, storageNow] = await Promise.all([solUsd(), quantumStatus(), storageStatus()])
     return {
@@ -1254,7 +1310,7 @@ export async function createApplication(options = {}) {
       if (req.method === 'GET' && path === '/api/stats') {
         await limitRead(req)
         const coins = (await publicRead(req, () => reads.list())).filter(
-          (c) => (!c.external || listed.has(c.mint)) && !hidden.has(c.mint),
+          (c) => (!c.external || statsListed.has(c.mint)) && !hidden.has(c.mint),
         )
         const stats = {
           coins: coins.length,
@@ -1264,6 +1320,42 @@ export async function createApplication(options = {}) {
           trades24h: coins.reduce((s, c) => s + (c.trades24h || 0), 0),
         }
         return json(res, 200, stats, PUBLIC_READ_CACHE)
+      }
+
+      // $QUANTP: no store reads (the limiter fails open while Redis is down).
+      if (req.method === 'GET' && path === '/api/quantp') {
+        await limitRead(req)
+        return json(res, 200, await quantp.snapshot(), QUANTP_CACHE)
+      }
+      if (req.method === 'GET' && path === '/api/quantp/candles') {
+        await limitRead(req)
+        const interval = candleInterval(url.searchParams.get('interval'))
+        const indexed = await indexedQuantp(req, async () => ({
+          items: await reads.candles(QUANTP.mint, interval),
+        }))
+        if (indexed)
+          return json(res, 200, { ...indexed, interval, source: 'indexer' }, PUBLIC_READ_CACHE)
+        const items = await gecko.candles(await quantp.pools(), interval)
+        return json(res, 200, { items, interval, source: 'geckoterminal' }, QUANTP_MARKET_CACHE)
+      }
+      if (req.method === 'GET' && path === '/api/quantp/trades') {
+        await limitRead(req)
+        const side = oneOf({ buy: true, sell: true }, url.searchParams.get('side'), null)
+        const offset = clampedInt(url.searchParams.get('offset'), MAX_TRADE_OFFSET)
+        const indexed = await indexedQuantp(req, () =>
+          reads.trades(QUANTP.mint, { side, offset, limit: TRADE_PAGE }),
+        )
+        if (indexed) return json(res, 200, { ...indexed, source: 'indexer' }, PUBLIC_READ_CACHE)
+        const rows = (await gecko.trades(await quantp.pools())).filter(
+          (t) => !side || t.side === side,
+        )
+        const page = {
+          items: rows.slice(offset, offset + TRADE_PAGE),
+          total: rows.length,
+          next: offset + TRADE_PAGE < rows.length ? offset + TRADE_PAGE : null,
+          source: 'geckoterminal',
+        }
+        return json(res, 200, page, QUANTP_MARKET_CACHE)
       }
 
       // POST /api/coins/track is a POST route; every other /api/coins/<x> is a coin read.
@@ -1281,8 +1373,7 @@ export async function createApplication(options = {}) {
         if (!record)
           return json(res, 404, { error: 'This coin is not tracked yet.', code: 'NOT_TRACKED' })
         if (part === 'candles') {
-          const n = Number(url.searchParams.get('interval'))
-          const interval = [15, 60, 300, 900, 3600, 14400, 86400].includes(n) ? n : 300
+          const interval = candleInterval(url.searchParams.get('interval'))
           const items = await publicRead(req, () => reads.candles(mint, interval))
           return json(res, 200, { items, interval }, PUBLIC_READ_CACHE)
         }

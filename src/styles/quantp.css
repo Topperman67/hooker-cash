@@ -1,1 +1,523 @@
-/* The /quantp token page (pages/QuantpPage.jsx). */
+/* The /quantp token page (pages/QuantpPage.jsx): a glass hero with the chrome Q and the live
+   price, a stats strip, then the trading instruments (chart, ticket, trades) beside the
+   tokenomics, graduation, disclosure and about panels. Night rules are at the end, scoped to
+   :root[data-theme='dark']. */
+.qp-page {
+  display: grid;
+  gap: 16px;
+  padding-top: 26px;
+  padding-bottom: 48px;
+}
+
+/* ---------- hero ---------- */
+.qp-hero {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr);
+  gap: 28px;
+  align-items: center;
+  padding: 30px 32px;
+  border-radius: 26px;
+  background: var(--glass-fill);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-rim);
+  box-shadow: var(--glass-shadow);
+}
+/* the brand's four light lines, raking at 45° behind the Q and fading out before the ticker */
+.qp-hero-lines {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: linear-gradient(
+    135deg,
+    transparent 0 24%,
+    rgba(255, 62, 165, 0.5) 24% 24.7%,
+    transparent 24.7% 25.7%,
+    rgba(255, 194, 26, 0.62) 25.7% 26.4%,
+    transparent 26.4% 27.4%,
+    rgba(18, 194, 110, 0.5) 27.4% 28.1%,
+    transparent 28.1% 29.1%,
+    rgba(46, 75, 255, 0.58) 29.1% 29.8%,
+    transparent 29.8% 100%
+  );
+  -webkit-mask-image: linear-gradient(90deg, #000 0 13%, transparent 24%);
+  mask-image: linear-gradient(90deg, #000 0 13%, transparent 24%);
+}
+.qp-id {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 22px;
+  align-items: center;
+  min-width: 0;
+}
+/* a clear glass lens holding the chrome Q */
+.qp-lens {
+  display: grid;
+  place-items: center;
+  width: 132px;
+  height: 132px;
+  border-radius: 36px;
+  background:
+    radial-gradient(90% 70% at 28% 18%, rgba(255, 255, 255, 0.95), transparent 60%),
+    linear-gradient(150deg, rgba(255, 255, 255, 0.7), rgba(213, 218, 225, 0.4));
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  box-shadow:
+    inset 1px 1px 0 #fff,
+    inset -1px -1px 0 rgba(21, 24, 29, 0.08),
+    0 16px 34px rgba(21, 24, 29, 0.14);
+}
+.qp-lens img {
+  width: 96px;
+  height: 96px;
+  filter: drop-shadow(0 8px 14px rgba(21, 24, 29, 0.28));
+}
+.qp-names {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.qp-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+/* cobalt, not the Quantum chip's light lines: $QUANTP is not a Quantum Hooks coin */
+.chip.chip-own {
+  background: var(--cobalt-anodised);
+  border-color: rgba(160, 178, 255, 0.9);
+  color: #fff;
+}
+.qp-title {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.qp-ticker {
+  font-size: clamp(2.25rem, 6.2vw, 4.75rem);
+  font-weight: 900;
+  font-stretch: 125%;
+  line-height: 0.98;
+  letter-spacing: -0.035em;
+  overflow-wrap: anywhere;
+  /* clipped text loses its descender room without this */
+  padding-bottom: 0.06em;
+}
+.qp-name {
+  font-family: var(--font-ui);
+  font-size: var(--t-lg);
+  font-weight: 650;
+  font-stretch: 100%;
+  letter-spacing: 0;
+  color: var(--steel);
+}
+.qp-contract {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--t-sm);
+}
+.qp-contract .address {
+  padding: 4px 8px 4px 12px;
+  border-radius: var(--r-pill);
+  background: rgba(255, 255, 255, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  box-shadow: inset 0 1px 0 #fff;
+}
+.qp-contract .address a {
+  text-decoration: none;
+}
+.qp-contract .address a:hover {
+  text-decoration: underline;
+}
+
+.qp-quote {
+  display: grid;
+  gap: 6px;
+  justify-items: start;
+  min-width: 0;
+  padding-left: 28px;
+  border-left: 1px solid var(--mercury-2);
+}
+.qp-label {
+  font-size: var(--t-xs);
+  font-weight: 600;
+  color: var(--steel);
+}
+.qp-price.num {
+  font-size: clamp(2rem, 3.9vw, 3.1rem);
+  font-weight: 600;
+  line-height: 1.05;
+  letter-spacing: -0.045em;
+  overflow-wrap: anywhere;
+}
+.qp-price-sub {
+  color: var(--steel);
+  font-size: var(--t-sm);
+}
+.qp-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.qp-actions .btn {
+  gap: 6px;
+}
+.qp-updated {
+  font-size: var(--t-xs);
+}
+
+/* ---------- live stats ---------- */
+.qp-stats {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 14px;
+  margin: 0;
+  padding: 16px 20px;
+  border-radius: var(--r-lg);
+  background: var(--glass-fill);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-rim);
+  box-shadow: var(--glass-shadow);
+}
+.qp-stats dd {
+  font-size: var(--t-lg);
+}
+.qp-warn {
+  margin: 0;
+}
+.qp-warn a {
+  font-weight: 650;
+  white-space: nowrap;
+}
+
+/* ---------- instruments and panels ---------- */
+.qp-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: 16px;
+  align-items: start;
+}
+.qp-main,
+.qp-side {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  min-width: 0;
+}
+.qp-main > *,
+.qp-side > * {
+  min-width: 0;
+}
+/* "Buy $QUANTP" lands on the ticket below the sticky header */
+#trade {
+  scroll-margin-top: 110px;
+}
+.qp-grad,
+.qp-about,
+.qp-disclose {
+  display: grid;
+  gap: 10px;
+}
+.qp-fine {
+  font-size: var(--t-xs);
+  margin-top: 10px;
+}
+.qp-grad .qp-fine,
+.qp-about .qp-fine {
+  margin-top: 0;
+}
+.qp-sub {
+  font-size: var(--t-md);
+  margin-top: 22px;
+  margin-bottom: 10px;
+}
+
+/* tokenomics: the fee now and after graduation, then the creator share's 60/40 split */
+.qp-fees {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.qp-fee {
+  display: grid;
+  gap: 4px;
+  align-content: start;
+  padding: 14px 16px;
+  border-radius: var(--r-md);
+  background: rgba(255, 255, 255, 0.42);
+  border: 1px solid var(--mercury-2);
+}
+.qp-fee.is-now {
+  border-color: rgba(46, 75, 255, 0.55);
+  box-shadow:
+    inset 0 0 0 1px rgba(46, 75, 255, 0.35),
+    0 6px 18px rgba(46, 75, 255, 0.12);
+}
+.qp-fee-pct.num {
+  font-size: var(--t-2xl);
+  font-weight: 600;
+  letter-spacing: -0.04em;
+  line-height: 1.1;
+}
+.qp-fee-text {
+  font-size: var(--t-sm);
+  color: var(--steel);
+}
+.qp-now {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 0 8px;
+  border-radius: var(--r-pill);
+  background: var(--blue);
+  color: #fff;
+  font-size: var(--t-xs);
+  font-weight: 700;
+  line-height: 1.6;
+  vertical-align: 1px;
+}
+.qp-split {
+  display: flex;
+  gap: 3px;
+  height: 34px;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.qp-split span {
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  min-width: 0;
+  /* ink on both fills keeps 4.5:1 in either theme */
+  color: #0b0d10;
+  font-family: var(--font-mono);
+  font-size: var(--t-sm);
+  font-weight: 700;
+}
+.qp-split-holders {
+  background: linear-gradient(180deg, #4fe39f, var(--green) 60%, #0fae62);
+}
+.qp-split-burn {
+  background: linear-gradient(180deg, #ff86c6, var(--pink) 60%, #ec2f93);
+}
+.qp-split-legend {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin: 14px 0 0;
+}
+.qp-split-legend > div {
+  display: grid;
+  gap: 2px;
+  align-content: start;
+}
+.qp-split-legend dt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+}
+.qp-split-legend dd {
+  margin: 0;
+  font-size: var(--t-sm);
+  color: var(--steel);
+}
+.qp-split-legend .qp-earned {
+  margin-top: 4px;
+  color: var(--ink);
+  font-size: var(--t-xs);
+}
+.qp-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(21, 24, 29, 0.12);
+}
+.qp-dot-holders {
+  background: var(--green);
+}
+.qp-dot-burn {
+  background: var(--pink);
+}
+
+.qp-disclose {
+  border-left: 4px solid var(--yellow);
+}
+.qp-disclose ul {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 18px;
+  font-size: var(--t-sm);
+  color: var(--steel);
+}
+.qp-about .kv {
+  margin-top: 4px;
+}
+.qp-about .about-links {
+  margin-top: 6px;
+}
+.qp-about .btn,
+.qp-grad a {
+  gap: 4px;
+}
+
+/* GeckoTerminal credit under the chart and the trades (MarketChart, TradesTable) */
+.data-credit {
+  margin: 8px 0 0;
+  font-size: var(--t-xs);
+  color: var(--on-graphite-2);
+  text-align: right;
+}
+.data-credit a {
+  color: inherit;
+}
+.table-wrap + .data-credit,
+.muted + .data-credit {
+  margin: 0;
+  padding: 0 16px 12px;
+}
+
+/* ---------- responsive ---------- */
+@media (max-width: 1100px) {
+  .qp-grid {
+    grid-template-columns: minmax(0, 1fr) 340px;
+  }
+  .qp-stats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+/* One column: the panels leave their columns and are ordered for a phone, ticket first. */
+@media (max-width: 960px) {
+  .qp-hero {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 22px;
+  }
+  .qp-quote {
+    padding-left: 0;
+    padding-top: 20px;
+    border-left: 0;
+    border-top: 1px solid var(--mercury-2);
+  }
+  .qp-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .qp-main,
+  .qp-side {
+    display: contents;
+  }
+  .qp-ticket {
+    order: 1;
+  }
+  .qp-chart {
+    order: 2;
+  }
+  .qp-grad {
+    order: 3;
+  }
+  .qp-tokenomics {
+    order: 4;
+  }
+  .qp-disclose {
+    order: 5;
+  }
+  .qp-trades {
+    order: 6;
+  }
+  .qp-about {
+    order: 7;
+  }
+}
+@media (max-width: 640px) {
+  .qp-page {
+    padding-top: 16px;
+    gap: 12px;
+  }
+  .qp-hero {
+    padding: 20px 18px;
+    border-radius: var(--r-lg);
+  }
+  /* stacked, the lines would cross the ticker: keep them up by the Q */
+  .qp-hero-lines {
+    -webkit-mask-image: linear-gradient(180deg, #000 0 12%, transparent 24%);
+    mask-image: linear-gradient(180deg, #000 0 12%, transparent 24%);
+  }
+  .qp-id {
+    gap: 14px;
+  }
+  .qp-lens {
+    width: 76px;
+    height: 76px;
+    border-radius: 22px;
+  }
+  .qp-lens img {
+    width: 56px;
+    height: 56px;
+  }
+  .qp-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    padding: 14px 16px;
+  }
+  .qp-fees,
+  .qp-split-legend {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 420px) {
+  .qp-id {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .qp-actions .btn {
+    flex: 1 1 auto;
+  }
+}
+
+/* ---------- night studio ---------- */
+:root[data-theme='dark'] .qp-hero,
+:root[data-theme='dark'] .qp-stats {
+  border-color: rgba(255, 255, 255, 0.2) rgba(255, 255, 255, 0.08) rgba(255, 255, 255, 0.05)
+    rgba(255, 255, 255, 0.15);
+}
+:root[data-theme='dark'] .qp-hero-lines {
+  opacity: 0.65;
+  filter: drop-shadow(0 0 6px rgba(143, 164, 255, 0.35));
+}
+:root[data-theme='dark'] .qp-lens {
+  background:
+    radial-gradient(90% 70% at 28% 18%, rgba(255, 255, 255, 0.16), transparent 60%),
+    linear-gradient(150deg, rgba(38, 43, 53, 0.9), rgba(12, 14, 20, 0.85));
+  border-color: rgba(255, 255, 255, 0.16);
+  box-shadow:
+    inset 1px 1px 0 rgba(255, 255, 255, 0.2),
+    inset -1px -1px 0 rgba(0, 0, 0, 0.5),
+    0 16px 34px rgba(0, 0, 0, 0.5);
+}
+:root[data-theme='dark'] .qp-contract .address {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(255, 255, 255, 0.14);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+:root[data-theme='dark'] .qp-fee {
+  background: rgba(255, 255, 255, 0.04);
+}
+:root[data-theme='dark'] .qp-fee.is-now {
+  border-color: rgba(143, 164, 255, 0.6);
+  box-shadow:
+    inset 0 0 0 1px rgba(143, 164, 255, 0.3),
+    0 6px 18px rgba(46, 75, 255, 0.2);
+}
+:root[data-theme='dark'] .qp-now {
+  background: var(--blue-tint);
+  color: #07080c;
+}
+:root[data-theme='dark'] .qp-dot {
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.18);
+}

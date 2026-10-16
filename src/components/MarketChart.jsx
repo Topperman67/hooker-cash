@@ -10,6 +10,7 @@ import { useResource } from '../lib/api.js'
 import { Segmented } from './UI.jsx'
 import { crosshairLabel, tickMarkLabel } from './chartTime.js'
 import { capTokens, chartPoints } from './chartScale.js'
+import { DataCredit } from './TradesTable.jsx'
 
 const INTERVALS = [
   [15, '15s'],
@@ -21,12 +22,15 @@ const INTERVALS = [
 ]
 
 // `supply` is the coin record's raw mint supply (lower after burns) and `decimals` its mint
-// decimals, so market-cap mode matches the server's market cap.
-export default function MarketChart({ mint, symbol, supply, decimals }) {
+// decimals, so market-cap mode matches the server's market cap. `candlesPath` reads the candles
+// from another route of the same shape (the $QUANTP page's /api/quantp/candles); a response
+// with `source: 'geckoterminal'` credits GeckoTerminal under the chart.
+export default function MarketChart({ mint, symbol, supply, decimals, candlesPath }) {
   const [interval, setInterval] = useState(60)
   const [mode, setMode] = useState('candles')
   const [unit, setUnit] = useState('price')
-  const resource = useResource(`/api/coins/${mint}/candles?interval=${interval}`, 8000)
+  const path = candlesPath || `/api/coins/${mint}/candles`
+  const resource = useResource(`${path}?interval=${interval}`, 8000)
   const container = useRef(null)
   const chart = useRef(null)
   const series = useRef(null)
@@ -152,6 +156,7 @@ export default function MarketChart({ mint, symbol, supply, decimals }) {
           </div>
         )}
       </div>
+      {resource.data?.source === 'geckoterminal' && <DataCredit />}
     </section>
   )
 }

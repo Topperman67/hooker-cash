@@ -2,6 +2,10 @@
 
 * [Welcome to Quant Pad](README.md)
 
+## $QUANTP
+
+* [The $QUANTP token](quantp/the-quantp-token.md)
+
 ## Getting started
 
 * [Launching a coin](getting-started/launching-a-coin.md)

@@ -1,6 +1,9 @@
 import { Link } from 'react-router-dom'
 import { usePlatform } from '../context/PlatformContext.jsx'
+import { Address } from '../components/UI.jsx'
+import { useQuantp } from '../context/QuantpContext.jsx'
 import { bps } from '../lib/format.js'
+import { explorer, QUANTP } from '../../shared/network.mjs'
 
 const SECTIONS = [
   ['launching', 'Launching a coin'],
@@ -8,10 +11,14 @@ const SECTIONS = [
   ['hooks', 'Quantum Hooks'],
   ['fees', 'Fees'],
   ['safety', 'Safety'],
+  ['quantp', '$QUANTP'],
 ]
 
 export default function DocsPage() {
   const { platform, quantum } = usePlatform()
+  // $QUANTP's curve state, so the hook and fee lines read right before and after graduation (and
+  // stay conditional while /api/quantp is down)
+  const migrated = !!useQuantp()?.data?.migrated
   return (
     <div className="wrap docs">
       <nav className="docs-nav" aria-label="Documentation sections">
@@ -106,6 +113,84 @@ export default function DocsPage() {
             Quantum Hooks depend on Meteora continuing to pay creator fees to the well.
           </li>
           <li>The Quantum Hooks program has not yet been independently audited.</li>
+        </ul>
+
+        <h2 id="quantp">$QUANTP</h2>
+        <p>
+          $QUANTP is Quant Pad’s own token. It launched on Meteora’s Dynamic Bonding Curve and has
+          graduated to a Meteora DAMM v2 pool. Its fee split is paid out by the team, not enforced
+          on-chain. <Link to={QUANTP.path}>Open $QUANTP</Link>.
+        </p>
+        <ul>
+          <li>
+            Contract:{' '}
+            <Address value={QUANTP.mint} head={8} tail={8} href={explorer.token(QUANTP.mint)} />
+          </li>
+          <li>
+            A Token-2022 token with 6 decimals and a fixed supply of 1,000,000,000 (burns can only
+            lower it). Its mint and freeze authorities are revoked, so no more can ever be minted
+            and no account can be frozen.
+          </li>
+          <li>
+            {migrated
+              ? 'While it traded on its bonding curve, every transfer ran a transfer-hook program. Meteora removed the hook when the curve graduated, so its transfers no longer run it.'
+              : 'While it trades on its bonding curve, every transfer runs a transfer-hook program, which its owner can upgrade. It only checks a launch whitelist that has already opened, and it takes no fee. Meteora removes the hook when the curve graduates.'}
+          </li>
+        </ul>
+        <h3>Fees</h3>
+        <ul>
+          <li>
+            2% of every buy and sell on its Meteora bonding curve, taken in SOL. Meteora keeps 20%
+            of that fee, the launch partner 8% and the creator 72%.
+          </li>
+          <li>
+            5% of every trade in its Meteora DAMM v2 pool, once the curve has graduated.{' '}
+            {migrated
+              ? 'It has: the curve filled and $QUANTP now trades in its DAMM v2 pool.'
+              : 'Graduation happens on its own when the curve fills.'}
+          </li>
+          <li>
+            The team says it pays the creator’s share out 60% to holders, in SOL, by each wallet’s
+            average balance over the time held, and 40% to buying back and burning $QUANTP. That is
+            a policy, not code: the payouts are made off-chain by the team. The figures Quant Pad
+            shows are what each side has earned so far, not what has been paid.
+          </li>
+          <li>
+            Any Quant Pad platform fee on trades made here is shown before you sign, as a separate
+            transfer.
+          </li>
+        </ul>
+        <h3>Buying on Quant Pad</h3>
+        <ol>
+          <li>Connect a Solana wallet.</li>
+          <li>
+            Open <Link to={QUANTP.path}>$QUANTP</Link>, or search “quantp”.
+          </li>
+          <li>
+            Enter an amount, check the fee and the minimum you receive, and approve in your wallet.
+            Quant Pad trades on the bonding curve before graduation and in the DAMM v2 pool after,
+            and switches on its own.
+          </li>
+        </ol>
+        {!migrated && (
+          <p>
+            Some aggregators, Jupiter among them, cannot trade it while its transfer hook is active.
+          </p>
+        )}
+        <h3>Risks</h3>
+        <ul>
+          <li>
+            Memecoins are extremely volatile and most lose all value. Nothing here is financial
+            advice.
+          </li>
+          <li>Quant Pad promotes its own token here, so it is not a neutral party.</li>
+          <li>Holder payouts and buybacks depend on the team doing what it says, off-chain.</li>
+          {!migrated && (
+            <li>
+              Until graduation the hook’s owner can change the transfer hook, which runs on every
+              transfer.
+            </li>
+          )}
         </ul>
       </article>
     </div>

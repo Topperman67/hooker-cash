@@ -10,9 +10,18 @@ import {
   useState,
 } from 'react'
 import { supportsWebGL, useInView, usePageVisible, useReducedMotion } from '../three/support.js'
+import { CopyButton } from './UI.jsx'
+import { bps, compact, short, sol } from '../lib/format.js'
+import { QUANTP } from '../../shared/network.mjs'
 
 // The live chart (three.js), fetched only when the card comes near and WebGL is there.
 const FlywheelScene = lazy(() => import('../three/FlywheelScene.jsx'))
+
+const EARNED_NOTE =
+  'The creator’s share of $QUANTP’s trading fees so far, split 60/40 by the team’s stated policy. The team pays it out off-chain.'
+const solText = (value) => (value == null ? '—' : sol(value, { digits: value < 10 ? 3 : 2 }))
+const burnedText = (raw) =>
+  raw == null || !Number.isFinite(Number(raw)) ? '—' : compact(Number(raw) / 10 ** QUANTP.decimals)
 
 /** A scene that throws (or fails to load) leaves the still in place. */
 class SceneGuard extends Component {
@@ -35,8 +44,20 @@ class SceneGuard extends Component {
 // loop. On wide cards everything is placed in container units over the 16:9 frame, so it matches
 // social/quantpad-flywheel.png; narrow cards stack the copy over a crop of the chart. Chart labels
 // sit in a box that always spans the full frame, so the same percentages place them in both
-// layouts. Memoised: the home page re-renders on every data poll, and this card takes no props.
-function Flywheel() {
+// layouts. Memoised: the home page re-renders on every data poll, and this card takes only
+// primitives.
+//
+// It is $QUANTP's flywheel, with the fee its pool really charges (feeBps from /api/quantp: 2% on
+// the bonding curve, 5% in the DAMM v2 pool after graduation). The 60/40 split is the team's
+// stated policy for the creator's share of that fee, paid out off-chain, so the live figures say
+// "earned", never "paid". Every figure is null while /api/quantp is loading or down.
+function Flywheel({
+  feeBps = null,
+  migrated = false,
+  holdersSol = null,
+  buybackSol = null,
+  burned = null,
+}) {
   const stage = useRef(null)
   const art = useRef(null)
   const frame = useRef(null)
@@ -70,25 +91,37 @@ function Flywheel() {
   const onReady = useCallback(() => setReady(true), [])
   const onFail = useCallback(() => setFailed(true), [])
 
+  const feeText = feeBps == null ? '' : bps(feeBps)
+  const feePhrase = feeBps == null ? 'a fee' : `a ${feeText} fee`
+  const lede =
+    feeBps == null
+      ? `2% of every $${QUANTP.symbol} trade on the curve, 5% after graduation. The team pays out the creator’s share:`
+      : migrated
+        ? `A ${feeText} fee on every $${QUANTP.symbol} trade in its DAMM v2 pool. The team pays out the creator’s share:`
+        : `A ${feeText} fee on every $${QUANTP.symbol} trade, ${bps(QUANTP.postGradFeeBps)} after graduation. The team pays out the creator’s share:`
+
   return (
     <div className="fw">
       <div className="fw-stage" ref={stage}>
         <div className="fw-copy">
-          <img className="fw-lockup" src="/brand/lockup-dark.svg" alt="Quant Pad" />
+          <p className="fw-kicker">
+            <img className="fw-lockup" src="/brand/lockup-dark.svg" alt="Quant Pad" />
+            <span className="fw-tag">${QUANTP.symbol}</span>
+          </p>
           <h2 className="fw-title">
             Every trade feeds <span className="fw-silver">the flywheel.</span>
           </h2>
-          <p className="fw-lede">
-            A 7% fee on every buy and sell, split two ways. Both work for the people holding the
-            coin.
-          </p>
+          <p className="fw-lede">{lede}</p>
           <div className="fw-rows">
             <div className="fw-row fw-holders" ref={rowHolders}>
               <i className="fw-row-glow" aria-hidden="true" />
               <div className="fw-pct">60%</div>
               <div>
-                <h3>Paid to holders</h3>
-                <p>In SOL, by each wallet’s average balance since the last payout.</p>
+                <h3>To holders</h3>
+                <p>In SOL, by each wallet’s average balance over time held.</p>
+                <p className="fw-earned" title={EARNED_NOTE}>
+                  <b>{solText(holdersSol)}</b> earned so far
+                </p>
               </div>
             </div>
             <div className="fw-row fw-burn" ref={rowBurn}>
@@ -96,7 +129,10 @@ function Flywheel() {
               <div className="fw-pct">40%</div>
               <div>
                 <h3>Buyback &amp; burn</h3>
-                <p>Buys the token on the market and burns it. Supply only shrinks.</p>
+                <p>Buys ${QUANTP.symbol} on the market and burns it.</p>
+                <p className="fw-earned" title={EARNED_NOTE}>
+                  <b>{solText(buybackSol)}</b> earned · <b>{burnedText(burned)}</b> burned
+                </p>
               </div>
             </div>
           </div>
@@ -104,13 +140,13 @@ function Flywheel() {
             className="fw-loop"
             ref={loop}
             role="img"
-            aria-label="Trades, then a 7% fee, then holders paid and supply burned, repeating"
+            aria-label={`Trades, then ${feePhrase}, then holders earn SOL and supply is burned, repeating`}
           >
             <span className="fw-step-trades">Trades</span>
             <i>→</i>
-            <span className="fw-step-fee">7% fee</span>
+            <span className="fw-step-fee">{feeBps == null ? 'Fee' : `${feeText} fee`}</span>
             <i>→</i>
-            <span className="fw-step-holders">Holders paid</span>
+            <span className="fw-step-holders">Holders earn</span>
             <i>+</i>
             <span className="fw-step-burn">Supply burned</span>
             <i className="fw-step-turn">↻</i>
@@ -121,7 +157,7 @@ function Flywheel() {
           className="fw-art"
           ref={art}
           role="img"
-          aria-label="Chart: a 7% fee on every trade, 60% paid to holders and 40% to buyback and burn"
+          aria-label={`Chart: ${feePhrase} on every $${QUANTP.symbol} trade; the creator’s share goes 60% to holders and 40% to buyback and burn`}
           data-live={run && ready ? '' : undefined}
         >
           <div className="fw-canvas" ref={frame} aria-hidden="true">
@@ -150,7 +186,7 @@ function Flywheel() {
             )}
             <div className="fw-fee" ref={fee}>
               <i className="fw-fee-glow" />
-              <b>7%</b>
+              <b>{feeBps == null ? '—' : feeText}</b>
               <span>of every buy and sell</span>
             </div>
             <div className="fw-chip fw-chip-burn" ref={burn}>
@@ -164,7 +200,10 @@ function Flywheel() {
 
         <div className="fw-url">
           <i />
-          quantpad.company
+          <span>
+            ${QUANTP.symbol} · <span className="fw-url-ca">{short(QUANTP.mint, 6, 6)}</span>
+          </span>
+          <CopyButton value={QUANTP.mint} label={`Copy the ${QUANTP.symbol} contract address`} />
         </div>
       </div>
     </div>

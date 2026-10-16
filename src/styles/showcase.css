@@ -1,2 +1,758 @@
 /* $QUANTP across the site: the home showcase, tape pin, header pill, footer row and the other
    token surfaces. Night rules for these live here too, scoped to :root[data-theme='dark']. */
+
+/* ---------- home showcase (components/QuantpShowcase.jsx) ---------- */
+/* A graphite instrument (it holds a token people trade) with the chrome Q, the contract and the
+   live readout. Four hairline light lines rake across its top-right corner, as on the mark. */
+.qps {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+  gap: 40px;
+  padding: 32px;
+  border-radius: 24px;
+}
+.qps-lines {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--lines-thin);
+  background-size: 150% 100%;
+  background-position: 92% 0;
+  opacity: 0.5;
+  -webkit-mask-image: radial-gradient(70% 90% at 100% 0%, #000 10%, transparent 62%);
+  mask-image: radial-gradient(70% 90% at 100% 0%, #000 10%, transparent 62%);
+}
+.qps-id {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.qps-head {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  min-width: 0;
+}
+/* the chrome Q in a black-anodised tile with a lit top rim */
+.qps-mark {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 76px;
+  height: 76px;
+  border-radius: 22px;
+  background:
+    radial-gradient(90% 70% at 30% 0%, rgba(255, 255, 255, 0.16), transparent 60%),
+    linear-gradient(180deg, #3a414d, #12151a);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.28),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.5),
+    0 10px 24px rgba(0, 0, 0, 0.35);
+}
+.qps-mark img {
+  width: 74%;
+  height: 74%;
+  filter: drop-shadow(0 3px 6px rgba(0, 0, 0, 0.45));
+}
+.qps-names {
+  min-width: 0;
+}
+.qps-eyebrow {
+  margin: 0 0 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--t-xs);
+  font-weight: 650;
+  color: var(--on-graphite-2);
+}
+.qps-eyebrow::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 8px var(--green);
+}
+.qps-title {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 14px;
+  font-family: var(--font-display);
+  font-weight: 900;
+  font-size: clamp(28px, 3.4vw, 44px);
+  line-height: 1.02;
+  letter-spacing: -0.015em;
+}
+.qps-name {
+  color: #fff;
+  font-stretch: 112%;
+}
+.qps-ticker {
+  font-stretch: 125%;
+}
+.qps-ca {
+  margin-top: 24px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 12px;
+  font-size: var(--t-sm);
+}
+.qps-ca-label,
+.qps-label {
+  font-size: var(--t-xs);
+  font-weight: 600;
+  color: var(--on-graphite-2);
+}
+.qps-ca .address {
+  font-size: var(--t-sm);
+  padding: 5px 8px 5px 12px;
+  border-radius: var(--r-pill);
+  background: rgba(0, 0, 0, 0.28);
+  box-shadow:
+    inset 0 1px 2px rgba(0, 0, 0, 0.45),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.06);
+}
+.qps-ca .address a {
+  color: var(--on-graphite);
+  text-decoration: none;
+}
+.qps-ca .address a:hover {
+  text-decoration: underline;
+}
+.qps-actions {
+  margin-top: 22px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.qps-actions .btn svg {
+  margin-left: -2px;
+}
+.qps-note {
+  margin: auto 0 0;
+  padding-top: 22px;
+  max-width: 54ch;
+  font-size: var(--t-xs);
+  line-height: 1.55;
+  color: var(--on-graphite-2);
+}
+
+.qps-read {
+  display: grid;
+  gap: 18px;
+  align-content: start;
+  min-width: 0;
+  padding-left: 36px;
+  border-left: 1px solid rgba(255, 255, 255, 0.08);
+}
+.qps-label {
+  display: block;
+  margin-bottom: 4px;
+}
+.qps-price {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+.qps-price-value {
+  display: block;
+  font-size: clamp(30px, 3.2vw, 42px);
+  font-weight: 600;
+  line-height: 1.1;
+  color: #fff;
+  white-space: nowrap;
+}
+.qps-change {
+  text-align: right;
+}
+.qps-change strong {
+  display: block;
+  font-size: var(--t-xl);
+  font-weight: 600;
+  line-height: 1.2;
+  color: var(--on-graphite);
+}
+.qps .up {
+  color: var(--buy-bright);
+}
+.qps .down {
+  color: var(--sell-bright);
+}
+.qps-stats {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px 16px;
+  padding: 16px 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.qps-stats dt {
+  font-size: var(--t-xs);
+  font-weight: 600;
+  color: var(--on-graphite-2);
+}
+.qps-stats dd {
+  margin: 2px 0 0;
+  font-weight: 600;
+  font-size: var(--t-md);
+  color: var(--on-graphite);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.qps-bottom {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 28px;
+  align-items: start;
+}
+.qps-curve-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+  font-size: var(--t-xs);
+  font-weight: 600;
+  color: var(--on-graphite-2);
+}
+.qps-curve-head .num {
+  font-size: 0.8125rem;
+  color: var(--on-graphite);
+}
+.qps-curve-track {
+  height: 10px;
+  border-radius: var(--r-pill);
+  overflow: hidden;
+  background: rgba(0, 0, 0, 0.32);
+  box-shadow:
+    inset 0 1px 2px rgba(0, 0, 0, 0.55),
+    inset 0 -1px 0 rgba(255, 255, 255, 0.06);
+}
+.qps-curve-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--cobalt-anodised);
+  box-shadow: 0 0 12px rgba(46, 75, 255, 0.55);
+  transition: width 0.6s ease;
+}
+.qps-curve.is-done .qps-curve-fill {
+  background: linear-gradient(180deg, #3fe193, #12c26e 55%, #0a9a55);
+  box-shadow: 0 0 12px rgba(18, 194, 110, 0.5);
+}
+.qps-curve-note {
+  margin: 8px 0 0;
+  font-size: var(--t-xs);
+  line-height: 1.45;
+  color: var(--on-graphite-2);
+}
+.qps-fee {
+  display: grid;
+  justify-items: end;
+  text-align: right;
+}
+.qps-fee strong {
+  font-size: var(--t-xl);
+  font-weight: 600;
+  line-height: 1.1;
+  color: #fff;
+}
+.qps-fee-note {
+  margin-top: 4px;
+  max-width: 20ch;
+  font-size: var(--t-xs);
+  line-height: 1.4;
+  color: var(--on-graphite-2);
+}
+.qps-status {
+  margin: 0;
+  font-size: var(--t-xs);
+  color: var(--on-graphite-2);
+}
+
+/* stacked: identity, contract and buttons, then the readout, and the disclosure closes the card */
+@media (max-width: 960px) {
+  .qps {
+    display: flex;
+    flex-direction: column;
+    gap: 22px;
+    padding: 28px;
+  }
+  .qps-id {
+    display: contents;
+  }
+  .qps-ca,
+  .qps-actions {
+    margin-top: 0;
+  }
+  .qps-read {
+    order: 1;
+    padding: 24px 0 0;
+    border-left: 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  .qps-note {
+    order: 2;
+    margin: 0;
+    padding: 0;
+  }
+}
+@media (max-width: 560px) {
+  /* the lines stay in the corner, clear of the title */
+  .qps-lines {
+    -webkit-mask-image: radial-gradient(40% 22% at 100% 0%, #000 10%, transparent 80%);
+    mask-image: radial-gradient(40% 22% at 100% 0%, #000 10%, transparent 80%);
+  }
+  .qps {
+    padding: 22px 18px;
+    border-radius: 20px;
+    gap: 20px;
+  }
+  .qps-head {
+    gap: 14px;
+  }
+  .qps-mark {
+    width: 60px;
+    height: 60px;
+    border-radius: 18px;
+  }
+  .qps-title {
+    font-size: 30px;
+  }
+  .qps-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .qps-bottom {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 18px;
+  }
+  .qps-fee {
+    justify-items: start;
+    text-align: left;
+  }
+  .qps-fee-note {
+    max-width: none;
+  }
+  .qps-actions .btn {
+    flex: 1 1 auto;
+  }
+}
+@media (max-width: 374px) {
+  .qps-title {
+    font-size: 26px;
+  }
+  .qps-price-value {
+    font-size: 26px;
+  }
+}
+
+/* ---------- market: the pinned $QUANTP strip (pages/MarketPage.jsx) ---------- */
+.qp-feature {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px 28px;
+  margin-bottom: 20px;
+  padding: 16px 20px;
+  text-decoration: none;
+  transition: border-color 0.15s;
+}
+.qp-feature::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--lines-thin);
+  background-size: 160% 100%;
+  background-position: 100% 0;
+  opacity: 0.4;
+  -webkit-mask-image: linear-gradient(90deg, transparent 55%, #000);
+  mask-image: linear-gradient(90deg, transparent 55%, #000);
+}
+.qp-feature:hover {
+  border-color: rgba(255, 255, 255, 0.3);
+}
+.qp-feature-id {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.qps-mark.qp-feature-mark {
+  width: 52px;
+  height: 52px;
+  border-radius: 15px;
+}
+.qp-feature-names {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.qp-feature-names strong {
+  font-family: var(--font-display);
+  font-stretch: 108%;
+  font-size: var(--t-md);
+  color: #fff;
+}
+.qp-feature-sub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+.qp-feature-ticker {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-stretch: 125%;
+}
+.qp-feature-stats {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 26px;
+  min-width: 0;
+}
+.qp-feature-stats dt {
+  font-size: var(--t-xs);
+  color: var(--on-graphite-2);
+}
+.qp-feature-stats dd {
+  margin: 0;
+  font-weight: 650;
+  font-size: var(--t-sm);
+  white-space: nowrap;
+  color: var(--on-graphite);
+}
+.qp-feature .up {
+  color: var(--buy-bright);
+}
+.qp-feature .down {
+  color: var(--sell-bright);
+}
+.qp-feature-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 36px;
+  padding: 0 14px 0 16px;
+  border-radius: var(--r-pill);
+  background: var(--cobalt-anodised);
+  box-shadow:
+    inset 1px 1px 0 rgba(255, 255, 255, 0.45),
+    0 6px 18px rgba(46, 75, 255, 0.35);
+  color: #fff;
+  font-weight: 650;
+  font-size: var(--t-sm);
+  white-space: nowrap;
+}
+.qp-feature-note {
+  grid-column: 1 / -1;
+  font-size: var(--t-xs);
+  color: var(--on-graphite-2);
+}
+@media (max-width: 960px) {
+  .qp-feature {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .qp-feature-stats {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (max-width: 420px) {
+  .qp-feature {
+    padding: 14px 16px;
+    column-gap: 12px;
+  }
+  .qp-feature-cta {
+    padding: 0 12px;
+  }
+}
+
+/* ---------- the live tape's $QUANTP pin (components/Tape.jsx) ---------- */
+/* Fixed at the tape's left end at every width, with the running coins clipped beside it. */
+.qp-pin {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 100%;
+  padding: 0 14px 0 var(--gutter);
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
+  color: var(--on-graphite);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.qp-pin:hover strong {
+  text-decoration: underline;
+}
+.qp-pin img {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+.qp-pin strong {
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+/* the price keeps its width while it loads, so the pin does not grow under the pointer */
+.qp-pin-price {
+  min-width: 5.5ch;
+}
+.qp-pin-extra {
+  display: none;
+  align-items: center;
+  gap: 14px;
+  padding-left: 6px;
+  color: var(--on-graphite-2);
+}
+.qp-pin-extra b {
+  font-weight: 600;
+  color: var(--on-graphite);
+}
+.qp-pin-go {
+  color: #a9b9ff;
+  font-weight: 600;
+}
+/* with no other coins to run (the market lists are down) the pin has the rail to itself */
+.tape-alone .qp-pin {
+  border-right: 0;
+}
+@media (min-width: 640px) {
+  .tape-alone .qp-pin-extra {
+    display: inline-flex;
+  }
+}
+@media (max-width: 374px) {
+  .qp-pin img {
+    display: none;
+  }
+  .qp-pin {
+    gap: 6px;
+    padding-right: 10px;
+  }
+}
+
+/* ---------- desktop header pill (components/Shell.jsx) ---------- */
+/* Only where the bar has room: from 1280px, beside the switch. Below that the tape under the
+   header carries $QUANTP, and the menu has its own row. */
+.qp-pill {
+  display: none;
+  align-items: center;
+  gap: 7px;
+  flex: none;
+  height: 32px;
+  padding: 0 11px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--line, rgba(127, 127, 127, 0.25));
+  color: var(--ink-2);
+  font-size: var(--t-xs);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.qp-pill:hover {
+  border-color: currentColor;
+}
+.qp-pill strong {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  color: var(--ink);
+}
+.qp-pill-change {
+  display: none;
+}
+@media (min-width: 1280px) {
+  .qp-pill {
+    display: inline-flex;
+  }
+}
+@media (min-width: 1320px) {
+  .qp-pill-change {
+    display: inline;
+  }
+}
+
+/* ---------- mobile menu row (components/Shell.jsx) ---------- */
+.mobile-nav a.qp-menu {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 2px 0 8px;
+  padding: 10px 10px 10px 12px;
+  border-radius: 16px;
+  background: var(--smoke-fill);
+  box-shadow: var(--smoke-shadow);
+  color: var(--on-graphite);
+  font-weight: 500;
+}
+.qp-menu img {
+  flex: none;
+  width: 24px;
+  height: 24px;
+}
+.qp-menu-id {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+}
+.qp-menu-id strong {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: var(--t-sm);
+}
+.qp-menu-id small {
+  font-size: var(--t-xs);
+  color: var(--on-graphite-2);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.qp-menu-price {
+  display: grid;
+  justify-items: end;
+  font-size: var(--t-xs);
+  white-space: nowrap;
+}
+.qp-menu .up {
+  color: var(--buy-bright);
+}
+.qp-menu .down {
+  color: var(--sell-bright);
+}
+.qp-menu-buy {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  padding: 0 14px;
+  border-radius: var(--r-pill);
+  background: var(--cobalt-anodised);
+  box-shadow: inset 1px 1px 0 rgba(255, 255, 255, 0.45);
+  color: #fff;
+  font-size: var(--t-sm);
+  font-weight: 650;
+}
+@media (max-width: 360px) {
+  .qp-menu-id small {
+    display: none;
+  }
+}
+
+/* ---------- footer row (components/Shell.jsx) ---------- */
+/* as wide as its first row; the note wraps to that width instead of stretching the box */
+.footer-token {
+  margin-top: 18px;
+  display: grid;
+  gap: 6px;
+  width: fit-content;
+  max-width: 100%;
+  padding: 10px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--on-graphite-2);
+}
+.footer-token-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+}
+.footer-token-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.footer-token-name img {
+  width: 18px;
+  height: 18px;
+}
+.footer-token-name strong {
+  font-family: var(--font-mono);
+  color: var(--on-graphite);
+}
+.footer-token .address a,
+.footer-token-links a {
+  color: var(--on-graphite);
+  text-decoration: none;
+}
+.footer-token .address a:hover,
+.footer-token-links a:hover {
+  text-decoration: underline;
+}
+.footer-token .copy {
+  color: var(--on-graphite-2);
+}
+.footer-token .copy:hover {
+  color: #fff;
+}
+.footer-token-links {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+}
+.footer .footer-token-note {
+  width: 0;
+  min-width: 100%;
+  max-width: none;
+  margin: 0;
+  font-size: var(--t-xs);
+}
+
+/* ---------- night studio ---------- */
+:root[data-theme='dark'] .qps,
+:root[data-theme='dark'] .qp-feature {
+  border-color: rgba(255, 255, 255, 0.2) rgba(255, 255, 255, 0.08) rgba(255, 255, 255, 0.05)
+    rgba(255, 255, 255, 0.15);
+}
+:root[data-theme='dark'] .qps-lines {
+  opacity: 0.38;
+}
+:root[data-theme='dark'] .qps-mark {
+  background:
+    radial-gradient(90% 70% at 30% 0%, rgba(255, 255, 255, 0.12), transparent 60%),
+    linear-gradient(180deg, #2c323d, #0b0d12);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.2),
+    0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 10px 24px rgba(0, 0, 0, 0.5);
+}
+:root[data-theme='dark'] .qp-feature:hover {
+  border-color: rgba(255, 255, 255, 0.3);
+  box-shadow:
+    var(--smoke-shadow),
+    0 0 0 1px rgba(143, 164, 255, 0.22),
+    0 0 32px rgba(46, 75, 255, 0.14);
+}
+:root[data-theme='dark'] .qp-pill {
+  border-color: rgba(255, 255, 255, 0.16);
+}
+:root[data-theme='dark'] .qp-pill:hover {
+  border-color: currentColor;
+}
+:root[data-theme='dark'] .mobile-nav a.qp-menu {
+  box-shadow:
+    var(--smoke-shadow),
+    0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .qps-curve-fill {
+    transition: none;
+  }
+}

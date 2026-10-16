@@ -9,15 +9,21 @@ import Glass from '../components/Glass.jsx'
 import { compact, sol, usd } from '../lib/format.js'
 import { MeteoraMark } from '../components/Meteora.jsx'
 import Flywheel from '../components/Flywheel.jsx'
+import QuantpShowcase from '../components/QuantpShowcase.jsx'
+import { useQuantp } from '../context/QuantpContext.jsx'
 import { DOCS_URL } from '../lib/links.js'
+import { QUANTP } from '../../shared/network.mjs'
 
 export default function HomePage() {
   const latest = useResource('/api/market?sort=newest', 15000)
   const trending = useResource('/api/market?sort=trending', 20000)
   const stats = useResource('/api/stats', 30000)
   const { solUsd, quantum } = usePlatform()
+  const qp = useQuantp().data
   const s = stats.data
-  const newest = latest.data?.items?.[0]
+  // The hero's fee pill names the newest coin as one whose creator fee Quantum Hooks route, so it
+  // never names $QUANTP (launched via Midas, no hooks).
+  const newest = latest.data?.items?.find((c) => c.mint !== QUANTP.mint)
 
   return (
     <>
@@ -74,6 +80,22 @@ export default function HomePage() {
         </div>
       </section>
 
+      {/* $QUANTP, Quant Pad's own token, then its fee flywheel. Both read /api/quantp (no store),
+          so they still show while the market lists are down. The flywheel takes primitives only,
+          so its memo skips the home page's other polls. */}
+      <section className="wrap section qps-section">
+        <QuantpShowcase />
+      </section>
+      <section className="wrap section">
+        <Flywheel
+          feeBps={qp?.feeBps ?? null}
+          migrated={!!qp?.migrated}
+          holdersSol={qp?.fees?.holdersSol ?? null}
+          buybackSol={qp?.fees?.buybackSol ?? null}
+          burned={qp?.burned ?? null}
+        />
+      </section>
+
       <section className="wrap section">
         <div className="section-head">
           <h2>Trending now</h2>
@@ -102,10 +124,6 @@ export default function HomePage() {
             Coins launched through Quant Pad appear here as soon as their launch confirms.
           </Empty>
         )}
-      </section>
-
-      <section className="wrap section">
-        <Flywheel />
       </section>
 
       {latest.data?.items?.length > 0 && (

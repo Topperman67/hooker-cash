@@ -59,10 +59,29 @@
   top: 8.25cqw;
   width: 31.25cqw;
 }
+/* the Quant Pad lockup with the token's ticker: this is $QUANTP's flywheel */
+.fw-kicker {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.75cqw;
+}
 .fw-lockup {
   display: block;
   height: 1.625cqw;
   filter: drop-shadow(0 4px 10px rgba(2, 6, 40, 0.5));
+}
+.fw-tag {
+  padding: 0.25cqw 0.625cqw;
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: max(11px, 0.8125cqw);
+  line-height: 1.2;
+  letter-spacing: 0.02em;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.12);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3);
 }
 .fw-title {
   margin: 1.875cqw 0 0;
@@ -157,6 +176,18 @@
   line-height: 1.4;
   color: var(--fw-muted);
 }
+/* the live figure under each row's policy line (from /api/quantp): earned so far, never "paid" */
+.fw-row p.fw-earned {
+  margin-top: 0.4375cqw;
+  font-family: var(--font-mono);
+  font-size: max(11px, 0.78cqw);
+  letter-spacing: 0;
+  color: var(--fw-text);
+}
+.fw-earned b {
+  font-weight: 600;
+  color: #fff;
+}
 .fw-loop {
   margin-top: 1.75cqw;
   display: flex;
@@ -244,11 +275,26 @@
   z-index: 1;
   left: 5.75cqw;
   bottom: 3.375cqw;
+  display: flex;
+  align-items: center;
   font-family: var(--font-mono);
   font-weight: 500;
   font-size: max(12px, 0.9375cqw);
   letter-spacing: 0.02em;
   color: #c9d3ff;
+}
+.fw-url-ca {
+  color: #fff;
+}
+/* the contract's copy button, lit like the pill text on the cobalt stage */
+.fw-url .copy {
+  margin-left: 0.5em;
+  color: #c9d3ff;
+  border-radius: 6px;
+}
+.fw-url .copy:hover,
+.fw-url .copy:focus-visible {
+  color: #fff;
 }
 .fw-url i {
   display: inline-block;
@@ -376,6 +422,12 @@
   .fw-lockup {
     height: 22px;
   }
+  .fw-kicker {
+    gap: 10px;
+  }
+  .fw-tag {
+    padding: 3px 9px;
+  }
   .fw-title {
     margin-top: 18px;
     font-size: clamp(30px, 9cqw, 42px);
@@ -469,6 +521,10 @@
     position: static;
     padding: 0 20px 24px;
     font-size: 12px;
+  }
+  .fw-row p.fw-earned {
+    margin-top: 4px;
+    font-size: 11.5px;
   }
 }
 

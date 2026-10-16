@@ -5,10 +5,11 @@ import { useWallet } from '../context/WalletContext.jsx'
 import { usePlatform } from '../context/PlatformContext.jsx'
 import { CoinTable } from '../components/CoinList.jsx'
 import { CoinAvatar, Empty, Spinner } from '../components/UI.jsx'
+import { useQuantpFigures } from '../components/QuantpShowcase.jsx'
 import { api, useResource } from '../lib/api.js'
 import { connection } from '../lib/solana.js'
 import { formatUnits, sol, toSol, usd } from '../lib/format.js'
-import { network } from '../../shared/network.mjs'
+import { network, QUANTP } from '../../shared/network.mjs'
 
 async function holdings(owner) {
   const programs = [network.tokenProgram, network.token2022Program]
@@ -32,24 +33,40 @@ async function holdings(owner) {
 export default function PortfolioPage() {
   const { connected, address, balance, openDialog } = useWallet()
   const { solUsd } = usePlatform()
+  const { f: qp } = useQuantpFigures()
+  const [held, setHeld] = useState(null)
   const [rows, setRows] = useState(null)
   const [error, setError] = useState('')
+  const [unpriced, setUnpriced] = useState(false)
   const launches = useResource(
     address ? `/api/market?launcher=${address}&filter=all&sort=newest` : null,
     30000,
   )
 
   useEffect(() => {
-    if (!address) return setRows(null)
+    setHeld(null)
+    setRows(null)
+    setError('')
+    setUnpriced(false)
+    if (!address) return
     let live = true
     ;(async () => {
       try {
         const held = await holdings(address)
-        const mints = [...held.keys()]
-        const known = mints.length
-          ? (await api(`/api/coins?mints=${mints.slice(0, 100).join(',')}`)).items
-          : []
+        if (live) setHeld(held)
+        // $QUANTP is priced from /api/quantp (below); every other coin from the indexer. A store
+        // outage only costs those other rows, never the $QUANTP one.
+        const mints = [...held.keys()].filter((m) => m !== QUANTP.mint)
+        let known = []
+        try {
+          known = mints.length
+            ? (await api(`/api/coins?mints=${mints.slice(0, 100).join(',')}`)).items
+            : []
+        } catch {
+          if (live) setUnpriced(true)
+        }
         const rows = known
+          .filter((c) => c.mint !== QUANTP.mint)
           .map((c) => ({
             ...c,
             held: held.get(c.mint),
@@ -65,6 +82,17 @@ export default function PortfolioPage() {
       live = false
     }
   }, [address])
+
+  // The wallet's $QUANTP (a Token-2022 account, read with the rest) at the live price, pinned first.
+  const quantpHeld = held?.get(QUANTP.mint) || 0n
+  const quantpRow =
+    rows && quantpHeld > 0n
+      ? {
+          held: quantpHeld,
+          value:
+            qp.priceSol != null ? (Number(quantpHeld) / 10 ** QUANTP.decimals) * qp.priceSol : null,
+        }
+      : null
 
   if (!connected)
     return (
@@ -83,7 +111,7 @@ export default function PortfolioPage() {
       </div>
     )
 
-  const total = rows?.reduce((s, r) => s + (r.value || 0), 0) || 0
+  const total = (rows?.reduce((s, r) => s + (r.value || 0), 0) || 0) + (quantpRow?.value || 0)
   return (
     <div className="wrap portfolio">
       <header className="page-head">
@@ -107,7 +135,7 @@ export default function PortfolioPage() {
           <p className="error-text">{error}</p>
         ) : !rows ? (
           <Spinner block label="Reading your token accounts" />
-        ) : rows.length ? (
+        ) : rows.length || quantpRow ? (
           <div className="panel" style={{ padding: 0 }}>
             <div className="table-wrap">
               <table className="table">
@@ -119,6 +147,27 @@ export default function PortfolioPage() {
                   </tr>
                 </thead>
                 <tbody>
+                  {quantpRow && (
+                    <tr>
+                      <td>
+                        <Link to={QUANTP.path} className="coin-cell">
+                          <CoinAvatar src="/brand/mark.svg" symbol={QUANTP.symbol} size={28} />
+                          <strong>{QUANTP.symbol}</strong>
+                          <span className="chip">Quant Pad’s own token</span>
+                        </Link>
+                      </td>
+                      <td className="right num">
+                        {formatUnits(quantpRow.held, QUANTP.decimals, 0)}
+                      </td>
+                      <td className="right num">
+                        {quantpRow.value == null
+                          ? '—'
+                          : solUsd
+                            ? usd(quantpRow.value * solUsd)
+                            : sol(quantpRow.value)}
+                      </td>
+                    </tr>
+                  )}
                   {rows.map((r) => (
                     <tr key={r.mint}>
                       <td>
@@ -139,7 +188,16 @@ export default function PortfolioPage() {
             </div>
           </div>
         ) : (
-          <p className="muted">You don't hold any coins tracked by Quant Pad.</p>
+          <p className="muted">
+            {unpriced
+              ? 'Your other coins could not be priced right now. Try again in a minute.'
+              : "You don't hold any coins tracked by Quant Pad."}
+          </p>
+        )}
+        {unpriced && (rows?.length > 0 || quantpRow) && (
+          <p className="muted" style={{ marginTop: 10 }}>
+            Some coins could not be priced right now. Try again in a minute.
+          </p>
         )}
       </section>
 

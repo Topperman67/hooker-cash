@@ -11,8 +11,11 @@ import ThemeToggle from './ThemeToggle.jsx'
 import WalletDialog from './WalletDialog.jsx'
 import { useWallet } from '../context/WalletContext.jsx'
 import { usePlatform } from '../context/PlatformContext.jsx'
-import { short, sol, toSol, usd } from '../lib/format.js'
+import { Address } from './UI.jsx'
+import { changeClass, QuantpPrice, useQuantpFigures } from './QuantpShowcase.jsx'
+import { pct, short, sol, toSol, usd } from '../lib/format.js'
 import { DOCS_URL } from '../lib/links.js'
+import { explorer, QUANTP } from '../../shared/network.mjs'
 
 const LINKS = [
   ['/launch', 'Launch'],
@@ -49,6 +52,71 @@ function WalletButton() {
         {balance == null ? short(address) : sol(toSol(balance), { digits: 3 })}
       </span>
     </button>
+  )
+}
+
+// $QUANTP, Quant Pad's own token, in the bar: price (and 24h change where it fits). Desktop only
+// (showcase.css); the tape under the header carries it at every width.
+function QuantpPill() {
+  const { q, f } = useQuantpFigures()
+  return (
+    <Link to={q.path} className="qp-pill" title={`${q.name}: Quant Pad’s own token`}>
+      <strong>${q.symbol}</strong>
+      <span className="num">
+        <QuantpPrice f={f} />
+      </span>
+      <span className={`num qp-pill-change ${changeClass(f.change)}`}>{pct(f.change)}</span>
+    </Link>
+  )
+}
+
+// The menu's $QUANTP row, under its search: one link to the token page.
+function QuantpMenuRow() {
+  const { q, f } = useQuantpFigures()
+  return (
+    <Link to={q.path} className="qp-menu">
+      <img src="/brand/mark-small-dark.svg" alt="" width="24" height="24" />
+      <span className="qp-menu-id">
+        <strong>${q.symbol}</strong>
+        <small>Quant Pad’s own token</small>
+      </span>
+      <span className="qp-menu-price num">
+        <span>
+          <QuantpPrice f={f} />
+        </span>
+        <span className={changeClass(f.change)}>{pct(f.change)}</span>
+      </span>
+      <span className="qp-menu-buy">Buy</span>
+    </Link>
+  )
+}
+
+// The footer's $QUANTP row: the contract with a copy button, and where to trade and track it.
+function QuantpFooter() {
+  const { q } = useQuantpFigures()
+  return (
+    <div className="footer-token">
+      <div className="footer-token-row">
+        <span className="footer-token-name">
+          <img src="/brand/mark-small-dark.svg" alt="" width="18" height="18" />
+          <strong>${q.symbol}</strong>
+          <span>Quant Pad’s own token</span>
+        </span>
+        <Address value={q.mint} head={6} tail={6} href={explorer.token(q.mint)} />
+        <span className="footer-token-links">
+          <Link to={q.path}>Trade</Link>
+          <a href={q.dexscreener} target="_blank" rel="noreferrer">
+            Chart
+          </a>
+          <a href={explorer.token(q.mint)} target="_blank" rel="noreferrer">
+            Solscan
+          </a>
+        </span>
+      </div>
+      <p className="footer-token-note">
+        Quant Pad’s own token. The team pays out its fee split; nothing on-chain enforces it.
+      </p>
+    </div>
   )
 }
 
@@ -90,6 +158,7 @@ export default function Shell({ children }) {
                 rel="noreferrer"
                 className="built-on built-on-top"
                 title="Coins launch and trade on Meteora"
+                aria-label="Built on Meteora"
               >
                 <MeteoraMark size={16} /> <span>Built on Meteora</span>
               </a>
@@ -103,6 +172,7 @@ export default function Shell({ children }) {
               </nav>
               <SearchBox />
               <div className="topbar-actions">
+                <QuantpPill />
                 <ThemeToggle />
                 <WalletButton />
                 <button
@@ -119,6 +189,7 @@ export default function Shell({ children }) {
             </div>
             <nav id="mobile-nav" className="mobile-nav" hidden={!menu} aria-label="Main">
               <SearchBox onDone={() => setMenu(false)} />
+              <QuantpMenuRow />
               {LINKS.map(([to, label]) => (
                 <NavLink key={to} to={to}>
                   {label}
@@ -141,8 +212,10 @@ export default function Shell({ children }) {
               financial advice.
               {solUsd ? <span className="num"> SOL {usd(solUsd)}.</span> : null}
             </p>
+            <QuantpFooter />
           </div>
           <div className="footer-links">
+            <Link to={QUANTP.path}>${QUANTP.symbol}</Link>
             <Link to="/hooks">Quantum Hooks</Link>
             <a href={DOCS_URL} target="_blank" rel="noreferrer">
               Docs

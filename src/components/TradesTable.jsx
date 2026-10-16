@@ -5,9 +5,24 @@ import { ago, formatUnits, short, sol, toSol } from '../lib/format.js'
 import { explorer } from '../../shared/network.mjs'
 import Price from './Price.js'
 
-export default function TradesTable({ mint, symbol, launcher, decimals }) {
+/** Credit for market data served from GeckoTerminal's public API (its terms ask for one). */
+export function DataCredit() {
+  return (
+    <p className="data-credit">
+      Data:{' '}
+      <a href="https://www.geckoterminal.com/" target="_blank" rel="noreferrer">
+        GeckoTerminal
+      </a>
+    </p>
+  )
+}
+
+// `tradesPath` reads the trades from another route of the same shape (the $QUANTP page's
+// /api/quantp/trades); a response with `source: 'geckoterminal'` credits GeckoTerminal.
+export default function TradesTable({ mint, symbol, launcher, decimals, tradesPath }) {
   const [side, setSide] = useState('')
-  const trades = useResource(`/api/coins/${mint}/trades${side ? `?side=${side}` : ''}`, 8000)
+  const path = tradesPath || `/api/coins/${mint}/trades`
+  const trades = useResource(`${path}${side ? `?side=${side}` : ''}`, 8000)
   const items = trades.data?.items || []
   return (
     <section className="instrument" aria-labelledby="trades-title" style={{ padding: 0 }}>
@@ -90,6 +105,7 @@ export default function TradesTable({ mint, symbol, launcher, decimals }) {
               'No trades indexed yet. They appear within a few seconds of confirming.'}
         </p>
       )}
+      {trades.data?.source === 'geckoterminal' && <DataCredit />}
     </section>
   )
 }

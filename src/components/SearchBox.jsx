@@ -1,7 +1,8 @@
 import { useId, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Search } from 'lucide-react'
-import { isAddress } from '../../shared/network.mjs'
+import { isAddress, QUANTP } from '../../shared/network.mjs'
+import { isQuantpQuery } from './QuantpShowcase.jsx'
 
 // The header's coin search. The shell renders it twice (in the header and in the mobile menu, one
 // of them shown at a time), so each copy gets its own input id for its label. "Site search" tells
@@ -19,7 +20,13 @@ export default function SearchBox({ onDone }) {
         e.preventDefault()
         const value = q.trim()
         if (!value) return
-        navigate(isAddress(value) ? `/coin/${value}` : `/market?q=${encodeURIComponent(value)}`)
+        navigate(
+          isQuantpQuery(value)
+            ? QUANTP.path
+            : isAddress(value)
+              ? `/coin/${value}`
+              : `/market?q=${encodeURIComponent(value)}`,
+        )
         setQ('')
         onDone?.()
       }}
