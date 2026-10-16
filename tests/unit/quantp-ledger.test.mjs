@@ -3,8 +3,9 @@
 // burn counted as its buyback (the launch dev buy aside), the payout wallet's balance. The payouts
 // are mainnet transactions of round 1 (tests/fixtures/quantp-ledger.json, read with
 // getTransaction in jsonParsed encoding, logs dropped): two of its three batches from the payout
-// wallet and the creator wallet's transfer that funded it. No burn has happened yet, so burns are
-// built in the same shape.
+// wallet, the creator wallet's transfer that funded it, the payout wallet's first two buybacks, and
+// a version 1 dust transaction a stranger sent it. No burn has happened yet, so burns are built in
+// the same shape.
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
@@ -378,7 +379,7 @@ test('payouts come in bursts: transactions sent together are one, newest first',
 
 /** A connection answering the two wallets' histories (newest first) and their transactions. */
 function historyConnection(histories, transactions, lamports = 1_580_000_000) {
-  const calls = { signatures: [], transactions: [], balances: 0 }
+  const calls = { signatures: [], transactions: [], options: [], balances: 0 }
   return {
     calls,
     histories,
@@ -397,8 +398,9 @@ function historyConnection(histories, transactions, lamports = 1_580_000_000) {
       if (before) list = list.slice(list.findIndex((s) => s.signature === before) + 1)
       return list.slice(0, limit)
     },
-    async getParsedTransaction(signature) {
+    async getParsedTransaction(signature, options) {
       calls.transactions.push(signature)
+      calls.options.push(options)
       const t = transactions[signature]
       if (t instanceof Error) throw t
       return t ?? null
@@ -547,4 +549,57 @@ test('GET /api/quantp/ledger answers from the chain while Redis refuses every co
     await new Promise((r) => server.close(r))
     app.close()
   }
+})
+
+// ---- the team's real buybacks, and dust sent to its wallets -------------------------------------
+
+test('the payout wallet’s two buybacks are read from the chain; the dust sent to it is nothing', () => {
+  // two aggregator buys into the DAMM v2 pool on 2026-10-16, fee and kept rent aside
+  assert.deepEqual(
+    [REAL.buy1, REAL.buy2].map((t) =>
+      ledgerEntries(t).map((e) => [e.kind, e.wallet, e.lamports, e.amount]),
+    ),
+    [
+      [['buy', PAYOUT, 320_013_872n, 1_432_024_251_739n]],
+      [['buy', PAYOUT, 232_546_000n, 1_638_943_246_349n]],
+    ],
+  )
+  // a version 1 transaction from a stranger, 1 lamport to each of 62 wallets (address poisoning)
+  assert.equal(REAL.dust.version, 1)
+  assert.equal(REAL.dust.transaction.message.instructions.length, 62)
+  assert.deepEqual(ledgerEntries(REAL.dust), [])
+  // together: what the payout wallet bought and holds, not burned yet
+  const ledger = quantpLedger(Object.values(REAL).flatMap((t) => ledgerEntries(t)))
+  assert.deepEqual(ledger.totals.unburned, { lamports: '552559872', amount: '3070967498088' })
+  assert.equal(ledger.payouts.length, 1)
+})
+
+test('a transaction the node refuses is left for the next refresh and counted; the rest still list', async () => {
+  const clock = { t: 9_000_000 }
+  const s = (t) => t.transaction.signatures[0]
+  const txs = {
+    [s(REAL.dust)]: Error('Transaction version (1) is not supported by the requesting client.'),
+    [s(REAL.payout3)]: REAL.payout3,
+    [s(REAL.payout1)]: REAL.payout1,
+  }
+  const connection = historyConnection(
+    { [PAYOUT]: [listing(REAL.dust), listing(REAL.payout3), listing(REAL.payout1)], [CREATOR]: [] },
+    txs,
+  )
+  const ledger = createQuantpLedger({ connection, now: () => clock.t, ttl: 60_000 })
+  const first = await ledger.ledger()
+  assert.equal(first.state, 'ok')
+  assert.equal(first.unread, 1)
+  assert.equal(first.payouts.length, 1)
+  assert.equal(first.totals.paidLamports, '373256401')
+  // every read asks for the newest transaction version
+  assert.ok(connection.calls.options.every((o) => o.maxSupportedTransactionVersion === 1))
+
+  // next refresh: only the one left is read again
+  clock.t += 61_000
+  txs[s(REAL.dust)] = REAL.dust
+  const second = await ledger.ledger()
+  assert.equal(second.unread, 0)
+  assert.deepEqual(connection.calls.transactions.slice(3), [s(REAL.dust)])
+  assert.equal(second.payouts.length, 1)
 })

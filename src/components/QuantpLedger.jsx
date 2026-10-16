@@ -250,6 +250,13 @@ export default function QuantpLedger({ symbol, decimals, fees, burned }) {
         />
       </div>
       {body}
+      {d?.unread > 0 && (
+        <p className="faint qp-fine">
+          {d.unread === 1 ? '1 transaction' : `${d.unread} transactions`} of the team’s wallets
+          could not be read yet: these lists may be missing {d.unread === 1 ? 'it' : 'them'}.
+          Retrying shortly.
+        </p>
+      )}
       {d?.state === 'stale' && (
         <p className="faint qp-fine">
           Updated {ago(d.updatedAt)} ago: the chain could not be read just now.

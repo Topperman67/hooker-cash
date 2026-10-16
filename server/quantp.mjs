@@ -705,8 +705,9 @@ export function quantpLedger(
  * per instance) lists the signatures newer than the last one seen, one call per wallet, and reads
  * only the transactions not read yet: a confirmed transaction never changes, so each is read once.
  * It also reads the payout wallet's balance (one call).
- * ledger() resolves to quantpLedger's lists with `updatedAt` and `state`, or throws a 503 when
- * nothing has been read on this instance yet.
+ * ledger() resolves to quantpLedger's lists with `updatedAt`, `state` and `unread` (transactions
+ * listed but not read yet, which the lists may be missing), or throws a 503 when the histories have
+ * never been listed on this instance.
  */
 export function createQuantpLedger({
   connection,
@@ -745,19 +746,23 @@ export function createQuantpLedger({
       for (const s of list) if (!s.err) listed.add(s.signature)
       if (list.length) newest.set(wallet, list[0].signature)
     }
-    // Read what has not been read (a transaction the node could not return yet is tried again).
-    const unread = [...listed].filter((s) => !read.has(s))
-    for (let i = 0; i < unread.length; i += concurrency) {
-      const batch = unread.slice(i, i + concurrency)
-      const txs = await Promise.all(
+    // Read what has not been read. One the node could not return or refused is left for the next
+    // refresh and counted in `unread`, so no single transaction (anyone can send the team's
+    // wallets dust in any transaction version) holds up the lists. Version 1 is the newest.
+    const pending = [...listed].filter((s) => !read.has(s))
+    for (let i = 0; i < pending.length; i += concurrency) {
+      const batch = pending.slice(i, i + concurrency)
+      const txs = await Promise.allSettled(
         batch.map((s) =>
           connection.getParsedTransaction(s, {
             commitment: 'confirmed',
-            maxSupportedTransactionVersion: 0,
+            maxSupportedTransactionVersion: 1,
           }),
         ),
       )
-      txs.forEach((tx, j) => tx && read.set(batch[j], ledgerEntries(tx, { token, wallets })))
+      txs.forEach(
+        (r, j) => r.value && read.set(batch[j], ledgerEntries(r.value, { token, wallets })),
+      )
     }
     // what the payout wallet holds for the next bursts (unknown if it cannot be read)
     const payoutLamports = wallets.payout
@@ -765,7 +770,10 @@ export function createQuantpLedger({
           .then(() => connection.getBalance(new PublicKey(wallets.payout), 'confirmed'))
           .then(BigInt, () => null)
       : null
-    return quantpLedger([...read.values()].flat(), { token, wallets, payoutLamports })
+    return {
+      ...quantpLedger([...read.values()].flat(), { token, wallets, payoutLamports }),
+      unread: listed.size - read.size,
+    }
   }
 
   const source = cachedSource(load, { ttl, retry: 30_000, wait: 8_000, now })

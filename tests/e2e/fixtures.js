@@ -438,13 +438,14 @@ export const quantpSnapshot = (over = {}) => ({
 })
 
 // /api/quantp/ledger as mainnet answers it after round 1: one burst of three transactions to 51
-// wallets, 1.58 SOL left in the payout wallet, no burns. `payouts` are bursts, `unburned` what
-// the team bought and has not burned yet.
+// wallets, 1.58 SOL left in the payout wallet, no burns. `payouts` are bursts, `unburned` what the
+// team bought and has not burned yet, `unread` transactions the server could not read yet.
 export const quantpLedger = ({
   payouts,
   burns = [],
   unburned = { lamports: '0', amount: '0' },
   payoutLamports = '1580000000',
+  unread = 0,
 } = {}) => {
   const now = Math.floor(Date.now() / 1000)
   const round1 = [
@@ -496,6 +497,7 @@ export const quantpLedger = ({
     },
     updatedAt: now,
     state: 'ok',
+    unread,
   }
 }
 
