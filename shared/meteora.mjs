@@ -103,19 +103,33 @@ const disc = (idl, name) => Buffer.from(idl.accounts.find((a) => a.name === name
 const DISC = {
   VirtualPool: disc(dbcIdl, 'VirtualPool'),
   PoolConfig: disc(dbcIdl, 'PoolConfig'),
+  // A Token-2022 coin with a transfer hook (such as $QUANTP) trades in a TransferHookPool under a
+  // ConfigWithTransferHook: the same pool state and config wrapped with the hook program.
+  TransferHookPool: disc(dbcIdl, 'TransferHookPool'),
+  ConfigWithTransferHook: disc(dbcIdl, 'ConfigWithTransferHook'),
   Pool: disc(dammIdl, 'Pool'),
   Position: disc(dammIdl, 'Position'),
 }
 const is = (data, name) =>
   !!data && data.length >= 8 && Buffer.from(data).subarray(0, 8).equals(DISC[name])
 
-/** Raw DBC VirtualPool (the SDK's shape, for quotes) plus a flat bigint summary; null if not one. */
+/**
+ * Raw DBC VirtualPool (the SDK's shape, for quotes) plus a flat bigint summary; null if not one. A
+ * TransferHookPool decodes to the same shape with `transferHook: true`: its swaps need
+ * swap2_with_transfer_hook, the Token-2022 program for the coin and the hook's extra accounts.
+ */
 export function decodeDbcPool(data) {
-  if (!is(data, 'VirtualPool')) return null
-  const raw = dbcCoder.accounts.decode('virtualPool', Buffer.from(data))
+  const transferHook = is(data, 'TransferHookPool')
+  if (!transferHook && !is(data, 'VirtualPool')) return null
+  const raw = dbcCoder.accounts.decode(
+    transferHook ? 'transferHookPool' : 'virtualPool',
+    Buffer.from(data),
+  )
   const s = raw.poolState
   return {
     raw,
+    transferHook,
+    poolType: Number(s.poolType),
     config: s.config.toBase58(),
     creator: s.creator.toBase58(),
     baseMint: s.baseMint.toBase58(),
@@ -136,12 +150,21 @@ export function decodeDbcPool(data) {
   }
 }
 
-/** Raw DBC PoolConfig (the SDK's shape) plus the fields Quant Pad reads; null if not one. */
+/**
+ * Raw DBC PoolConfig (the SDK's shape) plus the fields Quant Pad reads; null if not one. A
+ * ConfigWithTransferHook gives its inner PoolConfig as `raw`, plus `transferHookProgram`.
+ */
 export function decodeDbcConfig(data) {
-  if (!is(data, 'PoolConfig')) return null
-  const raw = dbcCoder.accounts.decode('poolConfig', Buffer.from(data))
+  const withHook = is(data, 'ConfigWithTransferHook')
+  if (!withHook && !is(data, 'PoolConfig')) return null
+  const decoded = dbcCoder.accounts.decode(
+    withHook ? 'configWithTransferHook' : 'poolConfig',
+    Buffer.from(data),
+  )
+  const raw = withHook ? decoded.config : decoded
   return {
     raw,
+    transferHookProgram: withHook ? decoded.transferHookProgram.toBase58() : null,
     quoteMint: raw.quoteMint.toBase58(),
     feeClaimer: raw.feeClaimer.toBase58(),
     migrationQuoteThreshold: big(raw.migrationQuoteThreshold),
