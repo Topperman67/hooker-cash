@@ -97,6 +97,19 @@ const FRESH_SAMPLE = 60
 const SAMPLE_STALL = 3 * 3600
 // Epoch records read when epochs landed that the holding window did not pay for.
 const WINDOW_LOOKBACK = 8
+// Holder schedule entries (see holdtime.mjs): [nextDue, every, slow, next, at, cut], the last
+// three a summary of the coin's window as last read or written. Older two- and three-element
+// entries have no summary until the coin's header is next read.
+const isSlow = (e) => e?.[2] === 1
+const windowOf = (e) =>
+  e?.length >= 6 ? { next: e[3] < 0 ? null : e[3], at: e[4] || null, cut: e[5] === 1 } : null
+const reschedule = (e, nextDue, every, slow = isSlow(e)) => [
+  nextDue,
+  every,
+  slow ? 1 : 0,
+  ...(e?.length >= 6 ? e.slice(3, 6) : []),
+]
+const summarise = (e, h) => [e[0], e[1], isSlow(e) ? 1 : 0, h.next ?? -1, h.at ?? 0, h.cut ? 1 : 0]
 
 const hex = (bytes) => Buffer.from(bytes).toString('hex')
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -192,7 +205,20 @@ export function createKeeper({
   const slowScanMs = holdOptions.slowScanMs ?? SLOW_SCAN_MS
   const minScanMs = scanTimeoutMs / 8
   const idleMax = Math.max(SAMPLE_IDLE_MAX, sampleEvery)
-  const hold = createHoldtime({ store, now: clock, log, opts: { maxStep } })
+  // The schedule of the tick in progress: every holding-window header read or written updates
+  // its coin's summary there.
+  let ticking = null
+  const hold = createHoldtime({
+    store,
+    now: clock,
+    log,
+    opts: {
+      maxStep,
+      onHeader: (mint, header) => {
+        if (ticking?.[mint]) ticking[mint] = summarise(ticking[mint], header)
+      },
+    },
+  })
   // The program refuses a post within MIN_EPOCH_INTERVAL of the coin's last one (last_epoch_at).
   const minInterval = Number(quantum?.MIN_EPOCH_INTERVAL) || MIN_EPOCH_INTERVAL
   const epochGap = Math.max(EPOCH_EVERY, Number(quantum?.MIN_EPOCH_INTERVAL || 0) + CLOCK_SLACK)
@@ -416,7 +442,7 @@ export function createKeeper({
     for (const mint of Object.keys(schedule)) if (!listed.has(mint)) delete schedule[mint]
     const t = nowSecs()
     const due = Object.entries(schedule)
-      .filter(([, [next, , slow]]) => next <= t && !slow)
+      .filter(([, e]) => e[0] <= t && !isSlow(e))
       .sort(([a, [x]], [b, [y]]) => x - y || (a < b ? -1 : 1))
       .slice(0, sampleBudget)
       .map(([mint]) => mint)
@@ -433,12 +459,12 @@ export function createKeeper({
         try {
           const { paused, changed } = await sampleCoin(mint, ms)
           const gap = paused || changed ? sampleEvery : Math.min(every * 2, idleMax)
-          schedule[mint] = [nowSecs() + gap, paused ? every : gap]
+          schedule[mint] = reschedule(schedule[mint], nowSecs() + gap, paused ? every : gap, false)
         } catch (e) {
           log(`holdtime ${mint}: ${e.message}`)
           // A scan cut short by the end of the pass's share is no sign of a slow coin.
           const slow = e.code === 'TIMEOUT' && ms >= scanTimeoutMs
-          schedule[mint] = [nowSecs() + sampleEvery, every, ...(slow ? [1] : [])]
+          schedule[mint] = reschedule(schedule[mint], nowSecs() + sampleEvery, every, slow)
         }
       }
     }
@@ -472,30 +498,36 @@ export function createKeeper({
 
   // An Entanglement coin's window, each time runCoin reaches the coin: settled against the chain
   // (windowFor), sampled here when its scan outlasts the pass's limit, and an alert when the
-  // coin has a reserve to pay but no sample for SAMPLE_STALL seconds.
+  // coin has a reserve to pay but no sample for SAMPLE_STALL seconds. While the schedule's
+  // summary shows no unsettled post and no epoch the window has not accounted for, windowFor
+  // would return the stored header untouched, so it is not read: an idle tick costs nothing here.
   async function tendWindow(mint, state, deadline, schedule, alerts) {
-    let header = await windowFor(mint, state)
-    if (header.cut) return
     const entry = schedule?.[mint]
+    const known = windowOf(entry)
+    const quiet =
+      !!known && !known.cut && known.next != null && Number(state.epochCount) <= known.next
+    let header = quiet ? null : await windowFor(mint, state)
+    if (header?.cut) return
     const ms = Math.min(slowScanMs, deadline - Date.now())
-    if (entry?.[2] && entry[0] <= nowSecs() && ms >= minScanMs) {
+    if (isSlow(entry) && entry[0] <= nowSecs() && ms >= minScanMs) {
       const started = Date.now()
       try {
-        header = (await sampleHoldings(mint, header, ms)).header
+        header = (await sampleHoldings(mint, header ?? (await windowFor(mint, state)), ms)).header
         // Back to the pass once the scan fits its limit with room to spare.
         const slow = Date.now() - started > scanTimeoutMs / 2
-        schedule[mint] = [nowSecs() + idleMax, idleMax, ...(slow ? [1] : [])]
+        schedule[mint] = reschedule(schedule[mint], nowSecs() + idleMax, idleMax, slow)
       } catch (e) {
         log(`holdtime ${mint}: ${e.message}`)
-        schedule[mint] = [nowSecs() + sampleEvery, entry[1], 1]
+        schedule[mint] = reschedule(schedule[mint], nowSecs() + sampleEvery, entry[1], true)
       }
     }
     if (BigInt(state.entangleReserve) < MIN_EPOCH) return
-    const stalled = header.at == null ? !!entry?.[2] : nowSecs() - header.at >= SAMPLE_STALL
+    const at = header ? header.at : known.at
+    const stalled = at == null ? isSlow(entry) : nowSecs() - at >= SAMPLE_STALL
     if (!stalled) return
-    const when = header.at == null ? 'yet' : `since ${new Date(header.at * 1000).toISOString()}`
+    const when = at == null ? 'yet' : `since ${new Date(at * 1000).toISOString()}`
     log(`holdtime ${mint}: no holder sample ${when}; Entanglement cannot post without them`)
-    alerts?.push({ kind: 'holdtime-stalled', mint, lastSample: header.at })
+    alerts?.push({ kind: 'holdtime-stalled', mint, lastSample: at })
   }
 
   async function buildTree(entries) {
@@ -740,7 +772,7 @@ export function createKeeper({
       const ms = Math.min(slowScanMs, deadline - Date.now())
       header = (await sampleHoldings(mint, header, ms)).header
       if (schedule?.[mint])
-        schedule[mint] = [nowSecs() + sampleEvery, sampleEvery, ...schedule[mint].slice(2)]
+        schedule[mint] = reschedule(schedule[mint], nowSecs() + sampleEvery, sampleEvery)
     }
     if (header.covered < minCovered) return
     const weighed = await hold.weights(mint, header)
@@ -1173,6 +1205,7 @@ export function createKeeper({
       // transactions cannot starve them (a long gap between samples credits at most MAX_STEP).
       try {
         schedule = await hold.loadSchedule()
+        ticking = schedule
         loaded = JSON.stringify(schedule)
         await sampleDue(coins, schedule, Math.min(deadline, started + limit * SAMPLE_SHARE))
       } catch (e) {
@@ -1192,6 +1225,7 @@ export function createKeeper({
       }
       return { enabled: true, ran, ...(alerts.length ? { alerts } : {}) }
     } finally {
+      ticking = null
       // Saved while the lease is still held, and only when it changed.
       if (schedule && JSON.stringify(schedule) !== loaded)
         await hold.saveSchedule(schedule).catch((e) => log(`holdtime: ${e.message}`))

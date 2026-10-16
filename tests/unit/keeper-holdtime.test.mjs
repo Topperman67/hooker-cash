@@ -538,7 +538,7 @@ test('the sampling pass takes the oldest due coins first, at most 16, and backs 
   assert.equal(first.length, 16)
   assert.deepEqual(new Set(first), new Set(mints.slice(4)), 'the 16 oldest')
   const schedule = await store.get('holdtime:schedule')
-  for (const m of mints.slice(4)) assert.deepEqual(schedule[m], [T0 + 600, 600])
+  for (const m of mints.slice(4)) assert.deepEqual(schedule[m].slice(0, 3), [T0 + 600, 600, 0])
 
   // Next time the four left over go first.
   w.scans.length = 0
@@ -569,7 +569,37 @@ test('a coin whose holders do not move is sampled half as often each time, down 
   w.hold(mint, { [newMint()]: 5n })
   w.t = (await every())[0]
   await keeper.tick()
-  assert.deepEqual(await every(), [w.t + 600, 600])
+  assert.deepEqual((await every()).slice(0, 3), [w.t + 600, 600, 0])
+})
+
+test("a coin's turn reads its window header only when there is something to settle", async () => {
+  const w = world()
+  const store = memoryStore()
+  const mint = newMint()
+  w.register(mint, {}, { [newMint()]: 1_000n })
+  const keeper = makeKeeper(w, store)
+  await keeper.tick() // scheduled, due at once
+  await keeper.tick() // sampled; its turn records which epoch the window pays for
+  const [, , slow, next, at, cut] = (await store.get('holdtime:schedule'))[mint]
+  assert.deepEqual([slow, next, at, cut], [0, 0, T0, 0], 'the schedule summarises the window')
+  const headerReads = () =>
+    store.ops.filter(([op, key]) => op === 'get' && key === `holdtime:${mint}`).length
+
+  // Ticks between samples: the coin runs each time but its header is not read.
+  store.ops.length = 0
+  for (let i = 0; i < 3; i++) {
+    w.t += 120
+    await keeper.tick()
+  }
+  assert.equal(w.scans.length, 1, 'no sample was due')
+  assert.equal(headerReads(), 0)
+
+  // An epoch the window has not accounted for (posted elsewhere) is read and settled again.
+  w.coins.get(mint).epochCount = 1
+  w.t += 120
+  await keeper.tick()
+  assert.equal(headerReads(), 1)
+  assert.equal((await store.get('holdtime:schedule'))[mint][3], 1, 'the window now pays epoch 1')
 })
 
 test('coins without Entanglement are never scheduled or sampled, and cost no store reads', async () => {
@@ -620,7 +650,8 @@ test('scans in flight end with the pass share, so the coins still run within the
     `cut off at ${cut} ms, not 2000`,
   )
   const schedule = await store.get('holdtime:schedule')
-  for (const [m] of w.scans) assert.deepEqual(schedule[m], [w.t + 600, 600], 'not marked slow')
+  for (const [m] of w.scans)
+    assert.deepEqual(schedule[m].slice(0, 3), [w.t + 600, 600, 0], 'not marked slow')
 })
 
 test('a scan that takes the pass its whole limit leaves the coin to runCoin; another keeper samples nothing', async () => {
@@ -637,7 +668,7 @@ test('a scan that takes the pass its whole limit leaves the coin to runCoin; ano
   assert.ok(w.logged.some((m) => /holdtime .*holder scan timed out after 30 ms/.test(m)))
   assert.equal(w.scans.length, 10)
   const schedule = await store.get('holdtime:schedule')
-  for (const m of mints) assert.deepEqual(schedule[m], [w.t + 600, 600, 1], 'slow')
+  for (const m of mints) assert.deepEqual(schedule[m].slice(0, 3), [w.t + 600, 600, 1], 'slow')
   w.scans.length = 0
   w.t += 600
   await keeper.tick({ budget: 0 })
@@ -664,7 +695,7 @@ test('a coin whose scan outlasts the pass limit is sampled by runCoin with a lon
     alerts.push(...((await keeper.tick()).alerts || []))
   }
   assert.equal(w.logged.filter((m) => /holder scan timed out/.test(m)).length, 1, 'once')
-  assert.deepEqual((await store.get('holdtime:schedule'))[mint].slice(2), [1])
+  assert.equal((await store.get('holdtime:schedule'))[mint][2], 1, 'slow')
   assert.equal(w.calls.length, 1)
   const [row] = await keeper.epochs(mint)
   assert.deepEqual(row.window, { from: T0, to: T0 + 13 * HOUR, covered: 43_200 })

@@ -18,8 +18,10 @@
 //     acc is balance x seconds earned up to `clock`; the wallet has held `balance` since, so its
 //     weight at window clock C is acc + balance x (C - clock) (lazy accrual: a record changes only
 //     when its balance does). A record from an older gen earned nothing in this window yet.
-//   holdtime:schedule  {mint: [nextDue, every]}, or [nextDue, every, 1] for a coin whose scan
-//     outlasts the sampling pass, which the keeper samples on the coin's own turn instead
+//   holdtime:schedule  {mint: [nextDue, every, slow, next, at, cut]}: slow 1 for a coin whose scan
+//     outlasts the sampling pass (the keeper samples it on the coin's own turn instead); next,
+//     at and cut summarise its window as last read or written, so a coin with nothing to settle
+//     costs no header read on its turn
 // A bucket whose balances still match its digest is neither read nor written, so an idle coin
 // costs a header read and write per sample. Each bucket is written to its other slot before the
 // header points at it, so a sample interrupted part way leaves the last one intact to redo.
@@ -152,26 +154,35 @@ export function createHoldtime({ store, now = Date.now, log = () => {}, opts = {
     schedule: 'holdtime:schedule',
   }
 
+  // Every header read and written is reported to `onHeader`, so the keeper can keep a summary
+  // of each window in the schedule it reads every tick anyway.
+  const seen = opts.onHeader ?? (() => {})
+
   async function load(mint) {
-    const header = await store.get(keys.header(mint))
-    if (header?.v === VERSION) return header
-    return {
-      v: VERSION,
-      gen: 0,
-      since: null,
-      at: null,
-      covered: 0,
-      program: null,
-      buckets: 1,
-      meta: [],
-      offCurve: [],
-      cut: null,
-      next: null,
-    }
+    const stored = await store.get(keys.header(mint))
+    const header =
+      stored?.v === VERSION
+        ? stored
+        : {
+            v: VERSION,
+            gen: 0,
+            since: null,
+            at: null,
+            covered: 0,
+            program: null,
+            buckets: 1,
+            meta: [],
+            offCurve: [],
+            cut: null,
+            next: null,
+          }
+    seen(mint, header)
+    return header
   }
 
   const save = async (mint, header) => {
     await store.set(keys.header(mint), header, { ttl })
+    seen(mint, header)
     return header
   }
 
@@ -390,15 +401,20 @@ export function createHoldtime({ store, now = Date.now, log = () => {}, opts = {
   const restart = (mint, header, next) =>
     save(mint, { ...header, gen: header.gen + 1, since: header.at, covered: 0, cut: null, next })
 
-  // Entries other than [nextDue, every] or [nextDue, every, 1] (a coin whose scan outlasts the
-  // sampling pass's limit) are dropped: runCoin schedules those coins again.
+  // Entries are [nextDue, every], [nextDue, every, slow] (1 for a coin whose scan outlasts the
+  // sampling pass's limit) or [nextDue, every, slow, next, at, cut], whose last three summarise
+  // the coin's window (next -1 and at 0 for none, cut 1 while a post is unsettled). Anything
+  // else is dropped: runCoin schedules those coins again.
   async function loadSchedule() {
     const stored = await store.get(keys.schedule)
+    const flag = (v) => v === 0 || v === 1
     const ok = (e) =>
       Array.isArray(e) &&
-      (e.length === 2 || (e.length === 3 && e[2] === 1)) &&
+      [2, 3, 6].includes(e.length) &&
       e.every(Number.isFinite) &&
-      e[1] > 0
+      e[1] > 0 &&
+      (e.length < 3 || flag(e[2])) &&
+      (e.length < 6 || flag(e[5]))
     return Object.fromEntries(Object.entries(stored || {}).filter(([, e]) => ok(e)))
   }
   const saveSchedule = (schedule) => store.set(keys.schedule, schedule, { ttl })
