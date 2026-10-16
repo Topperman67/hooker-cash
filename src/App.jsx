@@ -20,6 +20,9 @@ const TermsPage = lazyPage(() => import('./pages/TermsPage.jsx'))
 const PortfolioPage = lazyPage(() => import('./pages/PortfolioPage.jsx'))
 const QuantpPage = lazyPage(() => import('./pages/QuantpPage.jsx'))
 
+// The $QUANTP buyback burner runs only under `vite dev`: production builds drop it.
+const BurnPage = import.meta.env.DEV ? lazyPage(() => import('./pages/BurnPage.jsx')) : null
+
 export default function App() {
   useGlobalGlint()
   const { pathname } = useLocation()
@@ -43,6 +46,7 @@ export default function App() {
               <Route path="/portfolio" element={<PortfolioPage />} />
               <Route path="/docs" element={<DocsPage />} />
               <Route path="/terms" element={<TermsPage />} />
+              {BurnPage && <Route path="/burn" element={<BurnPage />} />}
               <Route path="/create" element={<Navigate to="/launch" replace />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>

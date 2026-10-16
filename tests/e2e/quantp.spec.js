@@ -1,5 +1,9 @@
-// $QUANTP's page: its Payouts and Burns panel under About, read from /api/quantp/ledger.
+// $QUANTP's page: its Payouts and Burns panel under About, read from /api/quantp/ledger, and the
+// dev-only buyback burner at /burn.
+import { Buffer } from 'node:buffer'
 import { test, expect } from '@playwright/test'
+import { TransactionInstruction, VersionedTransaction } from '@solana/web3.js'
+import { TOKEN_2022_PROGRAM_ID, decodeBurnCheckedInstruction } from '@solana/spl-token'
 import { QUANTP } from '../../shared/network.mjs'
 import { enter, quantpLedger, quantpSnapshot, stubApi, stubQuantp } from './fixtures.js'
 
@@ -103,6 +107,7 @@ test('burns show the tokens burned and the SOL their buyback spent; burns by oth
       payouts: [],
       burns,
       unburned: { lamports: '150000000', amount: '1000000000000' },
+      unread: 1,
     }),
   })
   await enter(page)
@@ -123,6 +128,10 @@ test('burns show the tokens burned and the SOL their buyback spent; burns by oth
   await expect(panel.locator('.qp-ledger-totals')).toContainText('SOL spent0.5 SOL')
   await expect(panel.locator('.qp-ledger-totals')).toContainText('Bought, not burned yet0.15 SOL')
   await expect(panel).toContainText('Other wallets have burned 2M QUANTP.')
+  // a transaction the server could not read yet is said, not hidden
+  await expect(panel).toContainText(
+    '1 transaction of the team’s wallets could not be read yet: these lists may be missing it.',
+  )
 })
 
 test('long lists show the first rows, then all of them on request', async ({ page }) => {
@@ -227,3 +236,184 @@ for (const theme of ['light', 'dark'])
     const wrap = panel.locator('.table-wrap')
     expect(await wrap.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1)
   })
+
+// ---- the dev-only buyback burner (/burn, served by `vite dev` only) ----------------------------
+
+const QUANTP_ACCOUNT = 'AykJHeRomzjcYSGMTVUhbCEEDD6LwF7hgXVbpLcBJWUd' // the payout wallet's
+const HELD = '3070967498088'
+
+/**
+ * JSON-RPC for the burner: the wallet's $QUANTP account, a blockhash and a passing simulation. A
+ * send is refused and kept in `sends`, so nothing ever leaves. Registered after stubApi, so it
+ * answers first and hands everything else to it.
+ */
+async function stubBurnRpc(page, sends) {
+  await page.route('**/api/rpc', (route) => {
+    const body = route.request().postDataJSON()
+    const calls = Array.isArray(body) ? body : [body]
+    const context = { slot: 300_000_000 }
+    const answer = (call) => {
+      const ok = (result) => ({ jsonrpc: '2.0', id: call.id, result })
+      if (call.method === 'getTokenAccountsByOwner')
+        return ok({
+          context,
+          value: [
+            {
+              pubkey: QUANTP_ACCOUNT,
+              account: {
+                data: {
+                  program: 'spl-token-2022',
+                  parsed: {
+                    type: 'account',
+                    info: {
+                      isNative: false,
+                      mint: QUANTP.mint,
+                      owner: call.params[0],
+                      state: 'initialized',
+                      tokenAmount: {
+                        amount: HELD,
+                        decimals: 6,
+                        uiAmount: 3070967.498088,
+                        uiAmountString: '3070967.498088',
+                      },
+                    },
+                  },
+                  space: 182,
+                },
+                executable: false,
+                lamports: 2157600,
+                owner: TOKEN_2022_PROGRAM_ID.toBase58(),
+                rentEpoch: 0,
+                space: 182,
+              },
+            },
+          ],
+        })
+      if (call.method === 'getLatestBlockhash')
+        return ok({
+          context,
+          value: {
+            blockhash: '11111111111111111111111111111111',
+            lastValidBlockHeight: 400_000_000,
+          },
+        })
+      if (call.method === 'simulateTransaction')
+        return ok({
+          context,
+          value: {
+            err: null,
+            logs: ['Program log: Instruction: BurnChecked'],
+            accounts: null,
+            unitsConsumed: 2370,
+            returnData: null,
+          },
+        })
+      if (call.method === 'sendTransaction') {
+        sends.push(call)
+        return {
+          jsonrpc: '2.0',
+          id: call.id,
+          error: { code: -32002, message: 'The e2e fixtures never send transactions.' },
+        }
+      }
+      return null
+    }
+    const answers = calls.map(answer)
+    if (answers.some((a) => !a)) return route.fallback()
+    return route.fulfill({ json: Array.isArray(body) ? answers : answers[0] })
+  })
+}
+
+/** The BurnChecked instructions in a transaction the wallet was asked to sign (base64). */
+function burnsIn(base64) {
+  const { message } = VersionedTransaction.deserialize(Buffer.from(base64, 'base64'))
+  const keys = message.staticAccountKeys
+  return {
+    payer: keys[0].toBase58(),
+    burns: message.compiledInstructions
+      .filter((ix) => keys[ix.programIdIndex].equals(TOKEN_2022_PROGRAM_ID))
+      .map((ix) =>
+        decodeBurnCheckedInstruction(
+          new TransactionInstruction({
+            programId: TOKEN_2022_PROGRAM_ID,
+            keys: ix.accountKeyIndexes.map((i) => ({
+              pubkey: keys[i],
+              isSigner: message.isAccountSigner(i),
+              isWritable: message.isAccountWritable(i),
+            })),
+            data: Buffer.from(ix.data),
+          }),
+          TOKEN_2022_PROGRAM_ID,
+        ),
+      ),
+  }
+}
+
+test('the burner fills in what was bought back and builds one BurnChecked from the wallet', async ({
+  page,
+}) => {
+  const sends = []
+  await stubApi(page)
+  await stubQuantp(page, {
+    ledger: quantpLedger({ unburned: { lamports: '320013872', amount: '1432024251739' } }),
+  })
+  await stubBurnRpc(page, sends)
+  await enter(page, { wallet: true, address: QUANTP.payoutWallet })
+  await page.goto('/burn')
+  await expect(page.getByRole('heading', { name: '$QUANTP buyback burn' })).toBeVisible()
+  await expect(page.getByText('1,432,024.251739 $QUANTP for 0.32 SOL')).toBeVisible()
+  await page.getByRole('button', { name: 'Connect the wallet holding the $QUANTP' }).click()
+  await page.getByRole('button', { name: 'Test Wallet' }).click()
+  await expect(page.getByText('holds 3,070,967.498088 $QUANTP')).toBeVisible()
+  // one of the team's wallets: no warning
+  await expect(page.locator('.notice-warn')).toHaveCount(0)
+
+  // it starts at what was bought back, priced at what that cost
+  const amount = page.getByLabel('Amount to burn')
+  await expect(amount).toHaveValue('1432024.251739')
+  await expect(page.getByText('Bought back with about 0.32 SOL')).toBeVisible()
+  await page.getByRole('button', { name: 'All it holds' }).click()
+  await expect(amount).toHaveValue('3070967.498088')
+  await expect(page.getByText(/Bought back with about/)).toHaveCount(0)
+  await page.getByRole('button', { name: 'What was bought back' }).click()
+  await expect(amount).toHaveValue('1432024.251739')
+  // more than it holds cannot be burned
+  await amount.fill('5000000')
+  await expect(page.getByRole('button', { name: 'Burn 5,000,000 $QUANTP' })).toBeDisabled()
+  await amount.fill('1,432,024.251739')
+  const burn = page.getByRole('button', { name: 'Burn 1,432,024.251739 $QUANTP' })
+
+  // declining the confirm asks the wallet for nothing
+  page.once('dialog', (d) => d.dismiss())
+  await burn.click()
+  expect(await page.evaluate(() => window.__signRequests?.length ?? 0)).toBe(0)
+
+  // confirmed: simulated, then one transaction to sign; the refused send shows as an error
+  page.once('dialog', (d) => d.accept())
+  await burn.click()
+  await expect(page.locator('.notice-error')).toBeVisible()
+  const requests = await page.evaluate(() => window.__signRequests)
+  expect(requests).toHaveLength(1)
+  expect(requests[0]).toHaveLength(1)
+  expect(sends).toHaveLength(1)
+  const { payer, burns } = burnsIn(requests[0][0])
+  expect(payer).toBe(QUANTP.payoutWallet)
+  expect(burns).toHaveLength(1)
+  expect(burns[0].keys.account.pubkey.toBase58()).toBe(QUANTP_ACCOUNT)
+  expect(burns[0].keys.mint.pubkey.toBase58()).toBe(QUANTP.mint)
+  expect(burns[0].keys.owner.pubkey.toBase58()).toBe(QUANTP.payoutWallet)
+  expect(burns[0].keys.owner.isSigner).toBe(true)
+  expect(burns[0].data.amount).toBe(1_432_024_251_739n)
+  expect(burns[0].data.decimals).toBe(6)
+})
+
+test('the burner warns when the wallet is not one of the team’s', async ({ page }) => {
+  await stubApi(page)
+  await stubQuantp(page)
+  await stubBurnRpc(page, [])
+  await enter(page, { wallet: true })
+  await page.goto('/burn')
+  await page.getByRole('button', { name: 'Connect the wallet holding the $QUANTP' }).click()
+  await page.getByRole('button', { name: 'Test Wallet' }).click()
+  await expect(page.locator('.notice-warn')).toContainText('This is not one of the team’s wallets')
+})
