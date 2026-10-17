@@ -157,6 +157,50 @@ test('a run that is due says so, with stale figures and the last payout, burn an
   )
 })
 
+test('the last run says what it sent, when a batch failed or it stopped early', async ({
+  page,
+}) => {
+  await pin(page, at(7, 5))
+  await stubApi(page)
+  // the engine's lastRun: a failed batch is recorded as its error, and the run goes on
+  const run = (over) => ({
+    at: at(7, 0),
+    ok: false,
+    stopped: null,
+    error: 'Transaction simulation failed',
+    payouts: ['a', 'b'],
+    buyback: 'c',
+    skipped: [],
+    ...over,
+  })
+  const cases = [
+    [run(), '2 payout transactions, bought back and burned, but part of it failed'],
+    [
+      run({ payouts: [], buyback: null }),
+      'it hit an error and sent nothing; the next run tries again',
+    ],
+    [
+      run({ error: null, stopped: 'time limit before buyback', payouts: ['a'], buyback: null }),
+      '1 payout transaction, no buyback, then it stopped (time limit before buyback)',
+    ],
+    [
+      run({ stopped: 'claim failed', payouts: [], buyback: null, skipped: [{}, {}] }),
+      'it stopped (claim failed), 2 wallets skipped',
+    ],
+  ]
+  let engine
+  await stubQuantp(page)
+  await page.route('**/api/quantp/engine', (route) => route.fulfill({ json: engine }))
+  await enter(page)
+  for (const [lastRun, text] of cases) {
+    engine = quantpEngine({ lastRunAt: at(7, 0), updatedAt: at(7, 4), lastRun })
+    await page.goto(ENGINE)
+    await expect(page.locator('.eg-fresh')).toHaveText(
+      `Engine figures from 1m ago · Last run at 07:00 UTC: ${text}`,
+    )
+  }
+})
+
 test('an engine whose state cannot be read says so and shows no next run', async ({ page }) => {
   await stubApi(page)
   await stubQuantp(page, { engine: 503 })
@@ -298,7 +342,12 @@ test('a holder looks up their wallet, prefilled once a wallet is connected', asy
 
   await address.fill(other)
   await address.press('Enter')
-  await expect(panel).toContainText('EligibleNo: it holds under 1.5M $QUANTP')
+  // a wallet the engine leaves out may hold any amount: it may be a pool or the team's
+  await expect(panel).toContainText(
+    'EligibleNo: not among the next run’s eligible wallets (it needs at least 1.5M $QUANTP; ' +
+      'pools and the team’s wallets are never paid)',
+  )
+  await expect(panel).not.toContainText('holds under')
   await expect(panel).toContainText('Paid so far0 SOL in 0 payouts')
   await expect(panel).toContainText('Last payoutNone yet')
 

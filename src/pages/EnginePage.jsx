@@ -127,16 +127,26 @@ function noBuyback(engine, buybackShareBps) {
   return `${head} and stays in the wallet; buybacks resume once the wallet holds more than ${sol(toSol(floor), { digits: 2 })}${top ? '' : ' or the market cap reaches the next tier'}.`
 }
 
-/** What the engine's last run on the instance that answered did (its status's lastRun). */
+/**
+ * What the engine's last run on the instance that answered did (its status's lastRun). A run stops
+ * early (`stopped`) on a time limit or a payout it could not confirm; a payout batch that fails is
+ * recorded (`error`) and the run goes on, so a run with an error may still have paid and bought
+ * back.
+ */
 function lastRunOutcome(report, now) {
   const at = report.at ? ` at ${utcClock(seconds(report.at), now)} UTC` : ''
   const sent = report.payouts?.length ?? 0
+  const did =
+    sent || report.buyback
+      ? `${sent ? count(sent, 'payout transaction') : 'no payouts'}, ${report.buyback ? 'bought back and burned' : 'no buyback'}`
+      : null
   let what
-  if (report.error) what = 'it stopped on an error, and the next run tries again'
-  else if (report.stopped) what = `it stopped (${report.stopped})`
-  else if (!sent && !report.buyback) what = 'nothing to send'
-  else
-    what = `${sent ? count(sent, 'payout transaction') : 'no payouts'}, ${report.buyback ? 'bought back and burned' : 'no buyback'}`
+  if (report.stopped) what = `${did ? `${did}, then it` : 'it'} stopped (${report.stopped})`
+  else if (report.error)
+    what = did
+      ? `${did}, but part of it failed`
+      : 'it hit an error and sent nothing; the next run tries again'
+  else what = did ?? 'nothing to send'
   const skipped = report.skipped?.length
     ? `, ${count(report.skipped.length, 'wallet')} skipped`
     : ''
@@ -246,7 +256,7 @@ function YourWallet({ engine, symbol, decimals, rentExempt }) {
                 ? 'Unknown right now'
                 : eligible
                   ? 'Yes'
-                  : `No: it holds under ${compact(minHold)} ${ticker}`}
+                  : `No: not among the next run’s eligible wallets (it needs at least ${compact(minHold)} ${ticker}; pools and the team’s wallets are never paid)`}
             </dd>
             {row?.amount != null && (
               <>
