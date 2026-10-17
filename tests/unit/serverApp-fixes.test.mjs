@@ -979,15 +979,45 @@ test('the index pass and the keeper share the serverless time budget', async () 
   }
 })
 
+/** Runs `fn` with console.error captured; resolves to what was logged. */
+async function quietly(fn) {
+  const logged = []
+  const error = console.error
+  console.error = (...args) => logged.push(args)
+  try {
+    await fn()
+  } finally {
+    console.error = error
+  }
+  return logged
+}
+
 test('a tick whose index pass or keeper fails still answers 200, with each stepâ€™s error', async () => {
   process.env.CRON_SECRET = 'outage-secret'
-  const { app, base, close } = await boot({ serverless: true, backgroundGapMs: 0 })
+  const ran = []
+  const RUN = { ran: false, reason: 'not-due', nextAt: 1_792_227_600_000 }
+  const quantpEngine = {
+    status: async () => ({ configured: false }),
+    tick: async () => {
+      ran.push('engine')
+      return RUN
+    },
+  }
+  // 07:20 UTC: past the GitHub backup's window
+  const clock = { t: Date.parse('2026-10-17T07:20:00Z') }
+  const { app, base, close } = await boot({
+    serverless: true,
+    backgroundGapMs: 0,
+    quantpEngine,
+    now: () => clock.t,
+  })
+  // as the store throws it: a message written for users
   const storageDown = () =>
-    Object.assign(Error('Storage is unavailable right now.'), {
+    Object.assign(Error('Persistent storage is unavailable. Try again shortly.'), {
       status: 503,
       code: 'STORAGE_UNAVAILABLE',
+      expose: true,
     })
-  const ran = []
   app.indexer.sync = async () => {
     ran.push('sync')
     throw storageDown()
@@ -996,36 +1026,73 @@ test('a tick whose index pass or keeper fails still answers 200, with each stepâ
     ran.push('keeper')
     return { enabled: true, ran: 1 }
   }
-  const tick = () =>
-    fetch(base + '/api/keeper/tick', { headers: { Authorization: 'Bearer outage-secret' } })
+  const tick = (userAgent = 'curl/8.5.0') =>
+    fetch(base + '/api/keeper/tick', {
+      headers: { Authorization: 'Bearer outage-secret', 'User-Agent': userAgent },
+    })
   try {
     // the index pass fails: the keeper still runs, and the tick says what failed
-    const first = await tick()
+    let first
+    const logged = await quietly(async () => (first = await tick()))
     assert.equal(first.status, 200)
     const body = await first.json()
     assert.equal(body.ok, false)
     assert.deepEqual(body.index, {
-      error: 'Storage is unavailable right now.',
+      error: 'Persistent storage is unavailable. Try again shortly.',
       code: 'STORAGE_UNAVAILABLE',
     })
     assert.deepEqual(body.keeper, { enabled: true, ran: 1 })
-    assert.ok(body.engine, 'the payout engine reports too')
-    assert.deepEqual(ran, ['sync', 'keeper'])
+    // the payout engine first, then the index pass and the keeper
+    assert.deepEqual(body.engine, RUN)
+    assert.deepEqual(ran, ['engine', 'sync', 'keeper'])
+    // the failure is logged whole, and the tick in one line (the keeper's error or alerts: none)
+    assert.ok(
+      logged.some(([label, e]) => label === '[tick] index' && e.code === 'STORAGE_UNAVAILABLE'),
+    )
+    assert.deepEqual(JSON.parse(logged.find(([label]) => label === '[tick]')[1]), {
+      ok: false,
+      engine: RUN,
+      index: 'Persistent storage is unavailable. Try again shortly.',
+    })
 
-    // both fail: still 200, both errors listed
+    // both fail: still 200, both errors listed. One that is not written for users (an RPC error,
+    // which can carry the provider's URL and key) is reported by its code alone.
     app.keeper.tick = async () => {
-      throw storageDown()
+      throw Object.assign(Error('429 Too Many Requests: https://rpc.invalid/?api-key=secret'), {
+        code: -32005,
+      })
     }
-    const both = await (await tick()).json()
+    let both
+    await quietly(async () => (both = await (await tick()).json()))
     assert.equal(both.ok, false)
     assert.equal(both.index.code, 'STORAGE_UNAVAILABLE')
-    assert.equal(both.keeper.code, 'STORAGE_UNAVAILABLE')
+    assert.deepEqual(both.keeper, { error: 'RPC or dependency error', code: -32005 })
 
-    // nothing fails: ok
-    app.indexer.sync = async () => ({ synced: 0 })
-    app.keeper.tick = async () => ({ enabled: true, ran: 0 })
-    const fine = await (await tick()).json()
+    // nothing fails: ok, and nothing logged
+    app.indexer.sync = async () => {
+      ran.push('sync')
+      return { synced: 0 }
+    }
+    app.keeper.tick = async () => {
+      ran.push('keeper')
+      return { enabled: true, ran: 0 }
+    }
+    let fine
+    assert.deepEqual(await quietly(async () => (fine = await (await tick()).json())), [])
     assert.equal(fine.ok, true)
+
+    // in the first quarter of the hour only Vercel Cron runs the engine: the GitHub backup's tick
+    // at 07:05 leaves it alone (the index pass and the keeper still run)
+    clock.t = Date.parse('2026-10-17T07:05:00Z')
+    ran.length = 0
+    const backup = await (await tick()).json()
+    assert.deepEqual(backup.engine, { ran: false, reason: 'backup-window' })
+    assert.equal(backup.ok, true)
+    assert.deepEqual(ran, ['sync', 'keeper'])
+    ran.length = 0
+    const vercel = await (await tick('vercel-cron/1.0')).json()
+    assert.deepEqual(vercel.engine, RUN)
+    assert.deepEqual(ran, ['engine', 'sync', 'keeper'])
   } finally {
     delete process.env.CRON_SECRET
     await close()
