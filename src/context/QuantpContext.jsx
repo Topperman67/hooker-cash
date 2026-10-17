@@ -1,4 +1,4 @@
-import { createContext, useContext } from 'react'
+import { createContext, useContext, useMemo, useRef } from 'react'
 import { useResource } from '../lib/api.js'
 import { QUANTP } from '../../shared/network.mjs'
 
@@ -31,9 +31,17 @@ const QuantpContext = createContext(null)
 
 export function QuantpProvider({ children }) {
   const live = useResource('/api/quantp', 20000)
+  // An instance that has not read the ledger yet (a cold start) answers `payouts: null`: keep the
+  // last figures already shown instead of turning them into dashes until it has.
+  const payouts = useRef(null)
+  const data = useMemo(() => {
+    if (live.data?.payouts) payouts.current = live.data.payouts
+    else if (live.data && payouts.current) return { ...live.data, payouts: payouts.current }
+    return live.data
+  }, [live.data])
   const value = {
     ...QUANTP,
-    data: live.data,
+    data,
     loading: live.loading && !live.data,
     error: live.error,
     refresh: live.refresh,
