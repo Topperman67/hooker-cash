@@ -1,5 +1,5 @@
 // The ad's instruments and sound effects, synthesized (no samples). Shared by make-audio.mjs (the
-// 30 s ad) and make-tour-audio.mjs (the site tour).
+// 30 s ad) and make-engine-audio.mjs (the payout engine film).
 import { SR, TAU, mtof, rng, Biquad, synth, osc, expDecay, ad, sat } from './dsp.mjs'
 
 export const noise = (seed) => {

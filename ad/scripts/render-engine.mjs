@@ -1,6 +1,7 @@
 // Renders the payout engine film: out/quantp-payout-engine.mp4 (1080p30 H.264, AAC 320k) and a
-// poster frame. With frame numbers, renders just those stills to out/engine/ for review:
-//   node scripts/render-engine.mjs            the film and the poster
+// poster frame, after rebuilding its soundtrack from the same timeline, so the sound always matches
+// the picture. With frame numbers, renders just those stills to out/engine/ for review:
+//   node scripts/render-engine.mjs            the soundtrack, the film and the poster
 //   node scripts/render-engine.mjs 45 210     out/engine/f45.png, out/engine/f210.png
 import { bundle } from '@remotion/bundler'
 import { renderMedia, renderStill, selectComposition, openBrowser } from '@remotion/renderer'
@@ -11,8 +12,12 @@ import { browserExecutable } from './browser.mjs'
 
 const root = fileURLToPath(new URL('..', import.meta.url))
 const frames = process.argv.slice(2).map(Number)
-const POSTER = 1050 // the end card, settled
+const POSTER = 1100 // the end card, settled: its URL is in by 35.5 s
 mkdirSync(path.join(root, 'out/engine'), { recursive: true })
+
+// The film: synthesize public/engine-soundtrack.wav (the script does its work on import) before
+// the bundle copies public/.
+if (!frames.length) await import('./make-engine-audio.mjs')
 
 const chromiumOptions = { gl: 'angle' }
 const browser = await openBrowser('chrome', { browserExecutable, chromiumOptions })

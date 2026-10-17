@@ -10,7 +10,8 @@
     "review": "node scripts/review.mjs",
     "render": "npm run audio && node scripts/render.mjs",
     "engine:audio": "node scripts/make-engine-audio.mjs",
-    "engine:render": "npm run engine:audio && node scripts/render-engine.mjs"
+    "engine:render": "node scripts/render-engine.mjs",
+    "test": "node --test tests/engine-timeline.test.mjs"
   },
   "dependencies": {
     "@fontsource-variable/hubot-sans": "5.3.0",
