@@ -16,6 +16,9 @@ const FIRST_RUNS = 24
 const WEEK = 7 * 86_400
 const MIN_BUYBACK = BigInt(POLICY.minBuybackLamports)
 const minBuybackText = sol(toSol(POLICY.minBuybackLamports))
+// The engine's first run, 17 Oct 2026 06:06 UTC. The engine wallet is the payout wallet, which the
+// team paid round 1 from by hand before then: what it paid or burned earlier is no engine run.
+const ENGINE_FIRST_RUN = 1792217176
 
 const when = (seconds) =>
   seconds
@@ -184,20 +187,25 @@ function Engine({ engine, lastPayoutAt, symbol, decimals }) {
 
 /**
  * The engine wallet's runs from the ledger, newest first: one per UTC hour (or per `run`, the hour
- * the engine's memo names, when the ledger reads it), with what it paid and to how many wallets
- * (summed over its bursts), what its buyback spent and burned, and its transactions. `status` says
- * how the run went:
+ * the engine's memo names, when the ledger reads it), with what it paid, to how many wallets and in
+ * how many payments, what its buyback spent and burned, and its transactions. The ledger joins
+ * payouts less than 30 minutes apart into one burst, which can hold two runs, so each payout
+ * transaction counts in its own hour. `status` says how the run went:
  *   - 'complete': it bought back and burned (or had nothing to pay);
  *   - 'no buyback (below minimum)': the buyback its payout implies (paid × 40/60) is under the
  *     minimum, so it was skipped and its SOL stayed in the wallet;
- *   - 'buyback did not go through': otherwise.
- * `repeated` is set when the hour has two payout bursts or more.
+ *   - 'buyback did not go through': otherwise;
+ *   - 'manual payout' or 'manual burn': the team's own, before the engine's first run (`since`).
+ * `repeated` is set when an engine hour has payouts from two bursts or more, or pays a wallet twice.
  */
-export function engineRuns(d, { everySecs = POLICY.everySecs, wallet } = {}) {
+export function engineRuns(
+  d,
+  { everySecs = POLICY.everySecs, wallet, since = ENGINE_FIRST_RUN } = {},
+) {
   const engineWallet = wallet ?? d?.wallets?.engine ?? POLICY.wallet
   const runs = new Map()
-  const runOf = (entry) => {
-    const hour = Number.isInteger(entry.run) ? entry.run : Math.floor(entry.timestamp / everySecs)
+  const runOf = (entry, tag = entry.run) => {
+    const hour = Number.isInteger(tag) ? tag : Math.floor(entry.timestamp / everySecs)
     if (!runs.has(hour))
       runs.set(hour, {
         hour,
@@ -205,20 +213,36 @@ export function engineRuns(d, { everySecs = POLICY.everySecs, wallet } = {}) {
         bursts: 0,
         paid: 0n,
         recipients: 0,
+        payments: 0,
         burns: 0,
         bought: 0n,
         burned: 0n,
         signatures: [],
+        manual: true,
       })
-    return runs.get(hour)
+    const run = runs.get(hour)
+    if (Number.isInteger(tag) || entry.timestamp >= since) run.manual = false
+    return run
   }
   for (const burst of d?.payouts ?? []) {
     if (burst.wallet && burst.wallet !== engineWallet) continue
-    const run = runOf(burst)
-    run.bursts += 1
-    run.paid += big(burst.lamports)
-    run.recipients += burst.recipients ?? 0
-    run.signatures.push(...burst.transactions.map((x) => x.signature))
+    const parts = new Map() // run -> the burst's transactions in it
+    for (const x of burst.transactions) {
+      const run = runOf(x, x.run ?? burst.run)
+      parts.set(run, [...(parts.get(run) ?? []), x])
+    }
+    for (const [run, txs] of parts) {
+      const whole = parts.size === 1
+      const payments = txs.reduce((s, x) => s + (x.recipients ?? 0), 0)
+      // a burst all in one run knows its distinct wallets: fewer than its payments when it paid a
+      // wallet twice (two runs minutes apart)
+      const recipients = whole ? (burst.recipients ?? payments) : payments
+      run.bursts += 1
+      run.paid += whole ? big(burst.lamports) : txs.reduce((s, x) => s + big(x.lamports), 0n)
+      run.recipients += recipients
+      run.payments += Math.max(payments, recipients)
+      run.signatures.push(...txs.map((x) => x.signature))
+    }
   }
   for (const burn of d?.burns ?? []) {
     if (burn.wallet !== engineWallet) continue
@@ -234,13 +258,16 @@ export function engineRuns(d, { everySecs = POLICY.everySecs, wallet } = {}) {
       const implied = (run.paid * BigInt(QUANTP.buybackShareBps)) / BigInt(QUANTP.holdersShareBps)
       return {
         ...run,
-        status:
-          run.burns > 0 || run.paid === 0n
+        status: run.manual
+          ? run.bursts
+            ? 'manual payout'
+            : 'manual burn'
+          : run.burns > 0 || run.paid === 0n
             ? 'complete'
             : implied < MIN_BUYBACK
               ? 'no buyback (below minimum)'
               : 'buyback did not go through',
-        repeated: run.bursts >= 2,
+        repeated: !run.manual && (run.bursts >= 2 || run.payments > run.recipients),
       }
     })
 }
@@ -268,12 +295,11 @@ function Runs({ runs, symbol, decimals, more, onAll }) {
               <th className="right">SOL paid</th>
               <th className="right">SOL bought</th>
               <th className="right">{symbol} burned</th>
-              <th className="right">Tx</th>
             </tr>
           </thead>
           <tbody>
             {shown.map((r) => (
-              <RunRows key={r.hour} run={r} decimals={decimals} />
+              <RunRows key={r.hour} run={r} symbol={symbol} decimals={decimals} />
             ))}
           </tbody>
         </table>
@@ -294,8 +320,8 @@ function Runs({ runs, symbol, decimals, more, onAll }) {
   )
 }
 
-/** A run's figures, and under them how it went. */
-function RunRows({ run, decimals }) {
+/** A run's figures, and under them how it went and its transactions (four columns fit a phone). */
+function RunRows({ run, symbol, decimals }) {
   const ok = run.status === 'complete' && !run.repeated
   return (
     <>
@@ -310,25 +336,36 @@ function RunRows({ run, decimals }) {
           {run.bursts > 0 && (
             <span className="qp-run-day">
               {run.repeated
-                ? `${run.recipients.toLocaleString('en-US')} payments`
+                ? `${run.payments.toLocaleString('en-US')} payments`
                 : wallets(run.recipients)}
             </span>
           )}
         </td>
-        <td className="right num">{run.burns ? sol(toSol(run.bought), { unit: false }) : '—'}</td>
+        {run.burns ? (
+          <td
+            className="right num"
+            title={`Includes earlier buys whose $${symbol} this run burned`}
+          >
+            {sol(toSol(run.bought), { unit: false })}
+          </td>
+        ) : (
+          <td className="right num">—</td>
+        )}
         <td className="right num">
           {run.burns ? compact(Number(run.burned) / 10 ** decimals) : '—'}
         </td>
-        <td className="right qp-run-txs">
-          {run.signatures.map((s) => (
-            <TxLink key={s} signature={s} />
-          ))}
-        </td>
       </tr>
       <tr className="qp-ledger-sub qp-run-status">
-        <td colSpan={5}>
-          <span className={`chip qp-run-chip ${ok ? 'chip-grad' : ''}`}>{run.status}</span>
-          {run.repeated && <span className="chip qp-run-chip">repeated</span>}
+        <td colSpan={4}>
+          <div className="qp-run-foot">
+            <span className={`chip qp-run-chip ${ok ? 'chip-grad' : ''}`}>{run.status}</span>
+            {run.repeated && <span className="chip qp-run-chip">repeated</span>}
+            <span className="qp-run-txs">
+              {run.signatures.map((s) => (
+                <TxLink key={s} signature={s} />
+              ))}
+            </span>
+          </div>
         </td>
       </tr>
     </>
@@ -523,16 +560,11 @@ export default function QuantpLedger({
         </p>
       </>
     )
-  else
+  else {
+    const runs = engineRuns(d)
     body = (
       <>
-        <Runs
-          runs={engineRuns(d)}
-          symbol={symbol}
-          decimals={decimals}
-          more={more}
-          onAll={requestAll}
-        />
+        <Runs runs={runs} symbol={symbol} decimals={decimals} more={more} onAll={requestAll} />
         <p className="faint qp-fine">
           One row per UTC hour in which the engine wallet{' '}
           <Address
@@ -541,9 +573,12 @@ export default function QuantpLedger({
           />{' '}
           paid holders or burned ${symbol}, read from the chain. A buyback under {minBuybackText} is
           skipped and its SOL stays in the wallet.
+          {runs.some((r) => r.manual) &&
+            ` Rows marked manual are the team’s own, by hand, from before the engine’s first run on ${utc(ENGINE_FIRST_RUN, { dateStyle: 'medium' })}.`}
         </p>
       </>
     )
+  }
 
   return (
     <section id="payouts" className="panel qp-ledger" aria-labelledby="qp-ledger-title">

@@ -406,6 +406,36 @@ for (const theme of ['light', 'dark'])
     expect(await wrap.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1)
   })
 
+for (const theme of ['light', 'dark'])
+  test(`on a phone (${theme}): the Runs table fits, transaction links and all`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 360, height: 780 })
+    await page.addInitScript((t) => localStorage.setItem('quantpad:theme', t), theme)
+    await stubApi(page)
+    await stubQuantp(page, { ledger: wideRuns() })
+    await enter(page)
+    await page.goto(QUANTP.path)
+    await expect(page.locator('html')).toHaveAttribute('data-theme', theme)
+    const panel = ledgerPanel(page)
+    await panel.getByRole('button', { name: 'Runs' }).click()
+    await expect(panel.locator('tbody tr.qp-run')).toHaveCount(3)
+    await page.waitForTimeout(400)
+    const wrap = panel.locator('.table-wrap')
+    expect(await wrap.evaluate((el) => el.scrollWidth - el.clientWidth)).toBeLessThanOrEqual(1)
+    const overflow = await page.evaluate(
+      () => document.documentElement.scrollWidth - window.innerWidth,
+    )
+    expect(overflow).toBeLessThanOrEqual(1)
+    // every transaction link is inside the panel, none cut off
+    const box = await panel.boundingBox()
+    for (const link of await panel.locator('.qp-run-txs a').all()) {
+      const b = await link.boundingBox()
+      expect(b.x).toBeGreaterThanOrEqual(box.x)
+      expect(b.x + b.width).toBeLessThanOrEqual(box.x + box.width + 1)
+    }
+  })
+
 test('a buyback too small to show at 3 decimals still shows, never as 0 SOL', async ({ page }) => {
   await stubApi(page)
   // the 1,492.75 $QUANTP bought for 0.000266 SOL on 2026-10-16
@@ -474,8 +504,10 @@ test('the Runs tab lists the engine wallet’s runs by UTC hour, with how each o
   const panel = ledgerPanel(page)
   await panel.getByRole('button', { name: 'Runs' }).click()
   await expect(panel.getByRole('button', { name: 'Runs' })).toHaveAttribute('aria-pressed', 'true')
-  // the default ledger: round 1, one burst of three transactions and no buyback that hour
+  // the default ledger: round 1's figures dated two hours ago, so after the engine's first run: one
+  // burst of three transactions and no buyback that hour
   const runs = panel.locator('tbody tr.qp-run')
+  const status = panel.locator('tbody tr.qp-run-status')
   await expect(runs).toHaveCount(1)
   const hour = Math.floor((Date.now() / 1000 - 7200) / 3600) * 3600
   const at = new Date(hour * 1000).toLocaleString('en-US', {
@@ -489,24 +521,85 @@ test('the Runs tab lists the engine wallet’s runs by UTC hour, with how each o
   await expect(runs.first().locator('td').nth(1)).toContainText('51 wallets')
   await expect(runs.first().locator('td').nth(2)).toHaveText('—')
   await expect(runs.first().locator('td').nth(3)).toHaveText('—')
-  await expect(runs.first().getByRole('link')).toHaveCount(3)
-  await expect(panel.locator('.qp-run-status')).toHaveText('buyback did not go through')
+  // its status, then its transactions, on the line under it
+  await expect(runs.first().getByRole('link')).toHaveCount(0)
+  await expect(status.first().getByRole('link')).toHaveCount(3)
+  await expect(status.first().getByRole('link').first()).toHaveText(
+    'Transaction 5B9NLS (opens in a new tab)',
+  )
+  await expect(status.first().locator('.chip')).toHaveText(['buyback did not go through'])
   await expect(panel.getByRole('button', { name: 'Show the last 7 days' })).toHaveCount(0)
 })
+
+// Runs-tab ledgers: a signature, a payout burst of one transaction, a burst of several (each
+// [signature, lamports, wallets paid, seconds after the first]; `recipients` is its distinct
+// wallets, their sum unless given), and a burn by the engine wallet.
+const sig = (tag, i = 0) => `${tag}${String(i).padStart(4, '1')}${'1'.repeat(80)}`
+const burstOf = (timestamp, txs, { wallet = QUANTP.payoutWallet, recipients } = {}) => {
+  const transactions = txs.map(([signature, lamports, n, after = 0], i) => ({
+    signature,
+    slot: 1 + i,
+    timestamp: timestamp + after,
+    lamports,
+    recipients: n,
+  }))
+  return {
+    timestamp,
+    wallet,
+    lamports: transactions.reduce((s, x) => s + BigInt(x.lamports), 0n).toString(),
+    recipients: recipients ?? transactions.reduce((s, x) => s + x.recipients, 0),
+    recipient: null,
+    transactions,
+  }
+}
+const burst = (timestamp, lamports, recipients, signature, wallet) =>
+  burstOf(timestamp, [[signature, lamports, recipients]], { wallet })
+const engineBurn = (timestamp, amount, solSpent, signature) => ({
+  signature,
+  slot: 9,
+  timestamp,
+  wallet: QUANTP.payoutWallet,
+  method: 'burn',
+  amount,
+  solSpent,
+})
+// Round 1, paid by hand from the payout wallet before the engine's first run.
+const ROUND_1_AT = 1792126586
+// The live ledger's widest runs: an hour that bought 0.5556 SOL of $QUANTP back (with earlier
+// buys) and burned 3.12M in four transactions, a repeated hour of six, and round 1.
+const wideRuns = () => {
+  const hour = Math.floor(Date.now() / 1000 / 3600) * 3600
+  return quantpLedger({
+    payouts: [
+      burstOf(hour - 3600 + 37, [
+        [sig('W', 1), '1100000', 14],
+        [sig('W', 2), '1100000', 14, 1],
+        [sig('W', 3), '1000000', 12, 2],
+      ]),
+      burstOf(hour - 7200 + 2000, [
+        [sig('R', 1), '2100000', 20],
+        [sig('R', 2), '2100000', 20, 1],
+        [sig('R', 3), '1000000', 7, 2],
+      ]),
+      burstOf(hour - 7200 + 22, [
+        [sig('R', 4), '2100000', 20],
+        [sig('R', 5), '2100000', 20, 1],
+        [sig('R', 6), '1000000', 7, 2],
+      ]),
+      burstOf(ROUND_1_AT, [
+        [sig('M', 1), '358024234', 20],
+        [sig('M', 2), '176743573', 20, 4],
+        [sig('M', 3), '15232167', 11, 9],
+      ]),
+    ],
+    burns: [engineBurn(hour - 3600 + 40, '3119233145959', '555616844', sig('W', 4))],
+  })
+}
 
 test('runs: complete, below the buyback minimum, missing a buyback, repeated; then a week', async ({
   page,
 }) => {
   const hour = Math.floor(Date.now() / 1000 / 3600) * 3600
-  const sig = (tag, i = 0) => `${tag}${String(i).padStart(4, '1')}${'1'.repeat(80)}`
-  const burst = (timestamp, lamports, recipients, signature, wallet = QUANTP.payoutWallet) => ({
-    timestamp,
-    wallet,
-    lamports,
-    recipients,
-    recipient: null,
-    transactions: [{ signature, slot: 1, timestamp, lamports, recipients }],
-  })
   const payouts = [
     // the last hour: paid, and bought back and burned
     burst(hour - 3600 + 60, '5000000', 28, sig('A')),
@@ -552,12 +645,15 @@ test('runs: complete, below the buyback minimum, missing a buyback, repeated; th
   await expect(runs.nth(0).locator('td').nth(1)).toContainText('28 wallets')
   await expect(runs.nth(0).locator('td').nth(2)).toHaveText('0.0033')
   await expect(runs.nth(0).locator('td').nth(3)).toHaveText('49.76K')
-  await expect(runs.nth(0).getByRole('link')).toHaveCount(2)
-  await expect(status.nth(0)).toHaveText('complete')
+  await expect(status.nth(0).getByRole('link')).toHaveCount(2)
+  await expect(status.nth(0).locator('.chip')).toHaveText(['complete'])
   await expect(status.nth(0).locator('.chip')).toHaveClass(/chip-grad/)
-  await expect(status.nth(1)).toHaveText('no buyback (below minimum)')
-  await expect(status.nth(2)).toContainText('buyback did not go through')
-  await expect(status.nth(2)).toContainText('repeated')
+  await expect(status.nth(1).locator('.chip')).toHaveText(['no buyback (below minimum)'])
+  await expect(status.nth(2).locator('.chip')).toHaveText([
+    'buyback did not go through',
+    'repeated',
+  ])
+  await expect(status.nth(2).getByRole('link')).toHaveCount(2)
   await expect(runs.nth(2).locator('td').nth(1)).toContainText('0.02')
   // the same 30 wallets paid twice are 60 payments, not 60 wallets
   await expect(runs.nth(2).locator('td').nth(1)).toContainText('60 payments')
@@ -576,6 +672,101 @@ test('runs: complete, below the buyback minimum, missing a buyback, repeated; th
   await expect(runs).toHaveCount(30)
   await panel.getByRole('button', { name: 'Show the last 24' }).click()
   await expect(runs).toHaveCount(24)
+})
+
+test('runs: two runs in one burst are repeated; one burst across two hours is two runs', async ({
+  page,
+}) => {
+  const hour = Math.floor(Date.now() / 1000 / 3600) * 3600
+  const payouts = [
+    // runs at :50 and :05 of the next hour, 15 minutes apart: the ledger joins them in one burst
+    burstOf(
+      hour - 7200 + 3000,
+      [
+        [sig('H', 1), '5000000', 28],
+        [sig('H', 2), '5000000', 28, 900],
+      ],
+      { recipients: 28 },
+    ),
+    // the same two wallets paid at :00 and again at :20 of one hour: one burst, four payments
+    burstOf(
+      hour - 10800 + 10,
+      [
+        [sig('J', 1), '2000000', 2],
+        [sig('J', 2), '2000000', 2, 1200],
+      ],
+      { recipients: 2 },
+    ),
+  ]
+  await stubApi(page)
+  await stubQuantp(page, { ledger: quantpLedger({ payouts }) })
+  await enter(page)
+  await page.goto(QUANTP.path)
+  const panel = ledgerPanel(page)
+  await panel.getByRole('button', { name: 'Runs' }).click()
+  const runs = panel.locator('tbody tr.qp-run')
+  const status = panel.locator('tbody tr.qp-run-status')
+  await expect(runs).toHaveCount(3)
+  for (const i of [0, 1]) {
+    await expect(runs.nth(i).locator('td').nth(1)).toContainText('0.005')
+    await expect(runs.nth(i).locator('td').nth(1)).toContainText('28 wallets')
+    await expect(status.nth(i).locator('.chip')).toHaveText(['buyback did not go through'])
+    await expect(status.nth(i).getByRole('link')).toHaveCount(1)
+  }
+  await expect(runs.nth(2).locator('td').nth(1)).toContainText('0.004')
+  await expect(runs.nth(2).locator('td').nth(1)).toContainText('4 payments')
+  await expect(status.nth(2).locator('.chip')).toHaveText([
+    'buyback did not go through',
+    'repeated',
+  ])
+})
+
+test('runs: round 1, paid by hand before the engine, is manual; earlier buys are flagged', async ({
+  page,
+}) => {
+  await stubApi(page)
+  await stubQuantp(page, { ledger: wideRuns() })
+  await enter(page)
+  await page.goto(QUANTP.path)
+  const panel = ledgerPanel(page)
+  await panel.getByRole('button', { name: 'Runs' }).click()
+  const runs = panel.locator('tbody tr.qp-run')
+  const status = panel.locator('tbody tr.qp-run-status')
+  await expect(runs).toHaveCount(3)
+  // the engine's burn of what the team bought by hand before: its SOL includes those buys
+  await expect(runs.nth(0).locator('td').nth(2)).toHaveText('0.5556')
+  await expect(runs.nth(0).locator('td').nth(2)).toHaveAttribute(
+    'title',
+    'Includes earlier buys whose $QUANTP this run burned',
+  )
+  await expect(runs.nth(0).locator('td').nth(3)).toHaveText('3.12M')
+  await expect(status.nth(0).locator('.chip')).toHaveText(['complete'])
+  await expect(status.nth(0).getByRole('link')).toHaveCount(4)
+  await expect(runs.nth(1).locator('td').nth(1)).toContainText('94 payments')
+  await expect(status.nth(1).locator('.chip')).toHaveText([
+    'buyback did not go through',
+    'repeated',
+  ])
+  await expect(status.nth(1).getByRole('link')).toHaveCount(6)
+  // round 1: the engine did not run it, so it owed no buyback
+  await expect(runs.nth(2).locator('td').first()).toContainText('Oct 16')
+  await expect(runs.nth(2).locator('td').nth(1)).toContainText('51 wallets')
+  await expect(status.nth(2).locator('.chip')).toHaveText(['manual payout'])
+  await expect(status.nth(2).locator('.chip')).not.toHaveClass(/chip-grad/)
+  await expect(panel.locator('.qp-fine').first()).toContainText(
+    'Rows marked manual are the team’s own, by hand, from before the engine’s first run on Oct 17, 2026.',
+  )
+  // the day under each hour stays on one line, in the page's side column too
+  const wrapped = await panel
+    .locator('.qp-run-day')
+    .evaluateAll((els) =>
+      els
+        .filter(
+          (el) => el.getBoundingClientRect().height > 2 * parseFloat(getComputedStyle(el).fontSize),
+        )
+        .map((el) => el.textContent),
+    )
+  expect(wrapped).toEqual([])
 })
 
 test('when the ledger answers with its newest rows only, Show all asks it for every one', async ({
