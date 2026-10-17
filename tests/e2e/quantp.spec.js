@@ -435,7 +435,8 @@ test('the burner fills in what was bought back and builds one BurnChecked from t
     ledger: quantpLedger({ unburned: { lamports: '320013872', amount: '1432024251739' } }),
   })
   await stubBurnRpc(page, sends)
-  await enter(page, { wallet: true, address: QUANTP.payoutWallet })
+  // the creator wallet: the payout wallet's tokens are the engine's to burn
+  await enter(page, { wallet: true, address: QUANTP.creator })
   await page.goto('/burn')
   await expect(page.getByRole('heading', { name: '$QUANTP buyback burn' })).toBeVisible()
   await expect(page.getByText('1,432,024.251739 $QUANTP for 0.32 SOL')).toBeVisible()
@@ -474,14 +475,52 @@ test('the burner fills in what was bought back and builds one BurnChecked from t
   expect(requests[0]).toHaveLength(1)
   expect(sends).toHaveLength(1)
   const { payer, burns } = burnsIn(requests[0][0])
-  expect(payer).toBe(QUANTP.payoutWallet)
+  expect(payer).toBe(QUANTP.creator)
   expect(burns).toHaveLength(1)
   expect(burns[0].keys.account.pubkey.toBase58()).toBe(QUANTP_ACCOUNT)
   expect(burns[0].keys.mint.pubkey.toBase58()).toBe(QUANTP.mint)
-  expect(burns[0].keys.owner.pubkey.toBase58()).toBe(QUANTP.payoutWallet)
+  expect(burns[0].keys.owner.pubkey.toBase58()).toBe(QUANTP.creator)
   expect(burns[0].keys.owner.isSigner).toBe(true)
   expect(burns[0].data.amount).toBe(1_432_024_251_739n)
   expect(burns[0].data.decimals).toBe(6)
+})
+
+test('the burner leaves the payout engine’s wallet to the engine', async ({ page }) => {
+  await stubApi(page)
+  await stubQuantp(page, {
+    ledger: quantpLedger({ unburned: { lamports: '320013872', amount: '1432024251739' } }),
+  })
+  await stubBurnRpc(page, [])
+  await enter(page, { wallet: true, address: QUANTP.engine.wallet })
+  await page.goto('/burn')
+  await page.getByRole('button', { name: 'Connect the wallet holding the $QUANTP' }).click()
+  await page.getByRole('button', { name: 'Test Wallet' }).click()
+  await expect(page.getByText('holds 3,070,967.498088 $QUANTP')).toBeVisible()
+  await expect(page.locator('.panel .notice')).toHaveText(
+    'The payout engine burns this wallet’s $QUANTP in its next hourly buyback.',
+  )
+  const amount = page.getByLabel('Amount to burn')
+  await expect(amount).toHaveValue('')
+  await expect(amount).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'Burned by the payout engine' })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'All it holds' })).toHaveCount(0)
+  expect(await page.evaluate(() => window.__signRequests?.length ?? 0)).toBe(0)
+})
+
+test('with nothing waiting to be burned, the burner fills in nothing', async ({ page }) => {
+  await stubApi(page)
+  // the default ledger: nothing bought back and not burned
+  await stubQuantp(page)
+  await stubBurnRpc(page, [])
+  await enter(page, { wallet: true, address: QUANTP.creator })
+  await page.goto('/burn')
+  await page.getByRole('button', { name: 'Connect the wallet holding the $QUANTP' }).click()
+  await page.getByRole('button', { name: 'Test Wallet' }).click()
+  await expect(page.getByText('holds 3,070,967.498088 $QUANTP')).toBeVisible()
+  // not the wallet's whole balance
+  await expect(page.getByLabel('Amount to burn')).toHaveValue('')
+  await expect(page.getByRole('button', { name: 'Enter an amount' })).toBeDisabled()
+  await expect(page.getByRole('button', { name: 'What was bought back' })).toHaveCount(0)
 })
 
 test('the burner warns when the wallet is not one of the team’s', async ({ page }) => {
