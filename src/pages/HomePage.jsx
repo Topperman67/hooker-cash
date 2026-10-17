@@ -10,6 +10,7 @@ import { compact, sol, toSol, usd } from '../lib/format.js'
 import { MeteoraMark } from '../components/Meteora.jsx'
 import Flywheel from '../components/Flywheel.jsx'
 import QuantpShowcase from '../components/QuantpShowcase.jsx'
+import { GRADUATED } from '../components/quantpPayouts.js'
 import { useQuantp } from '../context/QuantpContext.jsx'
 import { DOCS_URL } from '../lib/links.js'
 import { QUANTP } from '../../shared/network.mjs'
@@ -115,17 +116,18 @@ export default function HomePage() {
 
       {/* $QUANTP, Quant Pad's own token, then its fee flywheel. Both read /api/quantp (no store),
           so they still show while the market lists are down. The flywheel takes primitives only,
-          so its memo skips the home page's other polls. */}
+          so its memo skips the home page's other polls; its burned figure is the team's burns
+          (raw units), not the whole supply's. */}
       <section className="wrap section qps-section">
         <QuantpShowcase />
       </section>
       <section className="wrap section">
         <Flywheel
           feeBps={qp?.feeBps ?? null}
-          migrated={!!qp?.migrated}
+          migrated={GRADUATED || !!qp?.migrated}
           paidSol={qp?.payouts ? toSol(qp.payouts.paidLamports) : null}
           boughtSol={qp?.payouts ? toSol(qp.payouts.boughtLamports) : null}
-          burned={qp?.burned ?? null}
+          burned={qp?.payouts?.burnedAmount ?? null}
         />
       </section>
 

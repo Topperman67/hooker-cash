@@ -418,6 +418,12 @@
 .qp-ledger-totals dd {
   font-size: var(--t-sm);
 }
+/* the tokens behind a SOL figure, under it */
+.qp-ledger-tokens {
+  display: block;
+  color: var(--steel);
+  font-size: var(--t-xs);
+}
 /* the side column is narrow: the rows keep the trades table's look with less air */
 .qp-ledger .table th,
 .qp-ledger .table td {
@@ -459,6 +465,39 @@
   padding-bottom: 6px;
   color: var(--steel);
   font-size: var(--t-xs);
+}
+/* the engine's runs: five figures a row in the narrow column, so headers and figures may wrap, and
+   each run's status sits on a line of its own under it */
+.qp-ledger .qp-runs th,
+.qp-ledger .qp-runs td {
+  padding-left: 6px;
+  padding-right: 6px;
+  white-space: normal;
+  vertical-align: top;
+}
+.qp-ledger .qp-runs th {
+  vertical-align: bottom;
+}
+.qp-ledger .qp-run td {
+  padding-bottom: 6px;
+  border-bottom: 0;
+}
+.qp-ledger .qp-run-status td {
+  padding-top: 0;
+  padding-bottom: 10px;
+}
+.qp-run-day {
+  display: block;
+  color: var(--steel);
+  font-size: var(--t-xs);
+}
+.qp-run-txs a {
+  display: block;
+}
+.chip.qp-run-chip {
+  height: 20px;
+  padding: 0 8px;
+  margin-right: 6px;
 }
 .qp-ledger-empty {
   margin: 0;
@@ -582,6 +621,10 @@
   }
   .qp-actions .btn {
     flex: 1 1 auto;
+  }
+  /* two stats a row on a 360 px phone: "3.12M QUANTP" fits at this size, not the larger one */
+  .qp-stats dd {
+    font-size: var(--t-md);
   }
 }
 

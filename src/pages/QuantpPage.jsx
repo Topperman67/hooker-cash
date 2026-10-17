@@ -4,10 +4,14 @@ import { ArrowUpRight } from 'lucide-react'
 import MarketChart from '../components/MarketChart.jsx'
 import QuantpLedger from '../components/QuantpLedger.jsx'
 import {
+  BUYBACK_PCT,
   BUYBACK_RULE,
   ENGINE_NOTE,
   ENGINE_PATH,
+  GRADUATED,
+  HOLDERS_PCT,
   HOLDERS_RULE,
+  QUANTP_DAMM_POOL,
   payoutFigures,
   solFigure,
   tokenFigure,
@@ -27,9 +31,9 @@ const num = (v) => (v != null && Number.isFinite(Number(v)) ? Number(v) : null)
 
 // Where $QUANTP trades now: 'curve' (Meteora's bonding curve), 'graduating' (the curve is full and
 // Meteora is opening its DAMM v2 pool: nothing trades for a moment) or 'pool' (DAMM v2).
-// Unknown (null) while the chain has not been read.
+// It has graduated, for good (GRADUATED), so 'pool' even while the chain has not been read.
 function stageOf(data) {
-  if (data?.migrated) return 'pool'
+  if (GRADUATED || data?.migrated) return 'pool'
   const progress = num(data?.curveProgress)
   if (progress == null) return null
   return progress >= 1 ? 'graduating' : 'curve'
@@ -91,7 +95,7 @@ export default function QuantpPage() {
     () => ({ mint: q.mint, symbol: q.symbol, name: q.name, decimals: q.decimals, dbcPool: q.pool }),
     [q.mint, q.symbol, q.name, q.decimals, q.pool],
   )
-  const poolLink = d?.dammPool ? explorer.account(d.dammPool) : explorer.account(q.pool)
+  const poolLink = explorer.account(d?.dammPool ?? (stage === 'pool' ? QUANTP_DAMM_POOL : q.pool))
 
   return (
     <div className="wrap qp-page">
@@ -139,12 +143,23 @@ export default function QuantpPage() {
             <ExternalButton href={explorer.token(q.mint)}>Solscan</ExternalButton>
             <ExternalButton href={X_URL}>X</ExternalButton>
           </div>
-          <p className="qp-updated faint" aria-live="polite">
+          {/* The age changes on every poll, so it is not announced; the status line under it is,
+              and it changes only when the figures come, go or fall behind. */}
+          <p className="qp-updated faint">
             {d
               ? `Live · updated ${ago(d.updatedAt)} ago${delayed ? ' · some figures are delayed' : ''}`
               : q.error
                 ? 'Live figures are unavailable right now. Retrying shortly.'
                 : 'Reading live figures…'}
+          </p>
+          <p className="sr-only" role="status">
+            {d
+              ? delayed
+                ? 'Live figures are shown. Some of them are delayed.'
+                : 'Live figures are shown.'
+              : q.error
+                ? 'Live figures are unavailable right now.'
+                : ''}
           </p>
         </div>
       </header>
@@ -172,7 +187,16 @@ export default function QuantpPage() {
           <span className="num">{num(d?.holders)?.toLocaleString('en-US') ?? '—'}</span>
         </Stat>
         <Stat label="Burned">
-          <span className="num">{burned == null ? '—' : `${compact(burned)} ${q.symbol}`}</span>
+          <span
+            className="num"
+            title={
+              burned == null
+                ? undefined
+                : `${burned.toLocaleString('en-US', { maximumFractionDigits: q.decimals })} ${q.symbol} burned in all`
+            }
+          >
+            {burned == null ? '—' : `${compact(burned)} ${q.symbol}`}
+          </span>
         </Stat>
         <Stat label="Fee per trade">
           <span className="num">{feeNow == null ? '—' : bps(feeNow)}</span>
@@ -224,7 +248,7 @@ export default function QuantpPage() {
               {stage !== 'pool' && ' The token’s transfer hook takes nothing.'}
             </p>
 
-            <h3 className="qp-sub">Where the creator’s share goes</h3>
+            <h3 className="qp-sub">How the payout wallet is paid out</h3>
             <div
               className="qp-split"
               role="img"
@@ -254,7 +278,9 @@ export default function QuantpPage() {
                 </dt>
                 <dd>{BUYBACK_RULE}</dd>
                 <dd className="num qp-earned">
-                  {solFigure(paid.boughtSol)} bought back · {tokenFigure(burned)} burned
+                  {/* the team's own burns: the supply's total, others' burns included, is the
+                      Burned stat */}
+                  {solFigure(paid.boughtSol)} bought back · {tokenFigure(paid.burned)} burned
                 </dd>
               </div>
             </dl>
@@ -320,9 +346,11 @@ export default function QuantpPage() {
                 It launched on a Meteora bonding curve and has graduated to a Meteora DAMM v2 pool.
               </li>
               <li>
-                The 60/40 split is the team’s policy, not on-chain code: Quant Pad’s payout engine
-                pays it out every hour from a wallet the team funds. Every payout, buyback and burn
-                is listed on this page.
+                The {HOLDERS_PCT}/{BUYBACK_PCT} split is the team’s discretionary policy, not
+                on-chain code: Quant Pad’s payout engine pays it out about once an hour from a
+                wallet the team funds, and the team can change, pause or stop it at any time.
+                Holding ${q.symbol} gives no right to any payment. Every payout, buyback and burn is
+                listed on this page.
               </li>
               {stage === 'pool' ? (
                 <li>
@@ -366,7 +394,7 @@ export default function QuantpPage() {
               <dt>Meteora</dt>
               <dd>
                 <a href={poolLink} target="_blank" rel="noreferrer">
-                  {d?.dammPool ? 'DAMM v2 pool' : 'Bonding curve pool'}
+                  {stage === 'pool' ? 'DAMM v2 pool' : 'Bonding curve pool'}
                 </a>
               </dd>
             </dl>
