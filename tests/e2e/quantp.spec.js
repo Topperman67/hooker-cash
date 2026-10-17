@@ -29,7 +29,7 @@ test('the payout engine shows once it runs: the hourly rule at this tier, who it
   await expect(engine).toContainText(
     'releases 20% a day of its SOL (more as the market cap grows): 60% to the 31 wallets holding at least 1.5M $QUANTP (0.15% of the supply), by balance, and 40% to buy back and burn $QUANTP.',
   )
-  await expect(engine).toContainText('Next run about 0.0083 SOL · last run 20m ago')
+  await expect(engine).toContainText('Next run about 0.0083 SOL · last payout 2h ago')
   await expect(engine.getByRole('link', { name: 'GLAn…FAvn' })).toHaveAttribute(
     'href',
     `https://solscan.io/account/${QUANTP.payoutWallet}`,

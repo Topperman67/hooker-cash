@@ -104,9 +104,10 @@ function Burst({ burst }) {
 
 /**
  * The payout engine (/api/quantp/engine), shown once it runs: what it does every hour at the
- * current market cap, how many wallets it pays, and its next and last run.
+ * current market cap, how many wallets it pays, its next run, and the payout wallet's last payout
+ * on-chain (`lastPayoutAt`, from the ledger).
  */
-function Engine({ engine, symbol, decimals }) {
+function Engine({ engine, lastPayoutAt, symbol, decimals }) {
   if (!engine?.live) return null
   const minHold = Number(engine.minHold) / 10 ** decimals
   const holdersPct = engine.holdersShareBps / 100
@@ -127,7 +128,7 @@ function Engine({ engine, symbol, decimals }) {
       </p>
       <p className="faint qp-engine-text">
         Next run about {sol(toSol(engine.next.release), { digits: 4 })} ·{' '}
-        {engine.lastRunAt ? `last run ${ago(engine.lastRunAt)} ago` : 'no run yet'}
+        {lastPayoutAt ? `last payout ${ago(lastPayoutAt)} ago` : 'no payout yet'}
       </p>
     </div>
   )
@@ -157,7 +158,12 @@ export default function QuantpLedger({ symbol, decimals, burned }) {
   else if (tab === 'payouts')
     body = (
       <>
-        <Engine engine={engine} symbol={symbol} decimals={decimals} />
+        <Engine
+          engine={engine}
+          lastPayoutAt={d.payouts[0]?.timestamp ?? null}
+          symbol={symbol}
+          decimals={decimals}
+        />
         <dl className="qp-ledger-totals">
           <Stat label="Paid out">
             <span className="num">{sol(toSol(t.paidLamports), { digits: 3 })}</span>

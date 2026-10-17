@@ -516,3 +516,47 @@ test('the keeper tick runs the engine first, and GET /api/quantp/engine shows it
     app.close()
   }
 })
+
+test('with the store down, dust sent to the wallet does not hold off a run: its last payout counts', async () => {
+  const clock = { t: 1_800_000_000_000 }
+  const store = memoryStore()
+  store.down = true
+  // what the ledger read: the engine wallet's last payout `paidSecsAgo` ago (or never)
+  const ledgerSaying = (paidSecsAgo, { unread = 0 } = {}) => ({
+    async ledger() {
+      return {
+        unread,
+        payouts:
+          paidSecsAgo == null
+            ? []
+            : [
+                {
+                  wallet: KEY.publicKey.toBase58(),
+                  transactions: [{ timestamp: clock.t / 1000 - paidSecsAgo }],
+                },
+              ],
+        burns: [],
+      }
+    },
+  })
+  // the wallet's newest transaction is dust a stranger sent a minute ago
+  const engine = (ledger) =>
+    createQuantpEngine({
+      connection: stubChain({ holders: MANY, newest: { blockTime: clock.t / 1000 - 60 } }),
+      store,
+      feed,
+      ledger,
+      secret: SECRET,
+      policy: PAYOUTS_ONLY,
+      now: () => clock.t,
+      log: { error() {} },
+    })
+  // last paid two hours ago: due, dust or not
+  assert.equal((await engine(ledgerSaying(7_200)).tick()).ran, true)
+  // paid ten minutes ago: not due
+  assert.equal((await engine(ledgerSaying(600)).tick()).reason, 'not-due')
+  // never paid: due
+  assert.equal((await engine(ledgerSaying(null)).tick()).ran, true)
+  // the ledger has not read everything yet: the newest transaction (the dust) counts, and it waits
+  assert.equal((await engine(ledgerSaying(7_200, { unread: 1 })).tick()).reason, 'not-due')
+})

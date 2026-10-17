@@ -207,7 +207,8 @@ export function engineBlocker({ keypair, pinned, paused, badKey = false }) {
 /**
  * The engine. `secret` is QUANTP_ENGINE_SECRET (base58 or a JSON byte array), `feed` the $QUANTP
  * feed (server/quantp.mjs createQuantpFeed) for the market cap and supply, `store` the app's store
- * for the hourly record and run lock (a store that fails falls back to the wallet's own history).
+ * for the hourly record and run lock, and `ledger` the payouts and burns reader (createQuantpLedger):
+ * with the store down, the wallet's last payout or burn there says when it last ran.
  *   tick({ deadline }) runs when an hour has passed since the last run, and says what it did.
  *   status() is what the site shows: the wallet, whether it is live, the tier and what the next
  *   run would release, the eligible holders, and when it last ran.
@@ -216,6 +217,7 @@ export function createQuantpEngine({
   connection,
   store,
   feed,
+  ledger = null,
   secret,
   paused = false,
   now = Date.now,
@@ -299,15 +301,31 @@ export function createQuantpEngine({
     }
   }
 
+  // The wallet's last payout or burn on-chain, from the ledger (which reads every transaction of
+  // it: dust a stranger sends is no run), in ms; null when it never paid or burned. Undefined when
+  // the ledger cannot say for sure (unavailable, or transactions it has not read yet).
+  async function lastActivity() {
+    if (!ledger) return undefined
+    const l = await ledger.ledger().catch(() => null)
+    if (!l || l.unread > 0) return undefined
+    const times = [
+      ...l.payouts.filter((p) => p.wallet === wallet).map((p) => p.transactions.at(-1).timestamp),
+      ...l.burns.filter((b) => b.wallet === wallet).map((b) => b.timestamp),
+    ]
+    return times.length ? Math.max(...times) * 1000 : null
+  }
+
   // When the last run started: the store's record (shared by every instance), else this
-  // instance's, else the wallet's newest transaction (any, so a deposit also counts: it can only
-  // delay a run, never repeat one).
+  // instance's or the wallet's last payout or burn (the ledger), else the wallet's newest
+  // transaction of any kind (so a deposit also counts: it can only delay a run, never repeat one).
   async function lastRunAt() {
     const stored = await store.get(LAST_RUN).then(
       (v) => (v == null ? null : Number(v)),
       () => undefined,
     )
     if (stored !== undefined) return stored ?? lastLocal
+    const activity = await lastActivity()
+    if (activity !== undefined) return Math.max(lastLocal ?? 0, activity ?? 0) || null
     const [newest] = await connection
       .getSignaturesForAddress(walletKey, { limit: 1 }, 'confirmed')
       .catch(() => [])

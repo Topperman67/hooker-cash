@@ -515,6 +515,7 @@ export async function createApplication(options = {}) {
       connection,
       store,
       feed: quantp,
+      ledger: quantpLedger,
       secret: process.env.QUANTP_ENGINE_SECRET,
       paused: process.env.QUANTP_ENGINE_PAUSED === '1',
     })
