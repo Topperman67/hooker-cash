@@ -1,4 +1,4 @@
-/* $QUANTP across the site: the home showcase, tape pin, header pill, footer row and the other
+/* $QUANTP across the site: the home showcase, tape pin, menu row, footer row and the other
    token surfaces. Night rules for these live here too, scoped to :root[data-theme='dark']. */
 
 /* ---------- home showcase (components/QuantpShowcase.jsx) ---------- */
@@ -548,45 +548,6 @@
   }
 }
 
-/* ---------- desktop header pill (components/Shell.jsx) ---------- */
-/* Only where the bar has room: from 1280px, beside the switch. Below that the tape under the
-   header carries $QUANTP, and the menu has its own row. */
-.qp-pill {
-  display: none;
-  align-items: center;
-  gap: 7px;
-  flex: none;
-  height: 32px;
-  padding: 0 11px;
-  border-radius: var(--r-pill);
-  border: 1px solid var(--line, rgba(127, 127, 127, 0.25));
-  color: var(--ink-2);
-  font-size: var(--t-xs);
-  text-decoration: none;
-  white-space: nowrap;
-}
-.qp-pill:hover {
-  border-color: currentColor;
-}
-.qp-pill strong {
-  font-family: var(--font-mono);
-  font-weight: 700;
-  color: var(--ink);
-}
-.qp-pill-change {
-  display: none;
-}
-@media (min-width: 1280px) {
-  .qp-pill {
-    display: inline-flex;
-  }
-}
-@media (min-width: 1320px) {
-  .qp-pill-change {
-    display: inline;
-  }
-}
-
 /* ---------- mobile menu row (components/Shell.jsx) ---------- */
 .mobile-nav a.qp-menu {
   display: flex;
@@ -738,12 +699,6 @@
     var(--smoke-shadow),
     0 0 0 1px rgba(143, 164, 255, 0.22),
     0 0 32px rgba(46, 75, 255, 0.14);
-}
-:root[data-theme='dark'] .qp-pill {
-  border-color: rgba(255, 255, 255, 0.16);
-}
-:root[data-theme='dark'] .qp-pill:hover {
-  border-color: currentColor;
 }
 :root[data-theme='dark'] .mobile-nav a.qp-menu {
   box-shadow:

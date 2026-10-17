@@ -651,24 +651,6 @@
     display: none;
   }
 }
-/* From 1280px the bar also carries the $QUANTP pill (showcase.css): the Meteora badge stays a
-   mark (its name is its aria-label; the footer and hero still say "Built on Meteora"), the gaps
-   and link padding tighten, and the search gives up a little width. */
-@media (min-width: 1280px) {
-  .topbar-inner {
-    gap: 10px;
-  }
-  .nav a {
-    padding: 8px 8px;
-  }
-  .nav a.active::after {
-    left: 8px;
-    right: 8px;
-  }
-  .topbar-search {
-    min-width: 150px;
-  }
-}
 @media (min-width: 1141px) and (max-width: 1199px) {
   .brand-lockup {
     height: 32px;

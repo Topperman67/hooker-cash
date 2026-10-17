@@ -3,7 +3,7 @@ import { useResource } from '../lib/api.js'
 import { QUANTP } from '../../shared/network.mjs'
 
 // Live $QUANTP figures from GET /api/quantp (server/quantp.mjs), polled once for the whole app so
-// the tape pin, header pill, home showcase, flywheel, footer and /quantp page share one request.
+// the tape pin, menu row, home showcase, flywheel, footer and /quantp page share one request.
 // The route reads the chain and DexScreener and never the store, so it keeps working while Redis
 // is down. Each source can fail on its own: its fields are then null (or the last good value, with
 // `stale` set in `sources`).

@@ -55,21 +55,6 @@ function WalletButton() {
   )
 }
 
-// $QUANTP, Quant Pad's own token, in the bar: price (and 24h change where it fits). Desktop only
-// (showcase.css); the tape under the header carries it at every width.
-function QuantpPill() {
-  const { q, f } = useQuantpFigures()
-  return (
-    <Link to={q.path} className="qp-pill" title={`${q.name}: Quant Pad’s own token`}>
-      <strong>${q.symbol}</strong>
-      <span className="num">
-        <QuantpPrice f={f} />
-      </span>
-      <span className={`num qp-pill-change ${changeClass(f.change)}`}>{pct(f.change)}</span>
-    </Link>
-  )
-}
-
 // The menu's $QUANTP row, under its search: one link to the token page.
 function QuantpMenuRow() {
   const { q, f } = useQuantpFigures()
@@ -114,7 +99,8 @@ function QuantpFooter() {
         </span>
       </div>
       <p className="footer-token-note">
-        Quant Pad’s own token. The team pays out its fee split; nothing on-chain enforces it.
+        Quant Pad’s own token. Its fee split is paid out every hour by Quant Pad’s payout engine
+        from a wallet the team funds; nothing on-chain enforces it.
       </p>
     </div>
   )
@@ -172,7 +158,6 @@ export default function Shell({ children }) {
               </nav>
               <SearchBox />
               <div className="topbar-actions">
-                <QuantpPill />
                 <ThemeToggle />
                 <WalletButton />
                 <button
