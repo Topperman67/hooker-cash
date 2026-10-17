@@ -625,6 +625,25 @@ export function ledgerEntries(tx, { token = QUANTP, wallets = teamWallets(token)
 const BURST_GAP = 1800
 
 /**
+ * The real figures behind $QUANTP's 60/40 split, from a ledger() result (or null): what was paid
+ * to holders and to how many wallets, the SOL spent buying $QUANTP back (burned or not yet), what
+ * the team burned, and the SOL waiting in the payout wallet. /api/quantp carries it as `payouts`,
+ * so every page that shows the split shows what actually happened, never an estimate.
+ */
+export function ledgerSummary(ledger) {
+  const t = ledger?.totals
+  if (!t) return null
+  return {
+    paidLamports: t.paidLamports,
+    wallets: t.recipients,
+    boughtLamports: (BigInt(t.buybackLamports) + BigInt(t.unburned?.lamports ?? 0)).toString(),
+    burnedAmount: t.burnedAmount,
+    waitingLamports: ledger.payoutLamports ?? null,
+    updatedAt: ledger.updatedAt ?? null,
+  }
+}
+
+/**
  * The /api/quantp/ledger lists from every entry read so far (ledgerEntries), newest first.
  *   - payouts: bursts, each the payout transactions one wallet sent within BURST_GAP of the one
  *     before.

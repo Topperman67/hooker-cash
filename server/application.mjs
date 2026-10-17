@@ -15,7 +15,7 @@ import {
   quantumClientError,
 } from './keeper.mjs'
 import { createPriceFeed } from './prices.mjs'
-import { createGeckoFeed, createQuantpFeed, createQuantpLedger } from './quantp.mjs'
+import { createGeckoFeed, createQuantpFeed, createQuantpLedger, ledgerSummary } from './quantp.mjs'
 import { createQuantpEngine } from './quantp-engine.mjs'
 import { createRpcProxy, globalRpcLimit, writeRpcResponse } from './rpc-proxy.mjs'
 import { configuredStore, createFileStore } from './storage.mjs'
@@ -1343,7 +1343,13 @@ export async function createApplication(options = {}) {
       // $QUANTP: no store reads (the limiter fails open while Redis is down).
       if (req.method === 'GET' && path === '/api/quantp') {
         await limitRead(req)
-        return json(res, 200, await quantp.snapshot(), QUANTP_CACHE)
+        // With what was really paid and burned (the ledger, as cached on this instance: one still
+        // loading answers null this time rather than hold up the live figures).
+        const [snapshot, ledger] = await Promise.all([
+          quantp.snapshot(),
+          within(quantpLedger.ledger(), 1_500).catch(() => null),
+        ])
+        return json(res, 200, { ...snapshot, payouts: ledgerSummary(ledger) }, QUANTP_CACHE)
       }
       if (req.method === 'GET' && path === '/api/quantp/candles') {
         await limitRead(req)

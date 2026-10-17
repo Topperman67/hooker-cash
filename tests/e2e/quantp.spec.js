@@ -36,6 +36,47 @@ test('the payout engine shows once it runs: the hourly rule at this tier, who it
   )
 })
 
+test('the tokenomics show what was really paid and bought back, and how the engine pays', async ({
+  page,
+}) => {
+  await stubApi(page)
+  await stubQuantp(page)
+  await enter(page)
+  await page.goto(QUANTP.path)
+  const split = page.locator('.qp-split-legend')
+  await expect(split).toContainText(
+    'In SOL every hour, to each wallet holding at least 0.15% of the supply, by balance.',
+  )
+  await expect(split).toContainText('0.55 SOL paid so far to 51 wallets')
+  await expect(split).toContainText('Every hour it buys $QUANTP in its pool and burns it.')
+  await expect(split).toContainText('0.553 SOL bought back · 0 burned')
+  await expect(page.locator('.qp-tokenomics')).toContainText(
+    'Quant Pad’s payout engine pays it out from there every hour',
+  )
+  await expect(page.locator('#before-you-trade')).toContainText(
+    'Quant Pad’s payout engine pays it out every hour from a wallet the team funds',
+  )
+  // no estimate is shown as if holders had it
+  await expect(page.locator('main')).not.toContainText('earned')
+})
+
+test('the home page shows the same real figures and rules for $QUANTP', async ({ page }) => {
+  await stubApi(page)
+  await stubQuantp(page)
+  await enter(page)
+  await page.goto('/')
+  const rows = page.locator('.fw-rows')
+  await expect(rows).toContainText(
+    'In SOL every hour, to each wallet holding at least 0.15% of the supply, by balance.',
+  )
+  await expect(rows).toContainText('0.55 SOL paid so far')
+  await expect(rows).toContainText('0.553 SOL bought back · 0 burned')
+  await expect(page.locator('.qps-note')).toContainText(
+    'paid out every hour by Quant Pad’s payout engine from a wallet the team funds',
+  )
+  await expect(page.locator('main')).not.toContainText('earned')
+})
+
 test('an engine that is set up but not running yet is not shown', async ({ page }) => {
   await stubApi(page)
   await stubQuantp(page, { engine: quantpEngine({ live: false, reason: 'no-key' }) })
@@ -68,10 +109,10 @@ test('payouts list round 1 as one burst with its totals, and Burns says plainly 
   )
   await expect(panel.locator('.qp-ledger-totals')).toContainText('Paid out0.55 SOL')
   await expect(panel.locator('.qp-ledger-totals')).toContainText('Wallets paid51')
-  await expect(panel.locator('.qp-ledger-totals')).toContainText('Holders’ share earned1.937 SOL')
+  await expect(panel.locator('.qp-ledger-totals')).toContainText('Wallets eligible now—')
   await expect(panel.locator('.qp-ledger-totals')).toContainText('In the payout wallet1.58 SOL')
   await expect(panel).toContainText(
-    'The team pays holders in bursts: small ones now, bigger ones as the market cap grows.',
+    'Each row is one payout of SOL from the payout wallet GLAn…FAvn (transactions sent together count as one), read from the chain.',
   )
   // the burst is one row; its three transactions open under it, in the order sent
   const rows = panel.locator('tbody tr')
@@ -102,12 +143,12 @@ test('payouts list round 1 as one burst with its totals, and Burns says plainly 
   await expect(panel.locator('tbody tr')).toHaveCount(0)
   await expect(panel).toContainText('No burns yet.')
   await expect(panel.locator('.qp-ledger-totals')).toContainText('Burned0 QUANTP')
-  await expect(panel.locator('.qp-ledger-totals')).toContainText('Buyback share earned1.291 SOL')
-  await expect(panel.locator('.qp-ledger-totals')).toContainText('Bought, not burned yet0 SOL')
+  await expect(panel.locator('.qp-ledger-totals')).toContainText('Bought back0 SOL')
+  await expect(panel.locator('.qp-ledger-totals')).toContainText('Not burned yet0 SOL')
   await expect(panel.getByRole('link', { name: '3B53…LvHc' })).toBeVisible()
 
   // the tokenomics fine print links here
-  await page.getByRole('link', { name: 'See what has been paid out and burned' }).click()
+  await page.getByRole('link', { name: 'See every transaction' }).click()
   await expect(page).toHaveURL(/#payouts$/)
 })
 
@@ -161,8 +202,8 @@ test('burns show the tokens burned and the SOL their buyback spent; burns by oth
   await expect(rows.nth(1)).toContainText('1,000,000')
   await expect(rows.nth(1).locator('td').nth(2)).toHaveText('—')
   await expect(panel.locator('.qp-ledger-totals')).toContainText('Burned3M QUANTP')
-  await expect(panel.locator('.qp-ledger-totals')).toContainText('SOL spent0.5 SOL')
-  await expect(panel.locator('.qp-ledger-totals')).toContainText('Bought, not burned yet0.15 SOL')
+  await expect(panel.locator('.qp-ledger-totals')).toContainText('Bought back0.65 SOL')
+  await expect(panel.locator('.qp-ledger-totals')).toContainText('Not burned yet0.15 SOL')
   await expect(panel).toContainText('Other wallets have burned 2M QUANTP.')
   // a transaction the server could not read yet is said, not hidden
   await expect(panel).toContainText(

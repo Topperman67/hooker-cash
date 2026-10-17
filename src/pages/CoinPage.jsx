@@ -133,7 +133,7 @@ export default function CoinPage() {
           label={c.mint === QUANTP.mint ? 'Quant Pad’s own token' : undefined}
           plain={
             c.mint === QUANTP.mint
-              ? 'The team pays out the creator’s fee share, not enforced on-chain: 60% to holders in SOL, 40% to buyback & burn.'
+              ? 'The creator’s fee share is paid out every hour by Quant Pad’s payout engine, not enforced on-chain: 60% in SOL to wallets holding at least 0.15% of the supply, 40% to buyback & burn.'
               : undefined
           }
           footer={

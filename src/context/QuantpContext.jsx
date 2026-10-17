@@ -19,8 +19,11 @@ import { QUANTP } from '../../shared/network.mjs'
 //   curveProgress, migrated, dammPool,   // 0..1 of the graduation threshold; DAMM v2 pool once migrated
 //   feeBps, postGradFeeBps,              // the fee charged now (200 on the curve, 500 after graduation)
 //   fees: { lifetimeSol, creatorLifetimeSol, holdersSol, buybackSol } | null,
-//                                        // SOL earned so far: all trading fees, the creator's share,
-//                                        // and that share split 60/40 by the team's stated policy
+//                                        // estimates of the fees so far; not shown as payouts
+//   payouts: { paidLamports, wallets, boughtLamports, burnedAmount, waitingLamports } | null,
+//                                        // what the payout wallet really paid holders, spent on
+//                                        // buybacks and burned, and holds now (server/quantp.mjs
+//                                        // ledgerSummary); null until the chain has been read
 //   launchedAt, updatedAt,               // unix seconds
 //   sources: { chain: 'ok'|'stale'|'down', dex: 'ok'|'stale'|'down' }
 // }

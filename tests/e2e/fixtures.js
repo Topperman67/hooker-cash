@@ -407,7 +407,9 @@ export async function enter(page, { wallet = false, address = WALLET_ADDRESS } =
 
 // ---- $QUANTP's page -------------------------------------------------------------------------------
 
-// /api/quantp after graduation, with the fees earned the page showed on 2026-10-16.
+// /api/quantp after graduation, as on 2026-10-16: the fee estimates (which the site no longer
+// shows as payouts) and `payouts`, what the payout wallet had really paid (round 1), bought back
+// (two buys, not burned yet) and held.
 export const quantpSnapshot = (over = {}) => ({
   mint: QUANTP.mint,
   symbol: QUANTP.symbol,
@@ -431,6 +433,13 @@ export const quantpSnapshot = (over = {}) => ({
   feeBps: 500,
   postGradFeeBps: 500,
   fees: { lifetimeSol: 4.416, creatorLifetimeSol: 3.228, holdersSol: 1.9368, buybackSol: 1.2912 },
+  payouts: {
+    paidLamports: '549999974',
+    wallets: 51,
+    boughtLamports: '552559872',
+    burnedAmount: '0',
+    waitingLamports: '1021862000',
+  },
   launchedAt: QUANTP.launchedAt,
   updatedAt: Math.floor(Date.now() / 1000),
   sources: { chain: 'ok', dex: 'ok' },

@@ -15,6 +15,7 @@ import { join } from 'node:path'
 import {
   createQuantpLedger,
   ledgerEntries,
+  ledgerSummary,
   quantpLedger,
   teamWallets,
 } from '../../server/quantp.mjs'
@@ -603,4 +604,26 @@ test('a transaction the node refuses is left for the next refresh and counted; t
   assert.equal(second.unread, 0)
   assert.deepEqual(connection.calls.transactions.slice(3), [s(REAL.dust)])
   assert.equal(second.payouts.length, 1)
+})
+
+test('/api/quantp’s `payouts`: what was really paid, bought back, burned and is waiting', () => {
+  assert.equal(ledgerSummary(null), null)
+  // round 1 and the payout wallet's two buybacks, from mainnet, with its balance then
+  const ledger = {
+    ...quantpLedger(
+      Object.values(REAL).flatMap((t) => ledgerEntries(t)),
+      {
+        payoutLamports: 1_021_862_399n,
+      },
+    ),
+    updatedAt: 1792204456,
+  }
+  assert.deepEqual(ledgerSummary(ledger), {
+    paidLamports: '373256401', // the two round 1 batches in the fixtures
+    wallets: 31,
+    boughtLamports: '552559872', // 0.320 + 0.2325 SOL, none burned yet
+    burnedAmount: '0',
+    waitingLamports: '1021862399',
+    updatedAt: 1792204456,
+  })
 })

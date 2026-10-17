@@ -3,12 +3,11 @@ import { ChevronDown } from 'lucide-react'
 import { useResource } from '../lib/api.js'
 import { Address, Segmented, Stat } from './UI.jsx'
 import { ago, compact, formatUnits, short, sol, toSol } from '../lib/format.js'
-import { explorer } from '../../shared/network.mjs'
+import { QUANTP, explorer } from '../../shared/network.mjs'
 
 // Rows shown before "Show all": the panel sits in the page's narrow side column.
 const FIRST_ROWS = 8
 
-const num = (v) => (v != null && Number.isFinite(Number(v)) ? Number(v) : null)
 const when = (seconds) =>
   seconds
     ? new Date(seconds * 1000).toLocaleString('en-US', {
@@ -136,10 +135,10 @@ function Engine({ engine, symbol, decimals }) {
 
 /**
  * $QUANTP's payouts to holders and its burns, read from the team's wallets by /api/quantp/ledger,
- * so holders can check the stated 60/40 split against what was actually paid and burned. `fees`
- * is /api/quantp's fees earned so far, `burned` the whole tokens gone from the supply.
+ * with the payout engine's state from /api/quantp/engine, so holders can see what was actually
+ * paid, bought back and burned. `burned` is the whole tokens gone from the supply.
  */
-export default function QuantpLedger({ symbol, decimals, fees, burned }) {
+export default function QuantpLedger({ symbol, decimals, burned }) {
   const [tab, setTab] = useState('payouts')
   const ledger = useResource('/api/quantp/ledger', 30_000)
   const engine = useResource('/api/quantp/engine', 60_000).data
@@ -166,8 +165,13 @@ export default function QuantpLedger({ symbol, decimals, fees, burned }) {
           <Stat label="Wallets paid">
             <span className="num">{t.recipients.toLocaleString('en-US')}</span>
           </Stat>
-          <Stat label="Holders’ share earned">
-            <span className="num">{sol(num(fees?.holdersSol), { digits: 3 })}</span>
+          <Stat label="Wallets eligible now">
+            <span
+              className="num"
+              title={`Holding at least ${QUANTP.engine.minHoldBps / 100}% of the supply`}
+            >
+              {engine?.configured ? engine.eligible.toLocaleString('en-US') : '—'}
+            </span>
           </Stat>
           <Stat label="In the payout wallet">
             <span className="num">{sol(toSol(d.payoutLamports), { digits: 3 })}</span>
@@ -192,10 +196,9 @@ export default function QuantpLedger({ symbol, decimals, fees, burned }) {
           </p>
         )}
         <p className="faint qp-fine">
-          The team pays holders in bursts: small ones now, bigger ones as the market cap grows. Each
-          row is one burst of SOL from its payout wallet{' '}
-          <Address value={d.wallets.payout} href={explorer.account(d.wallets.payout)} />, read from
-          the chain.
+          Each row is one payout of SOL from the payout wallet{' '}
+          <Address value={d.wallets.payout} href={explorer.account(d.wallets.payout)} />{' '}
+          (transactions sent together count as one), read from the chain.
         </p>
       </>
     )
@@ -208,18 +211,22 @@ export default function QuantpLedger({ symbol, decimals, fees, burned }) {
               {compact(teamBurned)} {symbol}
             </span>
           </Stat>
-          <Stat label="SOL spent">
-            <span className="num">{sol(toSol(t.buybackLamports), { digits: 3 })}</span>
+          <Stat label="Bought back">
+            <span className="num">
+              {sol(toSol(BigInt(t.buybackLamports) + BigInt(t.unburned.lamports)), { digits: 3 })}
+            </span>
           </Stat>
-          <Stat label="Buyback share earned">
-            <span className="num">{sol(num(fees?.buybackSol), { digits: 3 })}</span>
-          </Stat>
-          <Stat label="Bought, not burned yet">
+          <Stat label="Not burned yet">
             <span
               className="num"
-              title={`${formatUnits(t.unburned.amount, decimals, 0)} ${symbol}`}
+              title={`${formatUnits(t.unburned.amount, decimals, 0)} ${symbol}, bought for this SOL`}
             >
               {sol(toSol(t.unburned.lamports), { digits: 3 })}
+            </span>
+          </Stat>
+          <Stat label="Next buyback">
+            <span className="num">
+              {engine?.live ? sol(toSol(engine.next.buyback), { digits: 4 }) : '—'}
             </span>
           </Stat>
         </dl>
@@ -258,9 +265,9 @@ export default function QuantpLedger({ symbol, decimals, fees, burned }) {
           Buys and burns by the payout wallet{' '}
           <Address value={d.wallets.payout} href={explorer.account(d.wallets.payout)} /> and the
           creator wallet{' '}
-          <Address value={d.wallets.creator} href={explorer.account(d.wallets.creator)} />. SOL
-          spent is what they paid for the ${symbol} they bought since the burn before, the launch’s
-          dev buy aside.
+          <Address value={d.wallets.creator} href={explorer.account(d.wallets.creator)} />.
+          {engine?.live && ' The payout engine buys back and burns every hour.'} SOL spent is what
+          they paid for the ${symbol} they bought since the burn before, the launch’s dev buy aside.
           {othersBurned >= 1 && ` Other wallets have burned ${compact(othersBurned)} ${symbol}.`}
         </p>
       </>

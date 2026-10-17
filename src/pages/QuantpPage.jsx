@@ -2,6 +2,14 @@ import { useMemo } from 'react'
 import { ArrowUpRight } from 'lucide-react'
 import MarketChart from '../components/MarketChart.jsx'
 import QuantpLedger from '../components/QuantpLedger.jsx'
+import {
+  BUYBACK_RULE,
+  ENGINE_NOTE,
+  HOLDERS_RULE,
+  payoutFigures,
+  solFigure,
+  tokenFigure,
+} from '../components/quantpPayouts.js'
 import TradeTicket from '../components/TradeTicket.jsx'
 import TradesTable from '../components/TradesTable.jsx'
 import { Address, CurveProgress, Stat } from '../components/UI.jsx'
@@ -71,7 +79,7 @@ export default function QuantpPage() {
   const feeNow = num(d?.feeBps)
   const curveFee = graduated ? q.feeBps : (feeNow ?? q.feeBps)
   const postFee = num(d?.postGradFeeBps) ?? q.postGradFeeBps
-  const fees = d?.fees
+  const paid = payoutFigures(d?.payouts, q.decimals)
   const trades = d?.txns24h ? d.txns24h.buys + d.txns24h.sells : null
   const burned = d?.burned == null ? null : Number(d.burned) / 10 ** q.decimals
   const delayed = d && (d.sources?.chain !== 'ok' || d.sources?.dex !== 'ok')
@@ -232,31 +240,25 @@ export default function QuantpPage() {
                 <dt>
                   <i className="qp-dot qp-dot-holders" /> {holdersPct}% to holders
                 </dt>
-                <dd>In SOL, by time held</dd>
-                <dd className="num qp-earned">{sol(num(fees?.holdersSol))} earned so far</dd>
+                <dd>{HOLDERS_RULE}</dd>
+                <dd className="num qp-earned">
+                  {solFigure(paid.paidSol)} paid so far
+                  {paid.wallets ? ` to ${paid.wallets.toLocaleString('en-US')} wallets` : ''}
+                </dd>
               </div>
               <div>
                 <dt>
                   <i className="qp-dot qp-dot-burn" /> {buybackPct}% buyback & burn
                 </dt>
-                <dd>Buys ${q.symbol} on the market and burns it</dd>
+                <dd>{BUYBACK_RULE}</dd>
                 <dd className="num qp-earned">
-                  {sol(num(fees?.buybackSol))} earned so far ·{' '}
-                  {burned == null ? '—' : compact(burned)} burned
+                  {solFigure(paid.boughtSol)} bought back · {tokenFigure(burned)} burned
                 </dd>
               </div>
             </dl>
             <p className="faint qp-fine">
-              The split is the team’s stated policy for the creator’s share of the fees
-              {fees ? (
-                <>
-                  {' '}
-                  ({sol(num(fees.creatorLifetimeSol), { digits: 3 })} of the{' '}
-                  {sol(num(fees.lifetimeSol), { digits: 3 })} in fees so far)
-                </>
-              ) : null}
-              . The team pays it out: nothing on-chain enforces it, and these figures are fees
-              earned, not payouts. <a href="#payouts">See what has been paid out and burned</a>.
+              {ENGINE_NOTE} These are the amounts actually paid, bought back and burned, read from
+              the chain. <a href="#payouts">See every transaction</a>.
             </p>
           </section>
 
@@ -315,8 +317,9 @@ export default function QuantpPage() {
                 It launched on a Meteora bonding curve and has graduated to a Meteora DAMM v2 pool.
               </li>
               <li>
-                The 60/40 split is a promise, not code. The team pays it out off-chain, and the
-                figures here are fees earned, not payouts.
+                The 60/40 split is the team’s policy, not on-chain code: Quant Pad’s payout engine
+                pays it out every hour from a wallet the team funds. Every payout, buyback and burn
+                is listed on this page.
               </li>
               {stage === 'pool' ? (
                 <li>
@@ -377,7 +380,7 @@ export default function QuantpPage() {
             </div>
           </section>
 
-          <QuantpLedger symbol={q.symbol} decimals={q.decimals} fees={fees} burned={burned} />
+          <QuantpLedger symbol={q.symbol} decimals={q.decimals} burned={burned} />
         </aside>
       </div>
     </div>

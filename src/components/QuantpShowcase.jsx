@@ -6,13 +6,11 @@ import { useQuantp } from '../context/QuantpContext.jsx'
 import { usePlatform } from '../context/PlatformContext.jsx'
 import { bps, compact, pct, sol, usd } from '../lib/format.js'
 import { explorer, QUANTP } from '../../shared/network.mjs'
+// The disclosure every $QUANTP surface carries in some form: it is the platform's own token, and
+// its fee split is paid out by Quant Pad's engine from a wallet the team funds, not by code on-chain.
+import { QUANTP_DISCLOSURE } from './quantpPayouts.js'
 
 const finite = (v) => (v != null && Number.isFinite(Number(v)) ? Number(v) : null)
-
-// The disclosure every $QUANTP surface carries in some form: it is the platform's own token, and
-// its fee split is a promise, not code.
-export const QUANTP_DISCLOSURE =
-  'Quant Pad’s own token. The team pays out its 60/40 fee split; nothing on-chain enforces it. Memecoins are extremely risky. Not financial advice.'
 
 // "quantp", "$quantp", "quant pad" (any case or spacing) or the token's own mint open the $QUANTP
 // page: it reads the chain directly, so it works even when the market lists are down.
@@ -51,8 +49,6 @@ export function quantpFigures(data, solUsd) {
     graduating: !migrated && progress != null && progress >= 1,
     feeBps: finite(data?.feeBps),
     postGradFeeBps: finite(data?.postGradFeeBps),
-    holdersSol: finite(data?.fees?.holdersSol),
-    buybackSol: finite(data?.fees?.buybackSol),
   }
 }
 

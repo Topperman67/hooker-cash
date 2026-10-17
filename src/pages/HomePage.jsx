@@ -6,7 +6,7 @@ import { useResource } from '../lib/api.js'
 import { usePlatform } from '../context/PlatformContext.jsx'
 import { EXTRAS, MODULES } from '../lib/hooks.js'
 import Glass from '../components/Glass.jsx'
-import { compact, sol, usd } from '../lib/format.js'
+import { compact, sol, toSol, usd } from '../lib/format.js'
 import { MeteoraMark } from '../components/Meteora.jsx'
 import Flywheel from '../components/Flywheel.jsx'
 import QuantpShowcase from '../components/QuantpShowcase.jsx'
@@ -125,8 +125,8 @@ export default function HomePage() {
         <Flywheel
           feeBps={qp?.feeBps ?? null}
           migrated={!!qp?.migrated}
-          holdersSol={qp?.fees?.holdersSol ?? null}
-          buybackSol={qp?.fees?.buybackSol ?? null}
+          paidSol={qp?.payouts ? toSol(qp.payouts.paidLamports) : null}
+          boughtSol={qp?.payouts ? toSol(qp.payouts.boughtLamports) : null}
           burned={qp?.burned ?? null}
         />
       </section>
