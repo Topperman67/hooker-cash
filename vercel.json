@@ -6,7 +6,7 @@
   "functions": {
     "api/[[...path]].js": {
       "includeFiles": "{shared/**,server/**}",
-      "maxDuration": 60
+      "maxDuration": 120
     }
   },
   "crons": [

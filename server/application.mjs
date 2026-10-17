@@ -666,7 +666,7 @@ export async function createApplication(options = {}) {
   // The $QUANTP payout engine (server/quantp-engine.mjs): it sends only with QUANTP_ENGINE_SECRET
   // set to the wallet pinned in QUANTP.engine.wallet, from the keeper tick, once an hour. It has a
   // connection of its own: each call is given up after 8 s and a 429 fails at once, so one slow or
-  // rate-limited call cannot use up the run's 32 s deadline.
+  // rate-limited call cannot use up the run's 90 s deadline.
   const quantpEngine =
     options.quantpEngine ||
     createQuantpEngine({
@@ -725,16 +725,26 @@ export async function createApplication(options = {}) {
   const limiter = createLimiter({ store: redis, vercel })
   const writeAllowed = createWriteGuard({ store: redis, vercel })
   const rpcProxy = createRpcProxy({ rpcUrl, limiter, globalLimit: RPC_GLOBAL_LIMIT })
-  // Serverless functions are stopped at 60 s (vercel.json maxDuration), counting the request
-  // that started the work, so an index pass (15 s unless QUANTPAD_SYNC_MS says otherwise) and
-  // the keeper share one budget below that.
+  // Serverless functions are stopped at 120 s (vercel.json maxDuration), counting the request
+  // that started the work. An index pass (15 s unless QUANTPAD_SYNC_MS says otherwise) and the
+  // keeper share one budget well below that, so the background pass after an ordinary request
+  // never runs long.
   const WORK_MS = serverless ? 40_000 : 180_000
-  // The payout engine runs first in a keeper tick, within this: its hour claim, two or three
-  // payout transactions and the buyback, each confirmed. Its worst case, the index pass's 15 s and
-  // the keeper's least (5 s) stay under the 60 s limit.
-  const ENGINE_MS = 32_000
+  // The payout engine runs first in a keeper tick, within this: reading every holder, its hour
+  // claim, the payout transactions and the buyback, each confirmed. After it, the index pass and
+  // the keeper still get WORK_MS, and the whole tick ends TICK_MARGIN_MS before the limit.
+  const ENGINE_MS = 90_000
+  const FUNCTION_MS = 120_000
+  const TICK_MARGIN_MS = 10_000
   const INDEX_MS = serverless ? { timeMs: Number(process.env.QUANTPAD_SYNC_MS) || 15_000 } : {}
   const keeperBudget = (started) => Math.max(5_000, WORK_MS - (Date.now() - started))
+  // The keeper's budget in a tick: WORK_MS counted from when the engine finished, never past the
+  // tick's end (FUNCTION_MS less TICK_MARGIN_MS from its start).
+  const tickKeeperBudget = (started, engineDone) => {
+    const now = Date.now()
+    const left = serverless ? FUNCTION_MS - TICK_MARGIN_MS - (now - started) : Infinity
+    return Math.max(5_000, Math.min(WORK_MS - (now - engineDone), left))
+  }
   // Time left in this invocation's budget, counted from when the request arrived.
   const timeLeft = (started) => WORK_MS - (Date.now() - started)
 
@@ -1756,8 +1766,12 @@ export async function createApplication(options = {}) {
         // The payout engine first, when its hour is up (a store read otherwise), within ENGINE_MS:
         // the index pass and the keeper then share what is left of the budget.
         const engine = await engineStep(req, started + ENGINE_MS)
+        const engineDone = Date.now()
         const index = await step('index', indexer.sync({ budget: 8, ...INDEX_MS }))
-        const keep = await step('keeper', keeper.tick({ timeLimitMs: keeperBudget(started) }))
+        const keep = await step(
+          'keeper',
+          keeper.tick({ timeLimitMs: tickKeeperBudget(started, engineDone) }),
+        )
         // the keeper just ran: the background pass after this response must not run it again
         await store.set('keeper:throttle', 1, { ttl: 120000 }).catch(() => {})
         const ok = ![engine, index, keep].some((r) => r?.error)

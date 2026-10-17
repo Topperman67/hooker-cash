@@ -1701,6 +1701,35 @@ test('status counts who is skipped and why, and the ledger says when the wallet 
   assert.equal(status.nextAt, HOUR0 / 1000 + 3_600)
 })
 
+test('with the store down and no ledger yet, status reads the last run from the chain', async () => {
+  const clock = { t: HALF_PAST }
+  const ranAt = HALF_PAST / 1000 - 1_200
+  const store = memoryStore()
+  store.down = true
+  // newest first: a stranger's dust after the run, then the engine's own run (its claim)
+  const history = [
+    { signature: 'dust', blockTime: ranAt + 60, payer: wallet(80) },
+    {
+      signature: 'run',
+      blockTime: ranAt,
+      payer: ENGINE,
+      memo: '[36] qp-engine:v1 h=499999 claim 1a2b3c4d',
+    },
+  ]
+  const connection = stubChain({ holders: [[D, 300_000_000_000_000n]], clock, history })
+  const status = await engineOn(connection, store, clock).status()
+  assert.deepEqual([status.lastRunAt, status.lastRunSource], [ranAt, 'chain'])
+  assert.equal(status.nextAt, (Math.floor((ranAt * 1000) / 3_600_000) + 1) * 3_600)
+  // nothing the wallet paid for: still unknown
+  const strangers = stubChain({
+    holders: [[D, 300_000_000_000_000n]],
+    clock,
+    history: history.slice(0, 1),
+  })
+  const none = await engineOn(strangers, store, clock).status()
+  assert.deepEqual([none.lastRunAt, none.lastRunSource], [null, null])
+})
+
 test('the keeper tick runs the engine first, and GET /api/quantp/engine shows its status', async () => {
   const calls = []
   const quantpEngine = {
@@ -1747,12 +1776,12 @@ test('the keeper tick runs the engine first, and GET /api/quantp/engine shows it
     })
     const body = await tick.json()
     assert.deepEqual(body.engine, { ran: false, reason: 'not-due' })
-    // the engine before the index pass and the keeper, within its 32 s
+    // the engine before the index pass and the keeper, within its 90 s
     assert.deepEqual(
       calls.map(([step]) => step),
       ['engine', 'sync', 'keeper'],
     )
-    assert.ok(calls[0][1] >= started + 32_000 - 1_000 && calls[0][1] <= Date.now() + 32_000)
+    assert.ok(calls[0][1] >= started + 90_000 - 1_000 && calls[0][1] <= Date.now() + 90_000)
   } finally {
     process.env.CRON_SECRET = previous
     if (previous === undefined) delete process.env.CRON_SECRET
