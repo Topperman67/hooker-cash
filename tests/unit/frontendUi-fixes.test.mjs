@@ -443,6 +443,19 @@ test('the header search shows a focus ring in light mode, and keeps the dark one
   )
 })
 
+test('the footer says “Quant Pad’s own token” and the risk line once, in the shared disclosure', async () => {
+  const { QUANTP_DISCLOSURE } = await import('../../src/components/quantpPayouts.js')
+  assert.match(QUANTP_DISCLOSURE, /^Quant Pad’s own token\./)
+  assert.match(QUANTP_DISCLOSURE, /Memecoins are extremely risky\./)
+  // the $QUANTP row and the footer's own text, with the disclosure left to its constant
+  const jsx = readFileSync(new URL('../../src/components/Shell.jsx', import.meta.url), 'utf8')
+  const footer =
+    jsx.slice(jsx.indexOf('function QuantpFooter'), jsx.indexOf('export default function Shell')) +
+    jsx.slice(jsx.indexOf('<footer'), jsx.indexOf('</footer>'))
+  assert.match(footer, /<p className="footer-token-note">\{QUANTP_DISCLOSURE\}<\/p>/)
+  assert.doesNotMatch(footer, /own token|extremely risky|financial advice/i)
+})
+
 // ---------- production-04: text contrast over glass and studio light ----------
 
 const hex = (h) => [1, 3, 5].map((k) => parseInt(h.slice(k, k + 2), 16))

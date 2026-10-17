@@ -83,7 +83,8 @@ function QuantpMenuRow() {
 }
 
 // The footer's $QUANTP row: the contract with a copy button, where to trade and track it, and the
-// disclosure every $QUANTP card carries.
+// disclosure every $QUANTP card carries. The disclosure opens with "Quant Pad’s own token" and
+// closes with the risk line, so neither the row nor the footer's text above says them again.
 function QuantpFooter() {
   const { q } = useQuantpFigures()
   return (
@@ -92,7 +93,6 @@ function QuantpFooter() {
         <span className="footer-token-name">
           <img src="/brand/mark-small-dark.svg" alt="" width="18" height="18" />
           <strong>${q.symbol}</strong>
-          <span>Quant Pad’s own token</span>
         </span>
         <Address value={q.mint} head={6} tail={6} href={explorer.token(q.mint)} />
         <span className="footer-token-links">
@@ -232,8 +232,7 @@ export default function Shell({ children }) {
             <Logo tone="dark" className="footer-lockup" />
             <p>
               Quant Pad launches coins on Meteora’s Dynamic Bonding Curve on Solana and routes their
-              creator fees through Quantum Hooks. Memecoins are extremely risky. Nothing here is
-              financial advice.
+              creator fees through Quantum Hooks.
               {solUsd ? <span className="num"> SOL {usd(solUsd)}.</span> : null}
             </p>
             <QuantpFooter />
