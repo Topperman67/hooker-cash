@@ -618,6 +618,37 @@ export function createQuantpEngine({
     }
   }
 
+  // When the store, this instance and the ledger all have no answer (a cold instance while the
+  // store is down and the ledger is still loading), the chain's: when the wallet's newest
+  // transaction that it paid the fee for landed (seconds), its engine memos read first. Null when
+  // none of the few it reads is the engine's. For the site only, like lastActivity.
+  async function chainLastRun() {
+    const list = await within(
+      Promise.resolve().then(() =>
+        connection.getSignaturesForAddress(walletKey, { limit: 20 }, 'confirmed'),
+      ),
+      CHAIN_READ_MS,
+    ).catch(() => [])
+    const tagged = (s) => String(s.memo ?? '').includes(ENGINE_MEMO)
+    const candidates = [...list.filter(tagged), ...list.filter((s) => !tagged(s))]
+    for (const s of candidates.filter((s) => !s.err).slice(0, 3)) {
+      const tx = await within(
+        Promise.resolve().then(() =>
+          connection.getTransaction(s.signature, {
+            maxSupportedTransactionVersion: 0,
+            commitment: 'confirmed',
+          }),
+        ),
+        CHAIN_READ_MS,
+      ).catch(() => null)
+      const message = tx?.transaction?.message
+      const payer = (message?.staticAccountKeys ?? message?.accountKeys)?.[0]
+      if (payer && new PublicKey(payer).equals(walletKey))
+        return tx.blockTime ?? s.blockTime ?? null
+    }
+    return null
+  }
+
   // The store's record of when the last run started (ms): null when it has none, undefined when
   // it cannot answer.
   const storedRun = () =>
@@ -1146,13 +1177,17 @@ export function createQuantpEngine({
     async () => {
       const [state, stored, activity] = await Promise.all([read(), storedRun(), lastActivity()])
       const p = state.plan
-      // the newest word on when it last ran, and whose
-      const [lastRunSource, last] = [
+      // the newest word on when it last ran, and whose; the chain's when nothing else knows
+      let [lastRunSource, last] = [
         ['store', stored],
         [lastSource, lastLocal],
         ['ledger', activity.paidAt == null ? null : activity.paidAt * 1000],
         ['ledger', activity.burnAt == null ? null : activity.burnAt * 1000],
       ].reduce((a, b) => (b[1] != null && (a[1] == null || b[1] > a[1]) ? b : a), [null, null])
+      if (last == null) {
+        const onChain = await chainLastRun()
+        if (onChain != null) [lastRunSource, last] = ['chain', onChain * 1000]
+      }
       const share = new Map([
         ...p.payouts.map((x) => [x.wallet, { lamports: x.lamports.toString(), reason: null }]),
         ...p.skipped.map((x) => [x.wallet, { lamports: null, reason: x.reason }]),
