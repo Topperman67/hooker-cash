@@ -1445,16 +1445,21 @@ export async function createApplication(options = {}) {
         if (!secretMatches(supplied, String(process.env.CRON_SECRET || '').trim()))
           return json(res, 401, { error: 'Unauthorized' })
         const started = Date.now()
+        // Each step reports its own failure in the response instead of failing the tick, so one
+        // that cannot run (the index pass and the keeper need the store, which can refuse every
+        // command) never stops the others. `ok` is false when any step failed.
+        const step = (promise) => promise.catch((e) => ({ error: e.message, code: e.code ?? null }))
         // The payout engine first, when its hour is up (a store read otherwise), within 25 s: the
         // index pass and the keeper then share what is left of the budget.
         const payouts = await quantpEngine
           .tick({ deadline: started + 25_000 })
           .catch((e) => ({ ran: false, error: e.message }))
-        const index = await indexer.sync({ budget: 8, ...INDEX_MS })
-        const keep = await keeper.tick({ timeLimitMs: keeperBudget(started) })
+        const index = await step(indexer.sync({ budget: 8, ...INDEX_MS }))
+        const keep = await step(keeper.tick({ timeLimitMs: keeperBudget(started) }))
         // the keeper just ran: the background pass after this response must not run it again
         await store.set('keeper:throttle', 1, { ttl: 120000 }).catch(() => {})
-        return json(res, 200, { index, keeper: keep, engine: payouts })
+        const ok = ![payouts, index, keep].some((r) => r?.error)
+        return json(res, 200, { ok, index, keeper: keep, engine: payouts })
       }
 
       // Only the POST routes are left (allowedMethods above).

@@ -979,6 +979,59 @@ test('the index pass and the keeper share the serverless time budget', async () 
   }
 })
 
+test('a tick whose index pass or keeper fails still answers 200, with each step’s error', async () => {
+  process.env.CRON_SECRET = 'outage-secret'
+  const { app, base, close } = await boot({ serverless: true, backgroundGapMs: 0 })
+  const storageDown = () =>
+    Object.assign(Error('Storage is unavailable right now.'), {
+      status: 503,
+      code: 'STORAGE_UNAVAILABLE',
+    })
+  const ran = []
+  app.indexer.sync = async () => {
+    ran.push('sync')
+    throw storageDown()
+  }
+  app.keeper.tick = async () => {
+    ran.push('keeper')
+    return { enabled: true, ran: 1 }
+  }
+  const tick = () =>
+    fetch(base + '/api/keeper/tick', { headers: { Authorization: 'Bearer outage-secret' } })
+  try {
+    // the index pass fails: the keeper still runs, and the tick says what failed
+    const first = await tick()
+    assert.equal(first.status, 200)
+    const body = await first.json()
+    assert.equal(body.ok, false)
+    assert.deepEqual(body.index, {
+      error: 'Storage is unavailable right now.',
+      code: 'STORAGE_UNAVAILABLE',
+    })
+    assert.deepEqual(body.keeper, { enabled: true, ran: 1 })
+    assert.ok(body.engine, 'the payout engine reports too')
+    assert.deepEqual(ran, ['sync', 'keeper'])
+
+    // both fail: still 200, both errors listed
+    app.keeper.tick = async () => {
+      throw storageDown()
+    }
+    const both = await (await tick()).json()
+    assert.equal(both.ok, false)
+    assert.equal(both.index.code, 'STORAGE_UNAVAILABLE')
+    assert.equal(both.keeper.code, 'STORAGE_UNAVAILABLE')
+
+    // nothing fails: ok
+    app.indexer.sync = async () => ({ synced: 0 })
+    app.keeper.tick = async () => ({ enabled: true, ran: 0 })
+    const fine = await (await tick()).json()
+    assert.equal(fine.ok, true)
+  } finally {
+    delete process.env.CRON_SECRET
+    await close()
+  }
+})
+
 test('claims: identical requests share a run, concurrency is capped, a long queue gets 429', async () => {
   await inOneMinute()
   const { app, close } = await boot({ claimsConcurrency: 2, claimsQueue: 2 })

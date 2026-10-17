@@ -160,7 +160,7 @@ To turn it on:
 
 1. Pick the wallet. `QUANTP.engine.wallet` pins its public address in the code: the engine refuses any other key. It is the payout wallet now. Keep nothing in it that the engine should not pay out or burn.
 2. Set `QUANTP_ENGINE_SECRET` to that wallet's secret key (base58, or a JSON byte array as Solana CLI keypair files hold it) in Vercel's **Production** environment only, never Preview or Development. Like the keeper's, the key sits in the public function: treat it as exposed, and keep only what the engine should pay out in the wallet. Never paste the key anywhere else, including chat.
-3. Make sure the keeper tick runs (`CRON_SECRET` and the GitHub Actions schedule above), and redeploy.
+3. Make sure the keeper tick runs (`CRON_SECRET` and the GitHub Actions schedule above), and redeploy. GitHub may run its 5-minute schedule only every few hours on a quiet repository, so for hourly payouts also point a dependable scheduler (Vercel Cron on Pro, or any external cron service) at `GET /api/keeper/tick` with `Authorization: Bearer <CRON_SECRET>`, every 5 to 15 minutes. Extra calls are harmless: the engine runs at most once an hour. Each workflow run's summary shows the tick's HTTP status, any step that failed, and what the engine did.
 4. Fund the wallet with the SOL to pay out, for example the creator fees you claim. The engine splits whatever it holds.
 5. Check `GET /api/quantp/engine`: `live: true`, the eligible count and the next release. After the next tick, `GET /api/keeper/tick` (with the cron secret) returns the run's transactions under `engine`.
 
