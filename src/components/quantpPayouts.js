@@ -41,6 +41,21 @@ export const ENGINE_STATE_LABEL = {
   paused: 'Paused',
 }
 
+/**
+ * When the engine's next run is due, in seconds, from its last run: it runs once in each UTC clock
+ * hour (each `everySecs` period), so after a run this hour the next one comes at the top of the
+ * next hour. Null when it has never run, or when this hour's run has not come yet (it is due now).
+ */
+export function nextRunAt(engine, nowSecs = Date.now() / 1000) {
+  const every = engine?.everySecs
+  if (!engine?.lastRunAt || !every) return null
+  const period = Math.floor(nowSecs / every)
+  return Math.floor(engine.lastRunAt / every) < period ? null : (period + 1) * every
+}
+
+/** "17:00": the UTC time of day of a timestamp in seconds. */
+export const utcTime = (seconds) => new Date(seconds * 1000).toISOString().slice(11, 16)
+
 const finite = (v) => (v != null && Number.isFinite(Number(v)) ? Number(v) : null)
 
 /** The real figures, as numbers (SOL and whole tokens), each null when unknown. */

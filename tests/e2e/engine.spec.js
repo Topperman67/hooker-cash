@@ -7,12 +7,16 @@ import { enter, quantpEngine, stubApi, stubQuantp } from './fixtures.js'
 const ENGINE = '/engine'
 const hero = (page) => page.locator('.eg-hero')
 const now = () => Math.floor(Date.now() / 1000)
+// 17:40 UTC: the engine runs once in each UTC clock hour, so after a run at 17:20 the next is at 18:00.
+const CLOCK = Date.parse('2026-10-17T17:40:00Z')
+const at = (iso) => Math.floor(Date.parse(iso) / 1000)
 
 test('the engine page shows its state, the next run, the tiers and rules, and every payout', async ({
   page,
 }) => {
+  await page.clock.setFixedTime(CLOCK)
   await stubApi(page)
-  await stubQuantp(page, { engine: quantpEngine() })
+  await stubQuantp(page, { engine: quantpEngine({ lastRunAt: at('2026-10-17T17:20:00Z') }) })
   await enter(page)
   await page.goto(ENGINE)
   await expect(page.getByRole('heading', { level: 1 })).toContainText('Payout Engine')
@@ -20,7 +24,8 @@ test('the engine page shows its state, the next run, the tiers and rules, and ev
   await expect(hero(page)).toContainText('Next run0.0083 SOL')
   await expect(hero(page)).toContainText('0.005 SOL to 28 wallets')
   await expect(hero(page)).toContainText('0.0033 SOL to buy back and burn')
-  await expect(hero(page)).toContainText(/Last run 20m ago · next in about 40 min/)
+  await expect(hero(page)).toContainText('Last run 17:20 UTC, 20m ago')
+  await expect(hero(page)).toContainText('Next run at 18:00 UTC, in 20 min')
   await expect(hero(page).getByRole('link', { name: 'Payout wallet' })).toHaveAttribute(
     'href',
     `https://solscan.io/account/${QUANTP.payoutWallet}`,
@@ -74,13 +79,79 @@ test('an engine behind its schedule runs late, and a paused one shows no next ru
   await enter(page)
   await page.goto(ENGINE)
   await expect(hero(page)).toContainText('Running late')
-  await expect(hero(page)).toContainText('Last run 3h ago: it is behind its hourly schedule.')
+  await expect(hero(page)).toContainText(
+    /Last run \d\d:\d\d UTC, 3h ago: it is behind its hourly schedule\./,
+  )
 
   engine = quantpEngine({ live: false, reason: 'paused' })
   await page.reload()
   await expect(hero(page)).toContainText('Paused')
   await expect(hero(page)).toContainText('Next run—')
   await expect(hero(page)).toContainText('no payouts or buybacks run')
+})
+
+test('a run not yet come this clock hour is due now', async ({ page }) => {
+  await page.clock.setFixedTime(CLOCK)
+  await stubApi(page)
+  await stubQuantp(page, { engine: quantpEngine({ lastRunAt: at('2026-10-17T16:50:00Z') }) })
+  await enter(page)
+  await page.goto(ENGINE)
+  await expect(hero(page)).toContainText('Running hourly')
+  await expect(hero(page)).toContainText('Last run 16:50 UTC, 50m ago')
+  await expect(hero(page)).toContainText('This hour’s run is due now')
+})
+
+test('the engine drawing is decoration: one wallet per holder paid, still when it cannot move', async ({
+  page,
+}) => {
+  await stubApi(page)
+  let engine = quantpEngine()
+  await stubQuantp(page, { engine })
+  await page.route('**/api/quantp/engine', (route) => route.fulfill({ json: engine }))
+  await enter(page)
+  await page.goto(ENGINE)
+  const art = hero(page).locator('.eg-art')
+  await expect(art.locator('svg')).toHaveAttribute('aria-hidden', 'true')
+  await expect(art.locator('.eg-node')).toHaveCount(28)
+  await expect(art).toHaveAttribute('data-motion', 'on')
+
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await expect(art).toHaveAttribute('data-motion', 'still')
+  expect(await art.locator('.eg-rotor').evaluate((el) => getComputedStyle(el).animationName)).toBe(
+    'none',
+  )
+
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  engine = quantpEngine({ live: false, reason: 'paused' })
+  await page.reload()
+  await expect(art).toHaveAttribute('data-mode', 'off')
+  await expect(art).toHaveAttribute('data-motion', 'still')
+})
+
+test('with the engine’s state unavailable the page still stands, with dashes for its figures', async ({
+  page,
+}) => {
+  await stubApi(page)
+  await stubQuantp(page)
+  await page.route('**/api/quantp/engine', (route) =>
+    route.fulfill({
+      status: 503,
+      json: {
+        error: 'The payout engine’s state is unavailable right now.',
+        code: 'ENGINE_UNAVAILABLE',
+      },
+    }),
+  )
+  await enter(page)
+  await page.goto(ENGINE)
+  await expect(hero(page)).toContainText('Next run—')
+  await expect(hero(page)).toContainText('unavailable right now')
+  await expect(hero(page).locator('.eg-state')).toHaveCount(0)
+  await expect(hero(page).locator('.eg-art svg')).toBeVisible()
+  await expect(page.locator('.eg-stats')).toContainText('Wallets eligible now—')
+  await expect(
+    page.getByRole('region', { name: 'Payouts & burns' }).locator('tbody tr'),
+  ).toHaveCount(1)
 })
 
 test('the header, the phone menu and the footer link to the engine page', async ({ page }) => {

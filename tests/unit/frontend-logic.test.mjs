@@ -8,6 +8,7 @@ import {
   priceFromSqrtPrice,
   isAddress,
 } from '../../shared/network.mjs'
+import { engineState, nextRunAt, utcTime } from '../../src/components/quantpPayouts.js'
 
 test('hook allocation always sums to exactly 100% and keeps the edited value', () => {
   let hooks = { creatorBps: 3000, burnBps: 3000, entangleBps: 2000, fusionBps: 2000 }
@@ -63,4 +64,24 @@ test('curve maths match Meteora pools', () => {
   assert.equal(curveProgress('1000', null), 0, 'unknown threshold')
   assert.equal(isAddress('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN'), true)
   assert.equal(isAddress('0x8366a39CC670B4001A1121B8F6A443A643e40951'), false)
+})
+
+test('the payout engine page dates the next run to the top of the next UTC hour', () => {
+  const at = (iso) => Date.parse(iso) / 1000
+  const engine = { everySecs: 3600, lastRunAt: at('2026-10-17T17:20:00Z') }
+  // ran this hour: the next run is at the top of the next one
+  assert.equal(nextRunAt(engine, at('2026-10-17T17:40:00Z')), at('2026-10-17T18:00:00Z'))
+  assert.equal(utcTime(nextRunAt(engine, at('2026-10-17T17:59:59Z'))), '18:00')
+  // last ran in an earlier hour: this hour's run is due now
+  assert.equal(nextRunAt(engine, at('2026-10-17T18:05:00Z')), null)
+  // never ran, or nothing known
+  assert.equal(nextRunAt({ everySecs: 3600, lastRunAt: null }, at('2026-10-17T18:05:00Z')), null)
+  assert.equal(nextRunAt(null), null)
+  assert.equal(utcTime(at('2026-10-17T00:07:00Z')), '00:07')
+  // two hours without a run is late, whatever the clock hour
+  const status = { configured: true, live: true, everySecs: 3600 }
+  assert.equal(engineState({ ...status, lastRunAt: null }), 'pending')
+  assert.equal(engineState({ ...engine, ...status }, at('2026-10-17T18:05:00Z')), 'running')
+  assert.equal(engineState({ ...engine, ...status }, at('2026-10-17T19:30:00Z')), 'late')
+  assert.equal(engineState({ ...status, live: false }), 'paused')
 })

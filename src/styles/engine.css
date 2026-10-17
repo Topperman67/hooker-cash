@@ -1,27 +1,690 @@
-/* The payout engine's page (pages/EnginePage.jsx). It reuses the $QUANTP page's glass hero, stats
-   strip, tier cards and dots (quantp.css), then lays out how it works and every payout and burn
-   beside its tiers, rules and disclosure. Its colours follow the theme through the shared tokens. */
+/* The payout engine's page (pages/EnginePage.jsx). The hero is a graphite instrument in both
+   themes: the chrome title and the engine's own drawing (components/EngineArt.jsx), over a readout
+   of the next run. Then a strip of stat tiles, each keyed to one of the four light lines, how it
+   works as a coloured rail, and every payout and burn beside the market-cap tiers, the rules and
+   the disclosure. Night rules are at the end, scoped to :root[data-theme='dark']. */
 .eg-page {
   display: grid;
   gap: 16px;
   padding-top: 26px;
   padding-bottom: 48px;
 }
-.eg-title.qp-ticker {
-  font-size: clamp(2.1rem, 5.2vw, 4.1rem);
+
+/* ---------- hero ---------- */
+.eg-hero {
+  --focus: #8fa4ff;
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  display: grid;
+  grid-template-columns: minmax(0, 0.92fr) minmax(0, 1.28fr);
+  grid-template-areas:
+    'copy art'
+    'readout readout';
+  align-items: center;
+  column-gap: 12px;
+  padding: 34px 36px 0;
+  border-radius: 28px;
+  color: var(--on-graphite);
+  background:
+    radial-gradient(46% 66% at 64% 46%, rgba(46, 75, 255, 0.26), transparent 70%),
+    radial-gradient(26% 46% at 90% 72%, rgba(255, 62, 165, 0.16), transparent 70%),
+    radial-gradient(28% 44% at 88% 22%, rgba(18, 194, 110, 0.14), transparent 70%),
+    linear-gradient(180deg, #262b35 0%, #181b22 52%, #0f1217 100%);
+  border: 1px solid #0d0f13;
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.12),
+    0 26px 60px rgba(21, 24, 29, 0.26);
 }
-/* the two-line title needs room for its descenders above the line under it */
-.eg-hero .qp-title {
+/* four hairline light lines rake the top-left corner, as on the mark */
+.eg-hero-lines {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background: var(--lines-thin);
+  background-size: 120% 100%;
+  background-position: 100% 0;
+  opacity: 0.5;
+  -webkit-mask-image: radial-gradient(48% 70% at 0% 0%, #000 0%, transparent 70%);
+  mask-image: radial-gradient(48% 70% at 0% 0%, #000 0%, transparent 70%);
+}
+.eg-copy {
+  grid-area: copy;
+  display: grid;
+  gap: 18px;
+  align-content: center;
+  min-width: 0;
+  padding-bottom: 26px;
+}
+.eg-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+/* where the engine stands, as a status light */
+.eg-state {
+  --c: #8a93a3;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 24px;
+  padding: 0 11px 0 9px;
+  border-radius: var(--r-pill);
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  color: #fff;
+  font-size: var(--t-xs);
+  font-weight: 650;
+  white-space: nowrap;
+}
+.eg-state[data-state='running'] {
+  --c: var(--green);
+}
+.eg-state[data-state='pending'] {
+  --c: var(--yellow);
+}
+.eg-state[data-state='late'] {
+  --c: var(--pink);
+}
+.eg-state-dot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--c);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--c) 24%, transparent),
+    0 0 10px var(--c);
+}
+.eg-state[data-state='running'] .eg-state-dot,
+.eg-state[data-state='pending'] .eg-state-dot {
+  animation: eg-beacon 2.4s ease-in-out infinite;
+}
+@keyframes eg-beacon {
+  50% {
+    box-shadow:
+      0 0 0 6px color-mix(in srgb, var(--c) 0%, transparent),
+      0 0 4px var(--c);
+  }
+}
+.eg-h1 {
+  display: grid;
+  gap: 16px;
+  margin: 0;
+  min-width: 0;
+}
+/* silver chrome lettering, with the studio light's lines sliding across it */
+.eg-title {
+  font-family: var(--font-display);
+  font-size: clamp(2.5rem, 6vw, 5.2rem);
+  font-weight: 900;
+  font-stretch: 118%;
+  line-height: 0.9;
+  letter-spacing: -0.035em;
+  padding-bottom: 0.07em;
+  overflow-wrap: anywhere;
+  background:
+    var(--lines-thin),
+    linear-gradient(
+      180deg,
+      #ffffff 0%,
+      #ffffff 32%,
+      #c9d2de 50%,
+      #8e99aa 57%,
+      #e8ecf2 74%,
+      #ffffff 100%
+    );
+  background-size:
+    220% 100%,
+    100% 100%;
+  background-position:
+    var(--lx, 70%) 0,
+    0 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.eg-lede {
+  max-width: 26ch;
+  font-family: var(--font-ui);
+  font-size: var(--t-lg);
+  font-weight: 600;
+  font-stretch: 100%;
+  line-height: 1.3;
+  letter-spacing: 0;
+  color: var(--on-graphite-2);
+}
+.eg-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.eg-actions .btn {
+  gap: 6px;
+}
+/* smoked metal on the graphite, in both themes */
+.eg-hero .btn:not(.btn-primary) {
+  background:
+    radial-gradient(120% 90% at 30% 0%, rgba(255, 255, 255, 0.16), transparent 60%),
+    linear-gradient(180deg, rgba(58, 65, 79, 0.9), rgba(22, 25, 32, 0.9));
+  border-color: rgba(255, 255, 255, 0.16);
+  box-shadow:
+    inset 1px 1px 0 rgba(255, 255, 255, 0.18),
+    inset -1px -1px 0 rgba(0, 0, 0, 0.5);
+  color: #fff;
+}
+.eg-hero .btn:not(.btn-primary):hover:not(:disabled) {
+  border-color: rgba(255, 255, 255, 0.36);
+}
+
+/* ---------- the engine's drawing ---------- */
+.eg-art {
+  grid-area: art;
+  position: relative;
+  container-type: inline-size;
+  min-width: 0;
+  margin-right: -14px;
+}
+.eg-art svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.eg-art[data-mode='off'] svg {
+  filter: saturate(0.2);
+  opacity: 0.6;
+}
+.eg-guide {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.07);
+}
+.eg-guide-dash {
+  stroke-dasharray: 2 7;
+}
+.eg-glass {
+  fill: rgba(255, 255, 255, 0.05);
+}
+.eg-shine {
+  fill: rgba(255, 255, 255, 0.24);
+}
+.eg-gauge {
+  stroke: rgba(255, 255, 255, 0.45);
+  stroke-width: 1.5;
+  stroke-linecap: round;
+}
+.eg-wave-back {
+  fill: rgba(185, 198, 255, 0.55);
+}
+.eg-bubble {
+  fill: rgba(255, 255, 255, 0.8);
+  opacity: 0;
+}
+.eg-pipe,
+.eg-pipe-core {
+  fill: none;
+  stroke-linecap: round;
+}
+.eg-pipe {
+  stroke: #343b48;
+  stroke-width: 18;
+}
+.eg-pipe-core {
+  stroke: #0b0e13;
+  stroke-width: 11;
+}
+.eg-valve {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.eg-beam {
+  fill: none;
+  stroke-linecap: round;
+}
+.eg-beam-holders {
+  stroke: var(--green);
+}
+.eg-beam-burn {
+  stroke: var(--pink);
+}
+/* moving dots along a line: a near-zero dash with round caps, the gap sets the spacing */
+.eg-flow {
+  fill: none;
+  stroke-linecap: round;
+}
+.eg-flow-sol {
+  stroke: #e3e8ff;
+  stroke-width: 5;
+  stroke-dasharray: 0.01 18;
+}
+.eg-flow-holders {
+  stroke: #d2ffe8;
+  stroke-width: 4;
+  stroke-dasharray: 0.01 16;
+}
+.eg-flow-burn {
+  stroke: #ffe0f0;
+  stroke-width: 5;
+  stroke-dasharray: 0.01 20;
+}
+.eg-ray {
+  fill: none;
+  stroke: var(--green);
+  stroke-opacity: 0.22;
+}
+.eg-ray-dot {
+  fill: none;
+  stroke: #c6ffe0;
+  stroke-width: 3.2;
+  stroke-linecap: round;
+  stroke-dasharray: 0.01 100;
+  opacity: 0;
+}
+.eg-hub {
+  fill: var(--green);
+  stroke: #c6ffe0;
+  stroke-width: 2;
+}
+.eg-node {
+  fill: rgba(18, 194, 110, 0.82);
+  stroke: #8af0bd;
+  stroke-width: 1;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.eg-pit {
+  stroke: var(--pink);
+  stroke-width: 2;
+}
+.eg-burn-ring {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.eg-burn-dash {
+  fill: none;
+  stroke: rgba(255, 62, 165, 0.5);
+  stroke-width: 1.5;
+  stroke-dasharray: 3 7;
+}
+.eg-flame {
+  fill: none;
+  stroke-width: 2.4;
+  stroke-linejoin: round;
+  vector-effect: non-scaling-stroke;
+  transform-box: fill-box;
+  transform-origin: 50% 100%;
+}
+.eg-flame-1 {
+  stroke: var(--pink);
+}
+.eg-flame-2 {
+  stroke: var(--yellow);
+}
+.eg-flame-3 {
+  stroke: #fff4d1;
+  fill: rgba(255, 224, 138, 0.4);
+}
+.eg-ember {
+  fill: var(--yellow);
+  opacity: 0;
+}
+.eg-ember-pink {
+  fill: #ff86c6;
+}
+.eg-day-band {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.035);
+  stroke-width: 20;
+}
+.eg-tick {
+  stroke: rgba(255, 255, 255, 0.2);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+.eg-tick.is-past {
+  stroke: rgba(201, 211, 255, 0.62);
+}
+.eg-tick.is-now {
+  stroke: var(--yellow);
+  stroke-width: 4;
+}
+.eg-hour {
+  fill: rgba(255, 255, 255, 0.5);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 600;
+  text-anchor: middle;
+  dominant-baseline: central;
+}
+.eg-minute-track,
+.eg-minute {
+  fill: none;
+  stroke-width: 6;
+}
+.eg-minute-track {
+  stroke: rgba(255, 255, 255, 0.08);
+}
+.eg-minute {
+  stroke: var(--yellow);
+  stroke-linecap: round;
+}
+.eg-minute-tip {
+  fill: #fff;
+  stroke: var(--yellow);
+  stroke-width: 2;
+}
+.eg-next-notch {
+  fill: var(--yellow);
+}
+.eg-rotor {
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.eg-rotor path {
+  stroke: rgba(0, 0, 0, 0.4);
+  stroke-width: 0.75;
+}
+.eg-spark {
+  fill: #fff;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+/* labels on the drawing: decoration (the readout and stats say the same as text) */
+.eg-tags {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.eg-tag {
+  position: absolute;
+  display: grid;
+  gap: 1px;
+  font-size: var(--t-xs);
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--on-graphite-2);
+  white-space: nowrap;
+}
+.eg-tag b {
+  color: #fff;
+  font-weight: 650;
+}
+.eg-tag .num {
+  font-size: var(--t-xs);
+}
+.eg-tag-wallet {
+  left: 12.6%;
+  top: 0;
+  transform: translateX(-50%);
+  text-align: center;
+}
+.eg-tag-wallet .num {
+  color: #c9d3ff;
+}
+.eg-tag-core {
+  left: 48.9%;
+  top: 84%;
+  transform: translateX(-50%);
+  text-align: center;
+}
+.eg-tag-core .num {
+  color: var(--yellow-tint);
+}
+.eg-tag-holders {
+  left: 68.6%;
+  top: 46%;
+}
+.eg-tag-holders .num {
+  color: #7cf0b6;
+}
+.eg-tag-burn {
+  right: 23%;
+  top: 86%;
+  text-align: right;
+}
+.eg-tag-burn b {
+  color: #ffb3db;
+}
+@container (max-width: 540px) {
+  .eg-tags {
+    display: none;
+  }
+}
+
+/* the drawing moves only while it is on screen and the engine runs */
+.eg-art:not([data-motion='still']) .eg-flow-sol {
+  animation: eg-flow-18 0.7s linear infinite;
+}
+.eg-art:not([data-motion='still']) .eg-flow-holders {
+  animation: eg-flow-16 0.55s linear infinite;
+}
+.eg-art:not([data-motion='still']) .eg-flow-burn {
+  animation: eg-flow-20 0.85s linear infinite;
+}
+.eg-art:not([data-motion='still']) .eg-ray-dot {
+  animation: eg-ray 2.8s linear infinite;
+  animation-delay: var(--d);
+}
+.eg-art:not([data-motion='still']) .eg-node {
+  animation: eg-node 2.8s ease-out infinite;
+  animation-delay: var(--d);
+}
+.eg-art:not([data-motion='still']) .eg-rotor {
+  animation: eg-spin 7s linear infinite;
+}
+.eg-art:not([data-motion='still']) .eg-valve {
+  animation: eg-spin 5s linear infinite;
+}
+.eg-art:not([data-motion='still']) .eg-burn-ring {
+  animation: eg-spin 16s linear infinite reverse;
+}
+.eg-art:not([data-motion='still']) .eg-spark {
+  animation: eg-spark 1.6s ease-in-out infinite;
+}
+.eg-art:not([data-motion='still']) .eg-wave-back {
+  animation: eg-wave 5.2s linear infinite;
+}
+.eg-art:not([data-motion='still']) .eg-wave-front {
+  animation: eg-wave 3.6s linear infinite reverse;
+}
+.eg-art:not([data-motion='still']) .eg-bubble {
+  animation: eg-bubble 3.6s ease-in infinite;
+  animation-delay: var(--d);
+}
+.eg-art:not([data-motion='still']) .eg-flame-1 {
+  animation: eg-flicker 1.1s ease-in-out infinite;
+}
+.eg-art:not([data-motion='still']) .eg-flame-2 {
+  animation: eg-flicker 0.8s ease-in-out infinite reverse;
+}
+.eg-art:not([data-motion='still']) .eg-flame-3 {
+  animation: eg-flicker 0.6s ease-in-out infinite;
+}
+.eg-art:not([data-motion='still']) .eg-ember {
+  animation: eg-ember 2.4s ease-out infinite;
+  animation-delay: var(--d);
+}
+.eg-art:not([data-motion='still']) .eg-tick.is-now,
+.eg-art:not([data-motion='still']) .eg-minute-tip {
+  animation: eg-blink 2s ease-in-out infinite;
+}
+.eg-art[data-motion='paused'] * {
+  animation-play-state: paused !important;
+}
+@keyframes eg-flow-18 {
+  to {
+    stroke-dashoffset: -18.01;
+  }
+}
+@keyframes eg-flow-16 {
+  to {
+    stroke-dashoffset: -16.01;
+  }
+}
+@keyframes eg-flow-20 {
+  to {
+    stroke-dashoffset: -20.01;
+  }
+}
+/* one payment down each ray, then its wallet lights as it lands */
+@keyframes eg-ray {
+  0% {
+    stroke-dashoffset: 0;
+    opacity: 0;
+  }
+  5%,
+  40% {
+    opacity: 1;
+  }
+  44%,
+  100% {
+    stroke-dashoffset: -100;
+    opacity: 0;
+  }
+}
+@keyframes eg-node {
+  0%,
+  40% {
+    transform: scale(1);
+    fill: rgba(18, 194, 110, 0.82);
+  }
+  46% {
+    transform: scale(1.6);
+    fill: #e2fff0;
+  }
+  72%,
+  100% {
+    transform: scale(1);
+    fill: rgba(18, 194, 110, 0.82);
+  }
+}
+@keyframes eg-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes eg-spark {
+  50% {
+    transform: scale(1.45);
+    opacity: 0.75;
+  }
+}
+@keyframes eg-wave {
+  to {
+    transform: translateX(120px);
+  }
+}
+@keyframes eg-bubble {
+  0% {
+    transform: translateY(0);
+    opacity: 0;
+  }
+  15% {
+    opacity: 0.85;
+  }
+  85% {
+    opacity: 0.6;
+  }
+  100% {
+    transform: translateY(var(--rise));
+    opacity: 0;
+  }
+}
+@keyframes eg-flicker {
+  0%,
+  100% {
+    transform: scale(1, 1);
+  }
+  35% {
+    transform: scale(0.94, 1.09);
+  }
+  65% {
+    transform: scale(1.05, 0.92);
+  }
+}
+@keyframes eg-ember {
+  0% {
+    transform: translateY(0);
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-48px);
+    opacity: 0;
+  }
+}
+@keyframes eg-blink {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+/* ---------- the next run ---------- */
+.eg-readout {
+  grid-area: readout;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) minmax(0, auto);
+  align-items: center;
+  gap: 18px 36px;
+  margin: 6px -36px 0;
+  padding: 22px 36px 26px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  background: linear-gradient(180deg, rgba(6, 8, 11, 0.5), rgba(6, 8, 11, 0.72));
+}
+.eg-next {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.eg-label {
+  margin: 0;
+  font-size: var(--t-xs);
+  font-weight: 650;
+  color: var(--on-graphite-2);
+}
+.eg-next-sol.num {
+  margin: 0;
+  font-size: clamp(2.1rem, 4.4vw, 3.5rem);
+  font-weight: 600;
+  line-height: 1;
+  letter-spacing: -0.05em;
+  color: #fff;
+  white-space: nowrap;
+}
+.eg-split {
+  display: grid;
   gap: 12px;
+  min-width: 0;
+}
+.eg-split-bar {
+  display: flex;
+  gap: 4px;
+  height: 10px;
+}
+.eg-split-bar i {
+  min-width: 8px;
+  border-radius: var(--r-pill);
+}
+.eg-split-holders {
+  background: linear-gradient(180deg, #4fe39f, var(--green) 60%, #0fae62);
+  box-shadow: 0 0 16px rgba(18, 194, 110, 0.45);
+}
+.eg-split-burn {
+  background: linear-gradient(180deg, #ff86c6, var(--pink) 60%, #ec2f93);
+  box-shadow: 0 0 16px rgba(255, 62, 165, 0.45);
 }
 .eg-next-split {
-  display: grid;
-  gap: 4px;
-  margin: 2px 0 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 26px;
+  margin: 0;
   padding: 0;
   list-style: none;
   font-size: var(--t-sm);
-  color: var(--steel);
+  color: var(--on-graphite-2);
 }
 .eg-next-split li {
   display: flex;
@@ -29,10 +692,158 @@
   gap: 8px;
 }
 .eg-next-split .num {
-  color: var(--ink);
+  color: #fff;
   font-weight: 600;
 }
+.eg-when {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  max-width: 320px;
+  font-size: var(--t-sm);
+  line-height: 1.4;
+  color: var(--on-graphite-2);
+}
+.eg-when-text {
+  display: grid;
+  gap: 2px;
+}
+.eg-when-text span:last-child:not(:first-child) {
+  color: #fff;
+  font-weight: 650;
+}
+.eg-clock {
+  flex: none;
+  width: 40px;
+  height: 40px;
+}
+.eg-clock svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.eg-clock-icon {
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 2px solid color-mix(in srgb, var(--c) 50%, transparent);
+  background: color-mix(in srgb, var(--c) 12%, transparent);
+  color: var(--c);
+}
+.eg-when {
+  --c: #8a93a3;
+}
+.eg-when[data-state='running'] {
+  --c: var(--green);
+}
+.eg-when[data-state='pending'] {
+  --c: var(--yellow);
+}
+.eg-when[data-state='late'] {
+  --c: var(--pink);
+}
+.eg-clock-track,
+.eg-clock-left {
+  fill: none;
+  stroke-width: 3.5;
+}
+.eg-clock-track {
+  stroke: rgba(255, 255, 255, 0.12);
+}
+.eg-clock-left {
+  stroke: var(--yellow);
+  stroke-linecap: round;
+}
 
+/* ---------- stats ---------- */
+.eg-stats {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+}
+.eg-stat {
+  --c: var(--blue);
+  position: relative;
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  min-width: 0;
+  padding: 16px 16px 15px;
+  border-radius: var(--r-lg);
+  background: var(--glass-fill);
+  -webkit-backdrop-filter: var(--glass-blur);
+  backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-rim);
+  box-shadow: var(--glass-shadow);
+  overflow: hidden;
+}
+/* each tile's own light line along its top edge */
+.eg-stat::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 16px;
+  right: 16px;
+  height: 3px;
+  border-radius: 0 0 3px 3px;
+  background: var(--c);
+}
+.eg-stat[data-tone='yellow'] {
+  --c: var(--yellow);
+}
+.eg-stat[data-tone='tint'] {
+  --c: var(--blue-tint);
+}
+.eg-stat[data-tone='green'] {
+  --c: var(--green);
+}
+.eg-stat[data-tone='pink'] {
+  --c: var(--pink);
+}
+.eg-stat dt {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: var(--t-xs);
+  font-weight: 650;
+  color: var(--steel);
+}
+.eg-stat dt::before {
+  content: '';
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--c);
+  box-shadow: 0 0 0 1px rgba(21, 24, 29, 0.12);
+}
+.eg-stat dd {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  min-width: 0;
+}
+.eg-stat .num {
+  font-size: clamp(1.1rem, 1.45vw, 1.35rem);
+  font-weight: 600;
+  letter-spacing: -0.04em;
+  line-height: 1.15;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.eg-stat small {
+  font-size: var(--t-xs);
+  color: var(--steel);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---------- panels ---------- */
 .eg-grid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 380px;
@@ -50,61 +861,218 @@
 .eg-side > * {
   min-width: 0;
 }
-
-/* how it works: five numbered steps, in the film's order */
 .eg-how,
 .eg-tiers,
 .eg-rules,
 .eg-disclose {
   display: grid;
-  gap: 12px;
+  gap: 14px;
 }
+
+/* how it works: five steps down a rail, each in its light line's colour */
 .eg-steps {
   display: grid;
-  gap: 14px;
-  margin: 0;
+  margin: 2px 0 0;
   padding: 0;
   list-style: none;
   counter-reset: step;
 }
 .eg-steps li {
+  --c: var(--blue);
+  --c-ink: var(--blue);
+  position: relative;
   display: grid;
-  grid-template-columns: 34px minmax(0, 1fr);
-  column-gap: 14px;
-  row-gap: 2px;
+  grid-template-columns: 44px minmax(0, 1fr);
+  column-gap: 16px;
+  row-gap: 3px;
+  padding-bottom: 22px;
   counter-increment: step;
 }
-.eg-steps li::before {
-  content: counter(step);
+.eg-steps li:last-child {
+  padding-bottom: 0;
+}
+.eg-steps li::after {
+  content: '';
+  position: absolute;
+  left: 21px;
+  top: 50px;
+  bottom: 6px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--c);
+  opacity: 0.55;
+}
+.eg-steps li:last-child::after {
+  display: none;
+}
+.eg-steps li[data-tone='yellow'] {
+  --c: var(--yellow);
+  --c-ink: #7a5000;
+}
+.eg-steps li[data-tone='green'] {
+  --c: var(--green);
+  --c-ink: #0a7a45;
+}
+.eg-steps li[data-tone='pink'] {
+  --c: var(--pink);
+  --c-ink: #c4196c;
+}
+.eg-steps li[data-tone='tint'] {
+  --c: var(--blue-tint);
+  --c-ink: #3048d0;
+}
+.eg-step-icon {
   grid-row: span 2;
+  position: relative;
   display: grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  background: var(--cobalt-anodised);
-  border: 1px solid rgba(160, 178, 255, 0.9);
-  color: #fff;
-  font-size: var(--t-sm);
-  font-weight: 700;
+  width: 44px;
+  height: 44px;
+  border-radius: 14px;
+  color: var(--c-ink);
+  background: color-mix(in srgb, var(--c) 16%, var(--plate));
+  border: 1px solid color-mix(in srgb, var(--c) 60%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.75),
+    0 4px 12px color-mix(in srgb, var(--c) 20%, transparent);
 }
 .eg-steps strong {
-  align-self: center;
+  align-self: end;
   font-size: var(--t-md);
+}
+.eg-steps strong::before {
+  content: counter(step, decimal-leading-zero);
+  margin-right: 10px;
+  color: var(--c-ink);
+  font-family: var(--font-mono);
+  font-size: var(--t-xs);
+  font-weight: 700;
 }
 .eg-steps p {
   margin: 0;
   font-size: var(--t-sm);
 }
 
-/* the market-cap tiers, as the $QUANTP page's fee cards */
+/* the market-cap tiers: where the market cap is, then each tier's daily release */
+.eg-meter,
+.eg-tier {
+  border-radius: var(--r-md);
+  background: rgba(255, 255, 255, 0.42);
+  border: 1px solid var(--mercury-2);
+}
+.eg-meter {
+  display: grid;
+  gap: 12px;
+  padding: 14px 16px 16px;
+}
+.eg-meter-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 2px 12px;
+  margin: 0;
+  font-size: var(--t-xs);
+  color: var(--steel);
+}
+.eg-meter-head b {
+  margin-left: 4px;
+  color: var(--ink);
+  font-size: var(--t-sm);
+}
+.eg-meter-track {
+  position: relative;
+  height: 10px;
+  margin: 0 8px;
+}
+.eg-meter-track i {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-left: 2px solid var(--plate);
+  background: rgba(46, 75, 255, 0.16);
+}
+.eg-meter-track i:nth-child(2) {
+  background: rgba(46, 75, 255, 0.26);
+}
+.eg-meter-track i:nth-child(3) {
+  background: rgba(46, 75, 255, 0.38);
+}
+.eg-meter-track i:first-child {
+  border-left: 0;
+  border-radius: var(--r-pill) 0 0 var(--r-pill);
+}
+.eg-meter-track i:nth-child(3) {
+  border-radius: 0 var(--r-pill) var(--r-pill) 0;
+}
+.eg-meter-track i.is-here {
+  background: var(--blue);
+}
+.eg-meter-track b {
+  position: absolute;
+  top: 50%;
+  width: 18px;
+  height: 18px;
+  margin: -9px 0 0 -9px;
+  border-radius: 50%;
+  background: #fff;
+  border: 4px solid var(--blue);
+  box-shadow: 0 2px 8px rgba(21, 24, 29, 0.3);
+}
 .eg-tier-list {
   display: grid;
   gap: 8px;
 }
+.eg-tier {
+  --fill: 0%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    'label pct'
+    'bar bar'
+    'hint hint';
+  align-items: center;
+  gap: 8px 12px;
+  padding: 14px 16px;
+}
+.eg-tier.is-now {
+  border-color: rgba(46, 75, 255, 0.55);
+  background: linear-gradient(140deg, rgba(46, 75, 255, 0.1), rgba(255, 255, 255, 0.5));
+  box-shadow:
+    inset 0 0 0 1px rgba(46, 75, 255, 0.35),
+    0 6px 18px rgba(46, 75, 255, 0.12);
+}
 .eg-tier-label {
+  grid-area: label;
   color: var(--ink);
+  font-size: var(--t-sm);
+  font-weight: 650;
+}
+.eg-tier-pct.num {
+  grid-area: pct;
+  font-size: var(--t-xl);
   font-weight: 600;
+  letter-spacing: -0.04em;
+  line-height: 1;
+}
+.eg-tier-bar {
+  grid-area: bar;
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--mercury-2);
+  overflow: hidden;
+}
+.eg-tier-bar i {
+  display: block;
+  width: var(--fill);
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--blue-tint), var(--blue));
+}
+.eg-tier-hint {
+  grid-area: hint;
+  font-size: var(--t-xs);
+  color: var(--steel);
 }
 .eg-tiers .qp-fine,
 .eg-rules .qp-fine {
@@ -125,12 +1093,42 @@
 
 /* ---------- responsive ---------- */
 @media (max-width: 1100px) {
+  .eg-hero {
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.2fr);
+  }
+  .eg-readout {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .eg-when {
+    grid-column: 1 / -1;
+    max-width: none;
+  }
+  .eg-stats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
   .eg-grid {
     grid-template-columns: minmax(0, 1fr) 340px;
   }
 }
-/* One column: how it works and its tiers first, then every payout, then the rules and the fine print. */
+/* One column: the hero stacks its copy over the drawing, and the panels leave their columns for
+   how it works and its tiers first, then every payout, then the rules and the fine print. */
 @media (max-width: 960px) {
+  .eg-hero {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      'copy'
+      'art'
+      'readout';
+  }
+  .eg-copy {
+    padding-bottom: 8px;
+  }
+  .eg-art {
+    width: 100%;
+    max-width: 720px;
+    justify-self: center;
+    margin: 0;
+  }
   .eg-grid {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -159,4 +1157,108 @@
     padding-top: 16px;
     gap: 12px;
   }
+  .eg-hero {
+    padding: 22px 18px 0;
+    border-radius: 22px;
+  }
+  .eg-copy {
+    gap: 14px;
+  }
+  .eg-lede {
+    font-size: var(--t-md);
+  }
+  .eg-readout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+    margin: 4px -18px 0;
+    padding: 18px 18px 20px;
+  }
+  .eg-next-split {
+    display: grid;
+  }
+  .eg-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .eg-stat {
+    padding: 14px 14px 13px;
+  }
+}
+@media (max-width: 420px) {
+  .eg-actions .btn {
+    flex: 1 1 auto;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .eg-art *,
+  .eg-state-dot {
+    animation: none !important;
+  }
+}
+
+/* ---------- night studio ---------- */
+:root[data-theme='dark'] .eg-hero {
+  background:
+    radial-gradient(46% 66% at 64% 46%, rgba(46, 75, 255, 0.24), transparent 70%),
+    radial-gradient(26% 46% at 90% 72%, rgba(255, 62, 165, 0.14), transparent 70%),
+    radial-gradient(28% 44% at 88% 22%, rgba(18, 194, 110, 0.12), transparent 70%),
+    linear-gradient(180deg, rgba(30, 34, 43, 0.92) 0%, rgba(14, 16, 21, 0.94) 55%, #0a0c10 100%);
+  border-color: rgba(255, 255, 255, 0.2) rgba(255, 255, 255, 0.08) rgba(255, 255, 255, 0.05)
+    rgba(255, 255, 255, 0.15);
+  box-shadow:
+    inset 1px 1px 0 rgba(255, 255, 255, 0.14),
+    0 26px 64px rgba(0, 0, 0, 0.6);
+}
+:root[data-theme='dark'] .eg-stat {
+  border-color: rgba(255, 255, 255, 0.2) rgba(255, 255, 255, 0.08) rgba(255, 255, 255, 0.05)
+    rgba(255, 255, 255, 0.15);
+}
+:root[data-theme='dark'] .eg-stat::before {
+  box-shadow: 0 0 12px var(--c);
+}
+:root[data-theme='dark'] .eg-stat dt::before {
+  box-shadow: 0 0 6px var(--c);
+}
+:root[data-theme='dark'] .eg-steps li {
+  --c-ink: var(--c);
+}
+:root[data-theme='dark'] .eg-steps li[data-tone='blue'] {
+  --c-ink: var(--blue-tint);
+}
+:root[data-theme='dark'] .eg-step-icon {
+  background: color-mix(in srgb, var(--c) 14%, rgba(255, 255, 255, 0.03));
+  box-shadow:
+    inset 1px 1px 0 rgba(255, 255, 255, 0.14),
+    0 0 18px color-mix(in srgb, var(--c) 22%, transparent);
+}
+:root[data-theme='dark'] .eg-meter,
+:root[data-theme='dark'] .eg-tier {
+  background: rgba(255, 255, 255, 0.04);
+}
+:root[data-theme='dark'] .eg-tier.is-now {
+  border-color: rgba(143, 164, 255, 0.6);
+  background: linear-gradient(140deg, rgba(46, 75, 255, 0.2), rgba(255, 255, 255, 0.03));
+  box-shadow:
+    inset 0 0 0 1px rgba(143, 164, 255, 0.3),
+    0 6px 18px rgba(46, 75, 255, 0.2);
+}
+:root[data-theme='dark'] .eg-meter-track i {
+  border-left-color: #12151b;
+  background: rgba(143, 164, 255, 0.16);
+}
+:root[data-theme='dark'] .eg-meter-track i:nth-child(2) {
+  background: rgba(143, 164, 255, 0.26);
+}
+:root[data-theme='dark'] .eg-meter-track i:nth-child(3) {
+  background: rgba(143, 164, 255, 0.36);
+}
+:root[data-theme='dark'] .eg-meter-track i.is-here {
+  background: var(--blue-tint);
+}
+:root[data-theme='dark'] .eg-meter-track b {
+  border-color: var(--blue-tint);
+  box-shadow: 0 0 12px rgba(143, 164, 255, 0.6);
+}
+:root[data-theme='dark'] .eg-tier-bar {
+  background: rgba(255, 255, 255, 0.08);
 }
