@@ -692,13 +692,15 @@
 
 /* Desktop: the switch takes 48px of the bar, paid for by tighter gaps and link padding, so the
    search box keeps its whole placeholder. Just above the menu breakpoint the lockup steps down
-   too. */
+   too. A connected wallet's balance is wider than "Connect": its button gives up some padding,
+   and the gaps cover the rest up to 9,999.9 SOL (wider, the placeholder ends in an ellipsis). */
 @media (min-width: 1280px) {
   .topbar-inner {
-    gap: 14px;
+    gap: 12px;
   }
   .nav {
     gap: 0;
+    margin-left: 4px;
   }
   .nav a {
     padding: 8px;
@@ -706,6 +708,11 @@
   .nav a.active::after {
     left: 8px;
     right: 8px;
+  }
+  /* .topbar: outranks .btn, which loads after this sheet */
+  .topbar .wallet-btn:not(.btn-primary) {
+    gap: 6px;
+    padding: 0 12px;
   }
 }
 @media (min-width: 1280px) and (max-width: 1365px) {

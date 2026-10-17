@@ -728,7 +728,6 @@ const headerBar = (page) =>
       actionsRight: inner.querySelector('.topbar-actions').getBoundingClientRect().right,
       innerRight: inner.getBoundingClientRect().right,
       overflow: inner.scrollWidth - inner.clientWidth,
-      searchWidth: inner.querySelector('.topbar-search').getBoundingClientRect().width,
       searchContent:
         input.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight),
       placeholder: canvas.measureText(input.placeholder).width,
@@ -744,6 +743,7 @@ const expectBarInside = async (page) => {
   for (const height of bar.linkHeights) expect(height).toBeLessThan(44)
   expect(bar.actionsRight).toBeLessThanOrEqual(bar.innerRight)
   expect(bar.overflow).toBeLessThanOrEqual(1)
+  expect(bar.searchContent).toBeGreaterThanOrEqual(bar.placeholder)
   return bar
 }
 
@@ -752,24 +752,25 @@ test('the header keeps its links on one line until it collapses into the menu', 
 }) => {
   await stubApi(page)
   await enter(page)
-  // 1280: the first width with the full bar, and its tightest.
+  // 1280: the first width with the full bar.
   await page.setViewportSize({ width: 1280, height: 800 })
   await page.goto('/market')
-  const bar = await expectBarInside(page)
-  expect(bar.searchContent).toBeGreaterThanOrEqual(bar.placeholder)
+  await expectBarInside(page)
   // One pixel less, the menu takes over.
   await page.setViewportSize({ width: 1279, height: 800 })
   await expect(page.getByRole('button', { name: 'Open menu' })).toBeVisible()
   await expect(page.locator('nav.nav')).toBeHidden()
 })
 
-// A connected wallet's balance is wider than "Connect". From 100 SOL it shows one decimal.
-for (const width of [1366, 1440])
+// A connected wallet's balance is wider than "Connect" (from 100 SOL it shows one decimal), and
+// the bar still fits it and the whole placeholder. 1280 has the smaller lockup; 1366 and up the
+// full one, on a bar capped at the page's max width: the tightest fit.
+for (const width of [1280, 1366, 1440])
   for (const [lamports, label] of [
     [12_345_000_000, '12.345 SOL'],
     [1_234_567_000_000, '1,234.6 SOL'],
   ])
-    test(`at ${width}px the header keeps ${label} and the search inside the bar`, async ({
+    test(`at ${width}px the header fits ${label} and the whole search placeholder`, async ({
       page,
     }) => {
       await stubApi(page)
@@ -794,8 +795,8 @@ for (const width of [1366, 1440])
       // The label and its icon fit inside the button.
       expect(await wallet.evaluate((b) => b.scrollWidth - b.clientWidth)).toBeLessThanOrEqual(1)
       const bar = await expectBarInside(page)
-      // The search keeps its floor, and a squeezed placeholder ends in an ellipsis, not a cut.
-      expect(bar.searchWidth).toBeGreaterThanOrEqual(180)
+      // A still wider balance (10,000 SOL and up) squeezes the placeholder: it ends in an
+      // ellipsis, not a cut.
       expect(bar.ellipsis).toEqual(['ellipsis', 'ellipsis'])
     })
 
