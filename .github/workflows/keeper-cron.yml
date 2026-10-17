@@ -1,7 +1,7 @@
 # Runs one keeper pass every 5 minutes: the $QUANTP payout engine (once each clock hour), then the
 # Quantum Hooks keeper (harvest + pulse, burns, Fusion, Entanglement epochs, and migrating full
 # curves to DAMM v2). This is the backup: Vercel Cron (crons in vercel.json) calls the same endpoint
-# once an hour, and Vercel's Hobby plan allows nothing more frequent. GitHub starts scheduled runs
+# every 5 minutes on the Pro plan, within its minute. GitHub starts scheduled runs
 # late or drops them, worst at the top of the hour (hence minutes 2, 7, 12 …): on this repository
 # it has started this schedule only every 2 to 5 hours, not every 5 minutes. It also turns the
 # schedule off after 60 days without repository activity. The server runs the payout engine for a

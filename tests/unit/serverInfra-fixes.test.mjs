@@ -745,25 +745,14 @@ test('vercel.json deploys main and caches hashed assets', () => {
   assert.match(deploy, /QUANTPAD_TRUST_PROXY/)
 })
 
-test('Vercel Cron calls the keeper tick every hour with daily crons, and GitHub stays the backup', () => {
+test('Vercel Cron calls the keeper tick every 5 minutes, and GitHub stays the backup', () => {
   const vercel = JSON.parse(readFileSync(join(root, 'vercel.json'), 'utf8'))
-  // Hobby refuses a cron that runs more than once a day (`0 * * * *` fails the deploy), so each
-  // hour has its own daily cron: a fixed minute and hour, every day.
-  const hours = vercel.crons.map(({ path, schedule }) => {
-    assert.equal(path, '/api/keeper/tick')
-    const [minute, hour, ...days] = schedule.split(' ')
-    assert.match(minute, /^\d{1,2}$/, schedule)
-    assert.match(hour, /^\d{1,2}$/, schedule)
-    assert.deepEqual(days, ['*', '*', '*'], schedule)
-    return Number(hour)
-  })
-  assert.deepEqual(
-    hours.toSorted((a, b) => a - b),
-    Array.from({ length: 24 }, (_, h) => h),
-  )
-  assert.ok(vercel.crons.length <= 100, "Vercel's per-project cron limit")
-  // the API function serves the path
+  // one cron on Pro, which starts it within its minute: the keeper's 5-minute pace, and the payout
+  // engine at the first tick of each hour (it claims the hour, so the other ticks leave it alone)
+  assert.deepEqual(vercel.crons, [{ path: '/api/keeper/tick', schedule: '*/5 * * * *' }])
+  // the API function serves the path, within the tick's budget
   assert.ok(vercel.functions['api/[[...path]].js'])
+  assert.equal(vercel.functions['api/[[...path]].js'].maxDuration, 120)
   const workflow = readFileSync(join(root, '.github/workflows/keeper-cron.yml'), 'utf8')
   const [, cron] = workflow.match(/- cron: '([^']+)'/)
   assert.equal(cron, '2-59/5 * * * *', 'every 5 minutes, off the top of the hour')
