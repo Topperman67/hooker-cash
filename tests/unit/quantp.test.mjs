@@ -139,6 +139,8 @@ const pair = (over = {}) => ({
   ...over,
 })
 const DEX_CURVE = { pairs: [pair()] }
+// when DexScreener listed the DAMM v2 pool's pair; feedWith's default clock is an hour after
+const DAMM_CREATED_MS = 1_792_121_704_000
 const DEX_GRADUATED = {
   pairs: [
     pair({ priceNative: '0.0000002159', priceChange: { h24: 618 }, volume: { h24: 13492.99 } }),
@@ -150,7 +152,7 @@ const DEX_GRADUATED = {
       priceChange: { h24: -0.24 },
       volume: { h24: 109.58 },
       txns: { h24: { buys: 3, sells: 2 } },
-      pairCreatedAt: 1792121704000,
+      pairCreatedAt: DAMM_CREATED_MS,
     }),
     // another chain's or another quote's pair is never counted
     pair({ chainId: 'base', volume: { h24: 1e9 } }),
@@ -171,7 +173,8 @@ function fakeFetch(routes) {
 function feedWith({ migrated = false, dex = DEX_CURVE, usd = 105, clock, holders = HOLDERS } = {}) {
   const connection = fakeConnection(chainAccounts({ migrated }), { holders })
   const dexFetch = fakeFetch([['dexscreener', () => json(dex)]])
-  const now = clock ? () => clock.t : Date.now
+  // an hour after graduation unless the test drives the clock, so nothing reads the wall clock
+  const now = clock ? () => clock.t : () => DAMM_CREATED_MS + 3_600_000
   const feed = createQuantpFeed({
     connection,
     request: dexFetch.request,
@@ -238,6 +241,13 @@ test('after graduation: the verified DAMM v2 pool prices it, the fee is 5% and i
   // the change runs from the curve pair's price a day ago, not from the new pool's first trade
   const dayAgo = 0.0000002159 / (1 + 6.18)
   assert.ok(Math.abs(s.change24h - (0.0000002198 / dayAgo - 1)) < 1e-9)
+  // once the pool is more than a day old, its own 24h change stands
+  const later = feedWith({
+    migrated: true,
+    dex: DEX_GRADUATED,
+    clock: { t: DAMM_CREATED_MS + 25 * 3_600_000 },
+  })
+  assert.equal((await later.feed.snapshot()).change24h, -0.0024)
   // DBC's fees, plus the DAMM pool's LP and protocol fees; the creator holds 90% of the
   // migrated liquidity, which is (all but one unit of) the pool's
   const dbcTrading = lamportsToSol(2078527587)
