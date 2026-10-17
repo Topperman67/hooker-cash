@@ -480,19 +480,21 @@ export const quantpLedger = ({
     lamports,
     recipients,
   }))
-  const bursts = payouts ?? [
-    {
-      timestamp: now - 7200,
-      lamports: '549999974',
-      recipients: 51,
-      recipient: null,
-      transactions: round1,
-    },
-  ]
+  const bursts = (
+    payouts ?? [
+      {
+        timestamp: now - 7200,
+        lamports: '549999974',
+        recipients: 51,
+        recipient: null,
+        transactions: round1,
+      },
+    ]
+  ).map((burst) => ({ wallet: QUANTP.payoutWallet, ...burst }))
   const sum = (list, field) => list.reduce((s, r) => s + BigInt(r[field] ?? 0), 0n).toString()
   return {
     mint: QUANTP.mint,
-    wallets: { payout: QUANTP.payoutWallet, creator: QUANTP.creator },
+    wallets: { payout: QUANTP.payoutWallet, creator: QUANTP.creator, engine: QUANTP.engine.wallet },
     payoutLamports,
     payouts: bursts,
     burns,
@@ -511,8 +513,10 @@ export const quantpLedger = ({
 }
 
 // /api/quantp/engine for the payout engine running on the payout wallet: the 20%-a-day tier, 31
-// wallets eligible, last run 20 minutes ago (as planned from mainnet on 2026-10-16).
-export const quantpEngine = (over = {}) => ({
+// wallets eligible, last run 20 minutes ago (as planned from mainnet on 2026-10-16). `next` merges
+// into the default next run, so { next: { buyback: '0' } } changes only the buyback; `state`
+// 'stale' is a status the server could not refresh from the chain.
+export const quantpEngine = ({ next, ...over } = {}) => ({
   configured: true,
   wallet: QUANTP.payoutWallet,
   live: true,
@@ -520,27 +524,117 @@ export const quantpEngine = (over = {}) => ({
   everySecs: 3600,
   minHoldBps: 15,
   minHold: '1500000000000',
+  tiers: QUANTP.engine.tiers,
   holdersShareBps: 6000,
   marketCapUsd: 6381,
   dailyBps: 2000,
   balance: '1021862000',
-  next: { release: '8349000', holders: '4958000', buyback: '3340000', paying: 28 },
+  next: { release: '8349000', holders: '4958000', buyback: '3340000', paying: 28, ...next },
   eligible: 31,
   lastRunAt: Math.floor(Date.now() / 1000) - 1200,
+  updatedAt: Math.floor(Date.now() / 1000) - 60,
   state: 'ok',
   ...over,
 })
 
+// The 31 eligible wallets of quantpEngine()'s next run, largest first, as the engine's status lists
+// them ({ holders, heldEligible }, to spread into quantpEngine): 28 paid, one share under the
+// minimum transfer, one wallet with no SOL whose share is under rent exemption and one program
+// account the engine cannot pay. Amounts in raw units, lamports the wallet's share of the run.
+export function quantpHolders({ holdersPot = 5_009_400n } = {}) {
+  // whole tokens, in thousands
+  const thousands = [
+    90_000, 70_000, 50_000, 40_000, 30_000, 25_000, 20_000, 16_000, 14_000, 12_000, 10_000, 9000,
+    8000, 7000, 6000, 5000, 4600, 4200, 3800, 3400, 3100, 2900, 2700, 2500, 2400, 2300, 2200, 2100,
+    2050, 2000, 1500,
+  ]
+  const amounts = thousands.map((k) => BigInt(k) * 1_000_000_000n)
+  const heldEligible = amounts.reduce((s, a) => s + a, 0n)
+  const holders = amounts.map((amount, i) => {
+    const lamports = (holdersPot * amount) / heldEligible
+    const reason =
+      i === 5 ? 'not-payable' : i === 29 ? 'no-sol' : lamports < 20_000n ? 'below-minimum' : null
+    return {
+      wallet: new PublicKey(Buffer.alloc(32, i + 1)).toBase58(),
+      amount: amount.toString(),
+      lamports: lamports.toString(),
+      reason,
+    }
+  })
+  return { holders, heldEligible: heldEligible.toString() }
+}
+
+// /api/quantp/holder for `wallet`: an eligible holder (quantpHolders' largest by default) paid in
+// round 1 and by two engine runs since.
+export const quantpHolder = ({ wallet = WALLET_ADDRESS, engine, ...over } = {}) => {
+  const now = Math.floor(Date.now() / 1000)
+  const items = [
+    [
+      '4Lk2ffmEnF4bXR6jXq8mQtymYjwh9YdA9ZqRAqAHnqbMVr5nC5zU4o4ZH9sZ6R2Sa7J1x2Cq9DkLTnJ5yVhPTyAs',
+      1200,
+    ],
+    [
+      '3nE9uZ5K7CfGQ7YgS8nL1eF2wqC2tX6sK3vB9mR4pD8hJ7yT5aW1xZ3cV6bN8mQ2kL4jH9gF7dS5aP3oi2uY1tR',
+      4800,
+    ],
+    [
+      '5B9NLSK5dRt9Zp3j3b5is9oD6n8a7Wh4wdzczMGc3T7a181PCEZrLW6jJKxYwhPmgMFeH4ewjRcovFM2obXZM3sC',
+      7200,
+    ],
+  ].map(([signature, age], i) => ({
+    signature,
+    timestamp: now - age,
+    lamports: ['1424000', '1398000', '97000000'][i],
+  }))
+  return {
+    wallet,
+    paid: { lamports: '99822000', payouts: items.length, lastAt: items[0].timestamp, items },
+    engine: engine === undefined ? { ...quantpHolders().holders[0], wallet } : engine,
+    minHold: '1500000000000',
+    complete: true,
+    ...over,
+  }
+}
+
 /**
- * Answers $QUANTP's routes; `ledger` is the /api/quantp/ledger body, or a status to fail with, and
- * `engine` the /api/quantp/engine body (not configured by default).
+ * Answers $QUANTP's routes; `ledger` is the /api/quantp/ledger body, or a status to fail with,
+ * `engine` the /api/quantp/engine body (not configured by default) or a status to fail with, and
+ * `holder` the /api/quantp/holder body for any wallet (or a function of the wallet that returns
+ * it), or a status: 404 by default, as a server without the route answers. With a body, a request
+ * without a wallet is refused with 400.
  */
 export async function stubQuantp(
   page,
-  { snapshot = quantpSnapshot(), ledger = quantpLedger(), engine = { configured: false } } = {},
+  {
+    snapshot = quantpSnapshot(),
+    ledger = quantpLedger(),
+    engine = { configured: false },
+    holder = 404,
+  } = {},
 ) {
   await page.route('**/api/quantp', (route) => route.fulfill({ json: snapshot }))
-  await page.route('**/api/quantp/engine', (route) => route.fulfill({ json: engine }))
+  await page.route('**/api/quantp/engine', (route) =>
+    typeof engine === 'number'
+      ? route.fulfill({
+          status: engine,
+          json: {
+            error: 'The payout engine’s state is unavailable right now.',
+            code: 'ENGINE_UNAVAILABLE',
+          },
+        })
+      : route.fulfill({ json: engine }),
+  )
+  await page.route('**/api/quantp/holder*', (route) => {
+    if (typeof holder === 'number')
+      return route.fulfill({ status: holder, json: { error: 'Endpoint not found.' } })
+    const wallet = new URL(route.request().url()).searchParams.get('wallet')
+    if (!wallet)
+      return route.fulfill({
+        status: 400,
+        json: { error: 'Enter a Solana wallet address.', code: 'BAD_WALLET' },
+      })
+    return route.fulfill({ json: typeof holder === 'function' ? holder(wallet) : holder })
+  })
   await page.route('**/api/quantp/trades*', (route) =>
     route.fulfill({ json: { items: [], total: 0, next: null, source: 'indexer' } }),
   )
