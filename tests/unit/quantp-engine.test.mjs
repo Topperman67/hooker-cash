@@ -1128,6 +1128,63 @@ test('when the wallet’s history cannot be read, a due tick does not run: unver
   assert.deepEqual([connection.attempts.length, connection.sent.length], [0, 0])
 })
 
+test('the run check counts the engine’s transactions whose block time is not known yet', async () => {
+  const clock = { t: HALF_PAST }
+  const store = memoryStore()
+  store.down = true
+  const connection = stubChain({ holders: MANY, clock })
+  assert.equal((await engineOn(connection, store, clock).tick()).ran, true)
+  for (const s of connection.history) s.blockTime = null // listed before its block time is
+  clock.t += 60_000
+  const other = await engineOn(connection, store, clock).tick()
+  assert.deepEqual([other.ran, other.reason, other.source], [false, 'not-due', 'chain'])
+  assert.equal(connection.attempts.length, 3)
+})
+
+test('the run check reads the engine’s memos first, and at most six transactions', async () => {
+  const stranger = wallet(99)
+  // a run, then `n` of a stranger's transactions in the same hour, newer than it
+  const runThenDust = async (n, memo) => {
+    const clock = { t: HALF_PAST }
+    const store = memoryStore()
+    store.down = true
+    const connection = stubChain({ holders: MANY, clock })
+    assert.equal((await engineOn(connection, store, clock).tick()).ran, true)
+    connection.history.unshift(
+      ...Array.from({ length: n }, (_, i) => ({
+        signature: bs58.encode(Buffer.alloc(64, i + 1)),
+        blockTime: HALF_PAST / 1000 + 30 - i,
+        err: null,
+        memo,
+        payer: stranger,
+      })),
+    )
+    clock.t += 60_000
+    return [await engineOn(connection, store, clock).tick(), connection]
+  }
+  // ten plain transfers: the run's own memos are read before them, and it is found
+  const [found] = await runThenDust(10, null)
+  assert.deepEqual([found.reason, found.source], ['not-due', 'chain'])
+  // seven forged engine memos: the six reads find none of the engine's, so the claim decides
+  const [claimed, connection] = await runThenDust(7, '[34] qp-engine:v1 h=500000 pot=1 H=1')
+  assert.deepEqual(claimed, { ran: false, reason: 'locked', source: 'claim' })
+  assert.equal(payoutsIn(connection).length, 25)
+})
+
+test('a run with nothing to send sends no claim either', async () => {
+  const clock = { t: HALF_PAST }
+  const store = memoryStore()
+  // 0.015 SOL, under the 0.02 kept for fees: nothing is released
+  const connection = stubChain({ holders: MANY, clock, balance: 15_000_000 })
+  const run = await engineOn(connection, store, clock).tick()
+  assert.deepEqual(
+    [run.ran, run.note, run.release, run.payouts, run.buyback],
+    [true, 'nothing to send', '0', [], null],
+  )
+  assert.equal(connection.attempts.length, 0)
+  assert.equal(store.values.get(LAST), HALF_PAST)
+})
+
 test('holders a transfer cannot pay are left out: programs, accounts with data; an empty wallet is paid', async () => {
   const clock = { t: HALF_PAST }
   const [program, data, empty] = [wallet(60), wallet(61), wallet(62)]
@@ -1377,6 +1434,40 @@ test('a blockhash the node fails to give is asked for again: nothing was signed 
   assert.equal(clock.t, HOUR0 + 3_600_000 + 2 * 700)
 })
 
+test('a transaction whose blockhash has expired is reported at once, not waited on to the deadline', async () => {
+  const clock = { t: HOUR0 }
+  const connection = stubChain({ holders: MANY, clock })
+  // the first payout's send times out, and the chain is already past its blockhash's last height
+  connection.refuse = (tx) => (kindOf(tx) === 'payout' ? Error('fetch failed') : null)
+  connection.getBlockHeight = async () => 1_001
+  const run = await engineOn(connection, memoryStore(), clock).tick()
+  assert.equal(run.stopped, 'payout not confirmed')
+  assert.deepEqual([run.failed[0].unknown, run.failed[0].recipients], [true, 18])
+  assert.equal(clock.t, HOUR0, 'no wait')
+  assert.equal(connection.attempts.filter((a) => a.options.skipPreflight).length, 0)
+})
+
+test('the priority fee is the 75th percentile paid on its accounts, between 10,000 and 500,000', async () => {
+  const clock = { t: HOUR0 }
+  const connection = stubChain({ holders: MANY, clock })
+  const samples = [
+    [0, 0, 3_000, 9_000], // for the claim: under the floor
+    [600_000, 700_000, 900_000, 2_000_000], // the first payout: over the cap
+    [0, 20_000, 30_000, 40_000, 50_000], // the second: the 75th percentile of the fees paid
+  ]
+  connection.getRecentPrioritizationFees = async () =>
+    samples.shift().map((prioritizationFee) => ({ slot: 1, prioritizationFee }))
+  assert.equal((await engineOn(connection, memoryStore(), clock).tick()).ran, true)
+  assert.deepEqual(
+    connection.sent.map((tx) =>
+      Number(
+        ComputeBudgetInstruction.decodeSetComputeUnitPrice(instructionsOf(tx)[1]).microLamports,
+      ),
+    ),
+    [10_000, 500_000, 40_000],
+  )
+})
+
 test('the buyback through a tick: the third transaction swaps in the DAMM v2 pool and burns, memo last', async () => {
   const clock = { t: HOUR0 }
   const held = 3_070_967_498_088n
@@ -1395,8 +1486,19 @@ test('the buyback through a tick: the third transaction swaps in the DAMM v2 poo
   assert.ok(ixs.some((ix) => ix.programId.toBase58() === network.dammV2Program))
   assert.equal(ixs.at(-1).programId.toBase58(), MEMO)
   assert.deepEqual(memosOf(buyback), ['qp-engine:v1 h=500000 bb=3333334'])
+  // it burns the least the swap can return, quoted against the pool as it is, plus what it held
+  const damm = decodeDammPool(DAMM)
+  const quoted = await buybackInstructions({
+    venue: { damm, dammPool: DAMM_POOL },
+    wallet: ENGINE,
+    lamports: 3_333_334n,
+    point:
+      Number(damm.raw.activationType) === 1 ? BigInt(Math.floor(clock.t / 1000)) : 300_000_000n,
+    slippageBps: PINNED.slippageBps,
+  })
+  assert.ok(quoted.minOut > 0n)
   const burn = decodeBurnCheckedInstruction(ixs.at(-2), TOKEN_2022_PROGRAM_ID)
-  assert.ok(burn.data.amount > held, 'it burns what it bought plus what it held')
+  assert.equal(burn.data.amount, quoted.minOut + held)
   assert.deepEqual(run.buyback, {
     signature: signatureOf(buyback),
     lamports: '3333334',
@@ -1405,7 +1507,6 @@ test('the buyback through a tick: the third transaction swaps in the DAMM v2 poo
   const { units } = ComputeBudgetInstruction.decodeSetComputeUnitLimit(ixs[0])
   assert.ok(units >= 100_000 && units <= 200_000)
   // its priority fee is read for the pool, its vaults and the wallet
-  const damm = decodeDammPool(DAMM)
   assert.deepEqual(connection.feeQueries.at(-1), [
     DAMM_POOL,
     damm.tokenAVault,
@@ -1453,6 +1554,13 @@ test('a read that fails is tried once more, then reported without anything sent'
   const run = await engineOn(connection, memoryStore(), clock, { feed: flaky }).tick()
   assert.equal(run.ran, true)
   assert.equal(clock.t, HOUR0 + 2_500, 'it waited 2.5 s')
+  // with under 12 s left it is not tried again
+  reads = 0
+  const hurried = await engineOn(stubChain({ holders: MANY, clock }), memoryStore(), clock, {
+    feed: flaky,
+  }).tick({ deadline: clock.t + 11_000 })
+  assert.deepEqual(hurried, { ran: false, error: '429 Too Many Requests' })
+  assert.deepEqual([clock.t, reads], [HOUR0 + 2_500, 1])
   const down = { snapshot: async () => ({ supply: null }) }
   const failed = await engineOn(stubChain({ holders: MANY, clock }), memoryStore(), clock, {
     feed: down,
