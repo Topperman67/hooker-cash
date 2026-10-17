@@ -1,0 +1,239 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<!-- The fees engine announcement (the Engine page, /engine): the engine as a machine, fees in
+     through the hourly ring, 60% out to holders and 40% to buyback and burn, with what it had
+     really paid and burned when it was made (read from /api/quantp/ledger on 2026-10-17; they
+     include round 1, which the team sent by hand from the same wallet). Update the four figures
+     and the date before rendering it again. Laid out at 1600×900.
+     Render: node social/render.mjs social/engine/engine.html 3200 1800 social/quantpad-engine.png --2x -->
+<style>
+  @font-face { font-family: 'Hubot Sans'; src: url('../../node_modules/@fontsource-variable/hubot-sans/files/hubot-sans-latin-wdth-normal.woff2') format('woff2'); font-weight: 200 900; font-stretch: 75% 125%; }
+  @font-face { font-family: 'Mona Sans'; src: url('../../node_modules/@fontsource-variable/mona-sans/files/mona-sans-latin-wdth-normal.woff2') format('woff2'); font-weight: 200 900; font-stretch: 75% 125%; }
+  @font-face { font-family: 'Martian Mono'; src: url('../../node_modules/@fontsource-variable/martian-mono/files/martian-mono-latin-wght-normal.woff2') format('woff2'); font-weight: 100 800; }
+  :root {
+    --green: #12C26E; --green-hi: #5CF0A6; --pink: #FF3EA5; --pink-hi: #FF8CC8;
+    --blue: #2E4BFF; --blue-tint: #8FA4FF; --yellow: #FFC21A;
+    --text-2: #C4CAD4; --line: rgba(255,255,255,.1);
+  }
+  html, body { margin: 0; width: 1600px; height: 900px; overflow: hidden; color: #fff; }
+  body {
+    position: relative;
+    background:
+      radial-gradient(900px 620px at 6% -10%, rgba(46,75,255,.42), transparent 62%),
+      radial-gradient(700px 520px at 104% 108%, rgba(18,194,110,.16), transparent 62%),
+      radial-gradient(620px 420px at 86% 30%, rgba(255,62,165,.12), transparent 62%),
+      linear-gradient(180deg, #0d1017 0%, #07080c 100%);
+    font-family: 'Mona Sans';
+  }
+  /* four light lines rake the top-right corner, as on the mark, with their glow */
+  .lines, .lines::after {
+    position: absolute; inset: 0; pointer-events: none;
+    background: linear-gradient(118deg,
+      transparent 0 66%, rgba(255,62,165,.9) 66% 66.35%, transparent 66.35% 66.9%,
+      rgba(255,194,26,.85) 66.9% 67.25%, transparent 67.25% 67.8%,
+      rgba(18,194,110,.85) 67.8% 68.15%, transparent 68.15% 68.7%,
+      rgba(70,98,255,1) 68.7% 69.05%, transparent 69.05% 100%);
+    -webkit-mask-image: radial-gradient(34% 44% at 100% 0%, #000 22%, transparent 72%);
+    mask-image: radial-gradient(34% 44% at 100% 0%, #000 22%, transparent 72%);
+  }
+  .lines::after { content: ''; filter: blur(8px); opacity: .8; }
+  /* film grain: keeps the dark gradients from banding */
+  .grain {
+    position: absolute; inset: 0; opacity: .06; mix-blend-mode: overlay; pointer-events: none;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 160 160' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23g)'/%3E%3C/svg%3E");
+    background-size: 160px 160px;
+  }
+
+  .lockup { position: absolute; left: 88px; top: 62px; height: 30px; }
+  .live {
+    display: inline-flex; align-items: center; gap: 10px; margin-bottom: 26px;
+    padding: 9px 16px 9px 14px; border-radius: 999px;
+    font-family: 'Martian Mono'; font-weight: 500; font-size: 14px; color: #DDF8EA;
+    background: rgba(18,194,110,.1); box-shadow: inset 0 0 0 1px rgba(18,194,110,.38), 0 0 30px rgba(18,194,110,.12);
+  }
+  .live i { width: 9px; height: 9px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 4px rgba(18,194,110,.22), 0 0 12px var(--green); }
+
+  /* ---------- the words ---------- */
+  .words { position: absolute; left: 88px; top: 134px; width: 720px; }
+  h1 {
+    margin: 0; font-family: 'Hubot Sans'; font-weight: 900; font-stretch: 116%;
+    font-size: 122px; line-height: .9; letter-spacing: -0.025em;
+  }
+  h1 span { display: block; }
+  h1 b {
+    display: block; font-weight: 900; font-stretch: 125%; padding-bottom: .14em; margin-bottom: -.14em;
+    background:
+      linear-gradient(180deg, #FFFFFF 0%, #EEF2F7 22%, #B7C0CC 38%, #4A5260 44%, #7C8798 51%, #D6DDE7 66%, #FFFFFF 86%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    filter: drop-shadow(0 8px 24px rgba(0,0,0,.55));
+  }
+  .lede { margin: 30px 0 0; font-size: 25px; line-height: 1.42; color: var(--text-2); max-width: 628px; }
+  .lede strong { color: #fff; font-weight: 650; }
+  .rules { margin-top: 30px; display: flex; gap: 10px; }
+  .rules span {
+    display: inline-flex; align-items: center; gap: 8px; padding: 9px 14px 9px 11px; border-radius: 999px;
+    font-size: 15.5px; font-weight: 600; color: #E9ECF0; white-space: nowrap;
+    background: linear-gradient(180deg, rgba(255,255,255,.1), rgba(255,255,255,.04));
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.18), inset 0 0 0 1px rgba(255,255,255,.07);
+  }
+  .rules svg { width: 17px; height: 17px; flex: none; }
+
+  /* ---------- the machine ---------- */
+  .machine { position: absolute; left: 722px; top: 150px; width: 790px; height: 480px; }
+  .machine > svg.wires { position: absolute; inset: 0; overflow: visible; }
+  .node {
+    position: absolute; border-radius: 22px; padding: 18px 20px;
+    background: linear-gradient(180deg, rgba(38,43,52,.92), rgba(18,21,27,.94));
+    box-shadow: inset 1px 1px 0 rgba(255,255,255,.16), inset -1px -1px 0 rgba(0,0,0,.5), 0 20px 46px rgba(0,0,0,.5);
+  }
+  .label { font-size: 15px; font-weight: 650; color: var(--text-2); }
+  .fees { left: 0; top: 150px; width: 184px; }
+  .fees strong { display: block; margin-top: 4px; font-family: 'Mona Sans'; font-weight: 900; font-stretch: 112%; font-size: 64px; line-height: 1; letter-spacing: -0.02em; }
+  .fees small { display: block; margin-top: 6px; font-size: 14px; line-height: 1.35; color: var(--text-2); }
+
+  .ring { position: absolute; left: 238px; top: 114px; width: 252px; height: 252px; }
+  .ring svg { position: absolute; inset: 0; overflow: visible; }
+  .ring-face {
+    position: absolute; inset: 36px; border-radius: 50%; display: grid; place-content: center; justify-items: center; text-align: center;
+    background: radial-gradient(120% 90% at 30% 10%, rgba(255,255,255,.24), transparent 55%), linear-gradient(180deg, #4a66ff 0%, #2e4bff 50%, #1b33e0 100%);
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.55), inset 0 -10px 24px rgba(10,20,120,.45), 0 0 60px rgba(46,75,255,.55), 0 18px 40px rgba(0,0,0,.45);
+  }
+  .ring-face span { font-size: 14px; font-weight: 650; color: rgba(255,255,255,.88); }
+  .ring-face strong { font-family: 'Mona Sans'; font-weight: 900; font-stretch: 112%; font-size: 64px; line-height: .95; letter-spacing: -0.03em; margin: 2px 0 1px; }
+
+  .out { left: 552px; width: 238px; padding: 16px 18px 17px; border-left: 4px solid var(--c); }
+  .out.holders { --c: var(--green); top: 34px; }
+  .out.burn { --c: var(--pink); top: 270px; }
+  .pct {
+    display: inline-block; font-family: 'Mona Sans'; font-weight: 900; font-stretch: 112%; font-size: 40px; line-height: 1; letter-spacing: -0.02em;
+    padding: 9px 14px 8px; border-radius: 14px; color: #fff;
+    background: linear-gradient(180deg, var(--hi), var(--c)); box-shadow: 0 0 28px var(--glow), inset 0 1px 0 rgba(255,255,255,.6);
+  }
+  .holders .pct { --hi: var(--green-hi); --glow: rgba(18,194,110,.5); color: #03190c; }
+  .burn .pct { --hi: var(--pink-hi); --glow: rgba(255,62,165,.5); color: #2d0518; }
+  .out h3 { margin: 14px 0 0; font-family: 'Hubot Sans'; font-weight: 800; font-stretch: 108%; font-size: 25px; line-height: 1.05; }
+  .out p { margin: 7px 0 0; font-size: 14.5px; line-height: 1.4; color: var(--text-2); }
+
+
+  /* ---------- the figures ---------- */
+  .figures { position: absolute; left: 88px; right: 88px; top: 692px; display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  .figure {
+    position: relative; padding: 20px 22px 18px; border-radius: 20px; overflow: hidden;
+    background: linear-gradient(180deg, rgba(255,255,255,.075), rgba(255,255,255,.025));
+    box-shadow: inset 1px 1px 0 rgba(255,255,255,.16), inset 0 0 0 1px rgba(255,255,255,.05), 0 16px 36px rgba(0,0,0,.35);
+  }
+  .figure::before { content: ''; position: absolute; left: 22px; right: 22px; top: 0; height: 3px; border-radius: 0 0 3px 3px; background: var(--c); box-shadow: 0 0 14px var(--c); }
+  .figure.g { --c: var(--green); }
+  .figure.p { --c: var(--pink); }
+  .figure strong { display: block; font-family: 'Martian Mono'; font-weight: 600; font-size: 38px; line-height: 1.1; letter-spacing: -0.03em; }
+  .figure strong small { font-size: 22px; letter-spacing: -0.01em; margin-left: 6px; color: #E9ECF0; }
+  .figure span { display: block; margin-top: 6px; font-size: 16px; font-weight: 600; color: var(--text-2); }
+
+  .foot { position: absolute; left: 88px; right: 88px; bottom: 34px; display: flex; justify-content: space-between; align-items: center; }
+  .url { font-family: 'Martian Mono'; font-weight: 500; font-size: 17px; color: #E9ECF0; display: flex; align-items: center; gap: 12px; }
+  .url i { width: 9px; height: 9px; border-radius: 50%; background: var(--green); box-shadow: 0 0 10px var(--green); }
+  .note { font-size: 13px; color: #9AA3B2; }
+</style>
+</head>
+<body>
+<div class="lines"></div>
+<div class="grain"></div>
+
+<img class="lockup" src="../../public/brand/lockup-dark.svg" alt="Quant Pad">
+<div class="words">
+  <div class="live"><i></i>Live · runs every hour</div>
+  <h1><span>The fees</span><b>engine.</b></h1>
+  <p class="lede">Every hour it pays <strong>$QUANTP</strong> holders in SOL and burns <strong>$QUANTP</strong>. Every payout and burn is on&#8209;chain.</p>
+  <div class="rules">
+    <span><svg viewBox="0 0 24 24" fill="none" stroke="#5CF0A6" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>Hold 0.15% of supply</span>
+    <span><svg viewBox="0 0 24 24" fill="none" stroke="#5CF0A6" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>SOL sent straight to your wallet</span>
+    <span><svg viewBox="0 0 24 24" fill="none" stroke="#5CF0A6" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>Nothing to claim</span>
+  </div>
+</div>
+
+<div class="machine">
+  <svg class="wires" width="790" height="480">
+    <defs>
+      <filter id="glow" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="4"/></filter>
+      <linearGradient id="wire-in" x1="0" x2="1"><stop offset="0" stop-color="#fff" stop-opacity=".15"/><stop offset="1" stop-color="#8FA4FF" stop-opacity=".9"/></linearGradient>
+    </defs>
+    <!-- fees -> ring -->
+    <path d="M184 240 H238" stroke="url(#wire-in)" stroke-width="3" fill="none"/>
+    <circle cx="214" cy="240" r="4" fill="#fff" filter="url(#glow)"/>
+    <circle cx="214" cy="240" r="2.5" fill="#fff"/>
+    <!-- ring -> holders / burn -->
+    <path d="M490 240 C526 240 514 116 552 116" stroke="#12C26E" stroke-opacity=".35" stroke-width="8" fill="none" filter="url(#glow)"/>
+    <path d="M490 240 C526 240 514 116 552 116" stroke="#12C26E" stroke-width="3" fill="none"/>
+    <path d="M490 240 C526 240 514 352 552 352" stroke="#FF3EA5" stroke-opacity=".35" stroke-width="8" fill="none" filter="url(#glow)"/>
+    <path d="M490 240 C526 240 514 352 552 352" stroke="#FF3EA5" stroke-width="3" fill="none"/>
+    <circle cx="524" cy="170" r="5" fill="#5CF0A6" filter="url(#glow)"/><circle cx="524" cy="170" r="3" fill="#EFFFF6"/>
+    <circle cx="524" cy="310" r="5" fill="#FF8CC8" filter="url(#glow)"/><circle cx="524" cy="310" r="3" fill="#FFF1F8"/>
+  </svg>
+
+  <div class="node fees">
+    <div class="label">Trading fee</div>
+    <strong>5%</strong>
+    <small>on every $QUANTP trade. The creator’s share feeds the engine.</small>
+  </div>
+
+  <div class="ring">
+    <svg width="252" height="252" viewBox="0 0 252 252">
+      <defs>
+        <linearGradient id="arc" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8FA4FF"/><stop offset="1" stop-color="#2E4BFF"/></linearGradient>
+        <filter id="arcglow" x="-30%" y="-30%" width="160%" height="160%"><feGaussianBlur stdDeviation="5"/></filter>
+      </defs>
+      <circle cx="126" cy="126" r="116" fill="rgba(0,0,0,.35)" stroke="rgba(255,255,255,.09)" stroke-width="10"/>
+      <g id="ticks"></g>
+      <circle cx="126" cy="126" r="116" fill="none" stroke="url(#arc)" stroke-width="10" stroke-linecap="round" stroke-dasharray="728.85" stroke-dashoffset="182" transform="rotate(-90 126 126)" filter="url(#arcglow)" opacity=".9"/>
+      <circle cx="126" cy="126" r="116" fill="none" stroke="url(#arc)" stroke-width="10" stroke-linecap="round" stroke-dasharray="728.85" stroke-dashoffset="182" transform="rotate(-90 126 126)"/>
+    </svg>
+    <div class="ring-face">
+      <span>Runs every</span>
+      <strong>60</strong>
+      <span>minutes</span>
+    </div>
+  </div>
+
+  <div class="node out holders">
+    <span class="pct">60%</span>
+    <h3>To holders</h3>
+    <p>In SOL, by balance, to every wallet holding 0.15%+</p>
+  </div>
+  <div class="node out burn">
+    <span class="pct">40%</span>
+    <h3>Buyback &amp; burn</h3>
+    <p>Buys $QUANTP in its pool and burns it in the same transaction</p>
+  </div>
+</div>
+
+<div class="figures">
+  <div class="figure g"><strong>0.57<small>SOL</small></strong><span>paid to holders</span></div>
+  <div class="figure g"><strong>67</strong><span>wallets paid</span></div>
+  <div class="figure p"><strong>0.56<small>SOL</small></strong><span>spent on buybacks</span></div>
+  <div class="figure p"><strong>3.22M</strong><span>$QUANTP burned, 0.32% of supply</span></div>
+</div>
+
+<div class="foot">
+  <div class="url"><i></i>quantpad.company/engine</div>
+  <div class="note">On-chain totals, Oct 17 2026, including round 1 sent by hand · Paid from a wallet the team funds · Not financial advice</div>
+</div>
+
+<script>
+  // the ring's 60 minute ticks, a longer one every 5
+  const g = document.getElementById('ticks')
+  for (let i = 0; i < 60; i++) {
+    const major = i % 5 === 0
+    const l = document.createElementNS('http://www.w3.org/2000/svg', 'line')
+    l.setAttribute('x1', 126); l.setAttribute('x2', 126)
+    l.setAttribute('y1', 22); l.setAttribute('y2', major ? 32 : 27)
+    l.setAttribute('stroke', major ? 'rgba(255,255,255,.55)' : 'rgba(255,255,255,.22)')
+    l.setAttribute('stroke-width', major ? 2 : 1.2)
+    l.setAttribute('stroke-linecap', 'round')
+    l.setAttribute('transform', `rotate(${i * 6} 126 126)`)
+    g.appendChild(l)
+  }
+</script>
+</body>
+</html>

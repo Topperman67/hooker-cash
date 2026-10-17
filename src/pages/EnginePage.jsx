@@ -163,9 +163,9 @@ function Flow({ feeBps, balance, dailyBps, holdersPct, eligible, next, live }) {
   return (
     <div className={`eng-flow ${live ? 'is-live' : ''}`}>
       <div className="eng-node eng-node-in">
-        <span className="eng-node-label">Creator fees</span>
+        <span className="eng-node-label">Trading fee</span>
         <strong className="num">{feeBps == null ? '—' : bps(feeBps)}</strong>
-        <span className="eng-node-sub">of every trade in the pool</span>
+        <span className="eng-node-sub">per trade; the creator’s share funds the engine</span>
       </div>
       <span className="eng-pipe" aria-hidden="true">
         <i />

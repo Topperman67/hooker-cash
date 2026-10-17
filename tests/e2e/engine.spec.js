@@ -61,7 +61,9 @@ test('the header’s Engine link opens the fees engine: what it paid, its state,
   )
   // the flow: the pool's fee, the wallet, what the next run sends each way
   const flow = hero.locator('.eng-flow')
-  await expect(flow.locator('.eng-node-in')).toContainText('Creator fees5%')
+  await expect(flow.locator('.eng-node-in')).toContainText(
+    'Trading fee5%per trade; the creator’s share funds the engine',
+  )
   await expect(flow.locator('.eng-node-core')).toContainText('Engine wallet1.022 SOL')
   await expect(flow.locator('.eng-node-core')).toContainText('releases 20% a day')
   await expect(flow.locator('.eng-node-out').first()).toContainText('60% to holders0.005 SOL')
