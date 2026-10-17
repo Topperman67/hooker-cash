@@ -2,14 +2,7 @@ import { Link } from 'react-router-dom'
 import { usePlatform } from '../context/PlatformContext.jsx'
 import { Address } from '../components/UI.jsx'
 import { useQuantp } from '../context/QuantpContext.jsx'
-import {
-  BUYBACK_PCT,
-  BUYBACK_RULE,
-  ENGINE_NOTE,
-  GRADUATED,
-  HOLDERS_PCT,
-  HOLDERS_RULE,
-} from '../components/quantpPayouts.js'
+import { BUYBACK_RULE, ENGINE_NOTE, GRADUATED, HOLDERS_RULE } from '../components/quantpPayouts.js'
 import { bps } from '../lib/format.js'
 import { explorer, QUANTP } from '../../shared/network.mjs'
 
@@ -159,10 +152,9 @@ export default function DocsPage() {
               : 'Graduation happens on its own when the curve fills.'}
           </li>
           <li>
-            {ENGINE_NOTE} {HOLDERS_PCT}% to holders. {HOLDERS_RULE} {BUYBACK_PCT}% to buyback and
-            burn. {BUYBACK_RULE} The figures Quant Pad shows are what has actually been paid, bought
-            back and burned, and every transaction is listed on the{' '}
-            <Link to={QUANTP.path}>$QUANTP page</Link>.
+            {ENGINE_NOTE} Holders: {HOLDERS_RULE} Buyback and burn: {BUYBACK_RULE} The figures Quant
+            Pad shows are what has actually been paid, bought back and burned, and every transaction
+            is listed on the <Link to={QUANTP.path}>$QUANTP page</Link>.
           </li>
           <li>
             Any Quant Pad platform fee on trades made here is shown before you sign, as a separate

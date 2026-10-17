@@ -159,6 +159,21 @@ test('while /api/quantp is down, nothing reads as if $QUANTP had not graduated',
   )
 })
 
+test('the docs give the 60/40 split once, then each share’s rule', async ({ page }) => {
+  await stubApi(page)
+  await stubQuantp(page)
+  await enter(page)
+  await page.goto('/docs')
+  const bullet = page.locator('#quantp ~ ul > li').filter({ hasText: 'payout engine aims' })
+  await expect(bullet).toHaveCount(1)
+  await expect(bullet).toContainText(
+    `60% to holders, 40% to buy back and burn $QUANTP. It runs on Quant Pad’s server, not in an on-chain program. Holders: ${HOLDERS_RULE} Buyback and burn: ${BUYBACK_RULE}`,
+  )
+  const text = await bullet.textContent()
+  expect(text.match(/60%/g)).toHaveLength(1)
+  expect(text.match(/40%/g)).toHaveLength(1)
+})
+
 test('an engine that is set up but not running yet is not shown', async ({ page }) => {
   await stubApi(page)
   await stubQuantp(page, { engine: quantpEngine({ live: false, reason: 'no-key' }) })
