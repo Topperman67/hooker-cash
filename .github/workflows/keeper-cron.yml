@@ -38,7 +38,9 @@ jobs:
             echo "::error::Add the CRON_SECRET repository secret (the same value as CRON_SECRET in Vercel)."
             exit 1
           fi
-          code=$(curl -sS --retry 2 --retry-delay 5 --max-time 90 -o body.json -w '%{http_code}' \
+          # Never retried: the tick moves money, and a call that failed or timed out may still have
+          # sent payouts. The next run is the retry; the server decides again whether the hour ran.
+          code=$(curl -sS --max-time 90 -o body.json -w '%{http_code}' \
             -H "Authorization: Bearer $CRON_SECRET" "$URL/api/keeper/tick") || {
             echo "::error::Could not reach $URL/api/keeper/tick"
             exit 1
