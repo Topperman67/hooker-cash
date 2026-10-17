@@ -7,6 +7,7 @@ import {
   dailyShare,
   hourlyBps,
   nextRunAt,
+  shareLamports,
   utcClock,
 } from '../components/engineSchedule.js'
 import {
@@ -147,8 +148,9 @@ function lastRunOutcome(report, now) {
  * and gets in the next run (or why it is skipped), and what it has been paid. The address is typed
  * or taken from the connected wallet, and never goes into the page's URL. Until a wallet is looked
  * up, the bare route is asked once: a server without it answers 404, and the panel stays hidden.
+ * `engine` is this page's engine status, which gives a skipped wallet's share.
  */
-function YourWallet({ symbol, decimals, rentExempt }) {
+function YourWallet({ engine, symbol, decimals, rentExempt }) {
   const connected = useWallet()?.address ?? null
   const [input, setInput] = useState(connected ?? '')
   const [wallet, setWallet] = useState(connected)
@@ -182,9 +184,15 @@ function YourWallet({ symbol, decimals, rentExempt }) {
   const eligible = row ? row.eligible !== false : null
   const minHold = Number(h?.minHold ?? 0) / 10 ** decimals
   const last = h?.paid?.items?.[0]
+  // The status lists no figure for a wallet it skips, so its share is worked out from the page's
+  // engine status, and left out when that status is from another moment and no longer agrees.
+  const shareUnder = (limit) => {
+    const lamports = row?.lamports ?? shareLamports(engine, row?.amount)
+    return lamports != null && BigInt(lamports) < BigInt(limit) ? ` (${sol(toSol(lamports))})` : ''
+  }
   const skip = {
-    'below-minimum': `Skipped this run: its share (${sol(toSol(row?.lamports))}) is under ${minTransfer} and stays in the payout wallet`,
-    'no-sol': `Skipped this run: the wallet holds no SOL and its share (${sol(toSol(row?.lamports))}) is under ${sol(toSol(rentExempt), { digits: 5 })}; keep a little SOL in it to be paid`,
+    'below-minimum': `Skipped this run: its share${shareUnder(POLICY.minTransferLamports)} is under ${minTransfer} and stays in the payout wallet`,
+    'no-sol': `Skipped this run: the wallet holds no SOL and its share${shareUnder(rentExempt)} is under ${sol(toSol(rentExempt), { digits: 5 })}; keep a little SOL in it to be paid`,
     'not-payable': 'Skipped: this account is not a wallet the engine can pay',
   }
 
@@ -292,20 +300,28 @@ const byAmount = (a, b) => {
   return x < y ? 1 : x > y ? -1 : 0
 }
 
+// An account the engine cannot pay (a program's): it has no share, and the engine leaves what it
+// holds out of the total the others' shares are of.
+const unpayable = (row) => row.reason === 'not-payable'
+
 /**
  * Every wallet eligible for the next run (engine.holders, once the engine's status lists them),
- * largest first: what it holds, its share of everything eligible wallets hold, what the run pays
- * it, and why it is skipped when it is.
+ * largest first: what it holds, its share of what the payable ones hold (engine.heldEligible,
+ * which the run's holders' pot is shared over), what the run pays it, and why it is skipped when
+ * it is.
  */
 function Holders({ engine, symbol, decimals }) {
   const [all, setAll] = useState(false)
   const rows = useMemo(() => [...engine.holders].sort(byAmount), [engine.holders])
-  const held = BigInt(engine.heldEligible ?? rows.reduce((s, r) => s + BigInt(r.amount), 0n))
-  const pot = (BigInt(engine.next.release) * BigInt(engine.holdersShareBps)) / 10_000n
-  const perMillion = held > 0n ? (pot * 10n ** BigInt(6 + decimals)) / held : null
+  const held = BigInt(
+    engine.heldEligible ?? rows.reduce((s, r) => (unpayable(r) ? s : s + BigInt(r.amount)), 0n),
+  )
+  const perMillion = shareLamports(engine, 10n ** BigInt(6 + decimals), held)
   const shown = all ? rows : rows.slice(0, FIRST_HOLDERS)
-  const ofHeld = (amount) =>
-    held > 0n ? `${(Number((BigInt(amount) * 1_000_000n) / held) / 10_000).toFixed(2)}%` : '—'
+  const ofHeld = (row) =>
+    held > 0n && !unpayable(row)
+      ? `${(Number((BigInt(row.amount) * 1_000_000n) / held) / 10_000).toFixed(2)}%`
+      : '—'
   return (
     <section className="panel eg-holders" aria-labelledby="eg-holders-title">
       <h2 id="eg-holders-title" className="h3">
@@ -342,7 +358,7 @@ function Holders({ engine, symbol, decimals }) {
                   </a>
                 </td>
                 <td className="right num">{compact(Number(r.amount) / 10 ** decimals)}</td>
-                <td className="right num eg-share">{ofHeld(r.amount)}</td>
+                <td className="right num eg-share">{ofHeld(r)}</td>
                 <td className="right num">
                   {r.reason || r.lamports == null
                     ? '—'
@@ -569,7 +585,12 @@ export default function EnginePage() {
 
       <div className="eg-grid">
         <div className="eg-main">
-          <YourWallet symbol={q.symbol} decimals={q.decimals} rentExempt={rentExempt} />
+          <YourWallet
+            engine={engine}
+            symbol={q.symbol}
+            decimals={q.decimals}
+            rentExempt={rentExempt}
+          />
 
           <section className="panel eg-how" aria-labelledby="eg-how-title">
             <h2 id="eg-how-title" className="h3">

@@ -33,6 +33,19 @@ export function buybackFloorLamports(policy, dailyBps, buybackShareBps) {
   return Number(BigInt(policy.reserveLamports) + (need + per - 1n) / per)
 }
 
+/**
+ * What the next run shares out to a holder of `amount` (raw units), in lamports, as the engine
+ * works it out: the holders' part of the release, by balance, over `held`, what the wallets it can
+ * pay hold (the status's heldEligible). Null without those figures. The status gives no figure for
+ * a wallet it skips, so this is also how small a skipped wallet's share was.
+ */
+export function shareLamports(engine, amount, held = engine?.heldEligible) {
+  if (engine?.next?.release == null || engine.holdersShareBps == null) return null
+  if (amount == null || held == null || BigInt(held) <= 0n) return null
+  const pot = (BigInt(engine.next.release) * BigInt(engine.holdersShareBps)) / 10_000n
+  return (pot * BigInt(amount)) / BigInt(held)
+}
+
 /** "08:00" for a time today (UTC), "Oct 16, 08:00" for another day. */
 export function utcClock(seconds, nowSecs = Date.now() / 1000) {
   const at = new Date(seconds * 1000).toISOString()

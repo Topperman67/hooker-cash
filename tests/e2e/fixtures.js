@@ -540,7 +540,9 @@ export const quantpEngine = ({ next, ...over } = {}) => ({
 // The 31 eligible wallets of quantpEngine()'s next run, largest first, as the engine's status lists
 // them ({ holders, heldEligible }, to spread into quantpEngine): 28 paid, one share under the
 // minimum transfer, one wallet with no SOL whose share is under rent exemption and one program
-// account the engine cannot pay. Amounts in raw units, lamports the wallet's share of the run.
+// account the engine cannot pay. Amounts in raw units. As the engine does, the pot is shared over
+// what the payable wallets hold (heldEligible leaves the program account out), and only a paid
+// wallet's lamports are listed: a skipped one has null.
 export function quantpHolders({ holdersPot = 5_009_400n } = {}) {
   // whole tokens, in thousands
   const thousands = [
@@ -549,15 +551,22 @@ export function quantpHolders({ holdersPot = 5_009_400n } = {}) {
     2050, 2000, 1500,
   ]
   const amounts = thousands.map((k) => BigInt(k) * 1_000_000_000n)
-  const heldEligible = amounts.reduce((s, a) => s + a, 0n)
+  const NOT_PAYABLE = 5
+  const heldEligible = amounts.reduce((s, a, i) => (i === NOT_PAYABLE ? s : s + a), 0n)
   const holders = amounts.map((amount, i) => {
     const lamports = (holdersPot * amount) / heldEligible
     const reason =
-      i === 5 ? 'not-payable' : i === 29 ? 'no-sol' : lamports < 20_000n ? 'below-minimum' : null
+      i === NOT_PAYABLE
+        ? 'not-payable'
+        : i === 29
+          ? 'no-sol'
+          : lamports < 20_000n
+            ? 'below-minimum'
+            : null
     return {
       wallet: new PublicKey(Buffer.alloc(32, i + 1)).toBase58(),
       amount: amount.toString(),
-      lamports: lamports.toString(),
+      lamports: reason ? null : lamports.toString(),
       reason,
     }
   })

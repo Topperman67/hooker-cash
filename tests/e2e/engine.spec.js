@@ -244,36 +244,46 @@ test('the eligible wallets of the next run are listed, largest first', async ({ 
   await enter(page)
   await page.goto(ENGINE)
   const holders = page.getByRole('region', { name: 'Eligible wallets, next run' })
-  await expect(holders).toContainText('Each 1M $QUANTP held earns about 0.000011 SOL this run.')
+  await expect(holders).toContainText('Each 1M $QUANTP held earns about 0.0000117 SOL this run.')
   const rows = holders.locator('tbody tr')
   await expect(rows).toHaveCount(10)
   const { holders: list } = quantpHolders()
   const first = list[0].wallet
   await expect(rows.first()).toHaveText(
-    `${first.slice(0, 4)}…${first.slice(-4)}90M19.83%0.000994Paid`,
+    `${first.slice(0, 4)}…${first.slice(-4)}90M20.99%0.001052Paid`,
   )
   await expect(rows.first().getByRole('link')).toHaveAttribute('href', explorer.account(first))
-  // a program account is never paid
-  await expect(rows.nth(5)).toContainText('25M5.51%—Not a wallet')
+  // a program account is never paid, and has no share of what the others hold
+  await expect(rows.nth(5)).toContainText('25M——Not a wallet')
   await holders.getByRole('button', { name: 'Show all 31' }).click()
   await expect(rows).toHaveCount(31)
-  await expect(rows.nth(29)).toContainText('2M0.44%—Needs SOL')
-  await expect(rows.nth(30)).toContainText('1.5M0.33%—Below minimum')
+  await expect(rows.nth(29)).toContainText('2M0.47%—Needs SOL')
+  await expect(rows.nth(30)).toContainText('1.5M0.35%—Below minimum')
+  // the shares add up to the whole of what the payable wallets hold
+  const shares = await rows
+    .locator('.eg-share')
+    .evaluateAll((cells) => cells.map((c) => parseFloat(c.textContent)).filter(Number.isFinite))
+  expect(shares).toHaveLength(30)
+  expect(Math.abs(shares.reduce((s, x) => s + x, 0) - 100)).toBeLessThan(0.1)
 })
 
 test('a holder looks up their wallet, prefilled once a wallet is connected', async ({ page }) => {
   await stubApi(page)
   const other = '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM'
+  const { holders: rows } = quantpHolders()
+  const row = (wallet) => rows.find((r) => r.wallet === wallet)
   await stubQuantp(page, {
     engine: quantpEngine(quantpHolders()),
     holder: (wallet) =>
       wallet === WALLET_ADDRESS
         ? quantpHolder({ wallet })
-        : quantpHolder({
-            wallet,
-            engine: { eligible: false },
-            paid: { lamports: '0', payouts: 0, lastAt: null, items: [] },
-          }),
+        : row(wallet)
+          ? quantpHolder({ wallet, engine: row(wallet) })
+          : quantpHolder({
+              wallet,
+              engine: { eligible: false },
+              paid: { lamports: '0', payouts: 0, lastAt: null, items: [] },
+            }),
   })
   await enter(page, { wallet: true })
   await page.goto(ENGINE)
@@ -292,6 +302,21 @@ test('a holder looks up their wallet, prefilled once a wallet is connected', asy
   await expect(panel).toContainText('Paid so far0 SOL in 0 payouts')
   await expect(panel).toContainText('Last payoutNone yet')
 
+  // a skipped wallet's share, which the engine does not list, is worked out from its status
+  await address.fill(rows[30].wallet)
+  await address.press('Enter')
+  await expect(panel).toContainText(
+    'Next runSkipped this run: its share (0.0000175 SOL) is under 0.00002 SOL and stays in the ' +
+      'payout wallet',
+  )
+  await address.fill(rows[29].wallet)
+  await address.press('Enter')
+  await expect(panel).toContainText(
+    'Next runSkipped this run: the wallet holds no SOL and its share (0.0000234 SOL) is under ' +
+      '0.00089 SOL; keep a little SOL in it to be paid',
+  )
+  await expect(panel).not.toContainText('(—)')
+
   // connecting fills in the wallet only when the field holds nothing typed
   await address.fill('')
   await page.getByRole('banner').getByRole('button', { name: 'Connect', exact: true }).click()
@@ -299,7 +324,7 @@ test('a holder looks up their wallet, prefilled once a wallet is connected', asy
   await expect(address).toHaveValue(WALLET_ADDRESS)
   await expect(panel).toContainText('EligibleYes')
   await expect(panel).toContainText('Holds90,000,000 $QUANTP')
-  await expect(panel).toContainText('Next run0.000994 SOL')
+  await expect(panel).toContainText('Next run0.001052 SOL')
   await expect(panel).toContainText('Paid so far0.0998 SOL in 3 payouts')
   await expect(panel).toContainText('Last payout0.001424 SOL, 20m ago · Solscan')
   await expect(panel.getByRole('link', { name: /Solscan/ })).toHaveAttribute(

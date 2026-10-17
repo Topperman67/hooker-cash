@@ -9,6 +9,7 @@ import {
   dailyShare,
   hourlyBps,
   nextRunAt,
+  shareLamports,
   utcClock,
 } from '../../src/components/engineSchedule.js'
 
@@ -53,6 +54,24 @@ test('buybacks need about 0.62 SOL in the wallet at the 20% tier', () => {
   // higher tiers release faster, so the floor drops
   assert.ok(Math.abs(buybackFloorLamports(QUANTP.engine, 5000, 4000) - 260_000_000) <= 1)
   assert.ok(Math.abs(buybackFloorLamports(QUANTP.engine, 10_000, 4000) - 140_000_000) <= 1)
+})
+
+test('a holder’s share is its part of the holders’ pot by balance, as the engine works it out', () => {
+  // 0.008349 SOL released, 60% to holders, shared over what 428.75M payable $QUANTP hold
+  const status = {
+    next: { release: '8349000' },
+    holdersShareBps: 6000,
+    heldEligible: '428750000000000',
+  }
+  assert.equal(shareLamports(status, '90000000000000'), 1_051_535n)
+  assert.equal(shareLamports(status, '1500000000000'), 17_525n)
+  // over another total, such as one the page adds up itself
+  assert.equal(shareLamports(status, 10n ** 12n, 10n ** 12n), 5_009_400n)
+  // nothing to work it out from
+  assert.equal(shareLamports({ ...status, heldEligible: undefined }, '1500000000000'), null)
+  assert.equal(shareLamports({ ...status, heldEligible: '0' }, '1500000000000'), null)
+  assert.equal(shareLamports(status, null), null)
+  assert.equal(shareLamports(null, '1500000000000'), null)
 })
 
 test('times read in UTC, with the day when it is not today', () => {
