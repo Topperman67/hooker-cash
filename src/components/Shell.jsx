@@ -13,6 +13,7 @@ import { useWallet } from '../context/WalletContext.jsx'
 import { usePlatform } from '../context/PlatformContext.jsx'
 import { Address } from './UI.jsx'
 import { changeClass, QuantpPrice, useQuantpFigures } from './QuantpShowcase.jsx'
+import { ENGINE_PATH } from './quantpPayouts.js'
 import { pct, short, sol, toSol, usd } from '../lib/format.js'
 import { DOCS_URL } from '../lib/links.js'
 import { explorer, QUANTP } from '../../shared/network.mjs'
@@ -21,6 +22,7 @@ const LINKS = [
   ['/launch', 'Launch'],
   ['/market', 'Market'],
   ['/hooks', 'Quantum Hooks'],
+  [ENGINE_PATH, 'Payout Engine'],
   ['/portfolio', 'Portfolio'],
 ]
 
@@ -201,6 +203,7 @@ export default function Shell({ children }) {
           </div>
           <div className="footer-links">
             <Link to={QUANTP.path}>${QUANTP.symbol}</Link>
+            <Link to={ENGINE_PATH}>Payout Engine</Link>
             <Link to="/hooks">Quantum Hooks</Link>
             <a href={DOCS_URL} target="_blank" rel="noreferrer">
               Docs

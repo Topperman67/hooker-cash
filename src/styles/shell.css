@@ -347,9 +347,9 @@
   text-decoration: underline;
 }
 
-/* The five links, a usable search box and the wallet button need about 1140px; below that the
-   header collapses into the menu (which carries the search too). */
-@media (max-width: 1140px) {
+/* The six links, a search box wide enough for its whole placeholder and the wallet button need
+   about 1280px; below that the header collapses into the menu (which carries the search too). */
+@media (max-width: 1279px) {
   .nav,
   .topbar-search {
     display: none;
@@ -634,21 +634,24 @@
 }
 
 /* Desktop: the switch takes 48px of the bar, paid for by tighter gaps and link padding, so the
-   search box keeps its width. The Meteora badge is a mark only on desktop, and just above the
-   menu breakpoint the lockup steps down too. */
-@media (min-width: 1141px) {
+   search box keeps its whole placeholder. The Meteora badge is a mark only on desktop, and just
+   above the menu breakpoint the lockup steps down too. */
+@media (min-width: 1280px) {
   .topbar-inner {
     gap: 14px;
   }
+  .nav {
+    gap: 0;
+  }
   .nav a {
-    padding: 8px 10px;
+    padding: 8px;
   }
   .nav a.active::after {
-    left: 10px;
-    right: 10px;
+    left: 8px;
+    right: 8px;
   }
 }
-@media (min-width: 1141px) {
+@media (min-width: 1280px) {
   .built-on-top {
     padding: 4px;
   }
@@ -656,7 +659,7 @@
     display: none;
   }
 }
-@media (min-width: 1141px) and (max-width: 1199px) {
+@media (min-width: 1280px) and (max-width: 1365px) {
   .brand-lockup {
     height: 32px;
   }

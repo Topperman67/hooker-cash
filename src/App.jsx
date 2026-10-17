@@ -9,6 +9,7 @@ import { Spinner } from './components/UI.jsx'
 import { lazyPage } from './components/recovery.js'
 import { useGlobalGlint } from './lib/glint.js'
 import { QUANTP } from '../shared/network.mjs'
+import { ENGINE_PATH } from './components/quantpPayouts.js'
 
 // Launch and coin pages pull in the Meteora SDKs and charting; load them on demand. lazyPage lets
 // the ErrorBoundary retry a chunk that failed to load instead of caching the failure.
@@ -19,6 +20,7 @@ const DocsPage = lazyPage(() => import('./pages/DocsPage.jsx'))
 const TermsPage = lazyPage(() => import('./pages/TermsPage.jsx'))
 const PortfolioPage = lazyPage(() => import('./pages/PortfolioPage.jsx'))
 const QuantpPage = lazyPage(() => import('./pages/QuantpPage.jsx'))
+const EnginePage = lazyPage(() => import('./pages/EnginePage.jsx'))
 
 // The $QUANTP buyback burner runs only under `vite dev`: production builds drop it.
 const BurnPage = import.meta.env.DEV ? lazyPage(() => import('./pages/BurnPage.jsx')) : null
@@ -37,6 +39,7 @@ export default function App() {
               <Route path="/market" element={<MarketPage />} />
               {/* $QUANTP has its own page, which works without the store: its coin page goes there. */}
               <Route path={QUANTP.path} element={<QuantpPage />} />
+              <Route path={ENGINE_PATH} element={<EnginePage />} />
               <Route
                 path={`/coin/${QUANTP.mint}`}
                 element={<Navigate to={QUANTP.path} replace />}

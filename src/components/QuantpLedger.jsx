@@ -1,9 +1,11 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { ChevronDown } from 'lucide-react'
 import { useResource } from '../lib/api.js'
 import { Address, Segmented, Stat } from './UI.jsx'
 import { ago, compact, formatUnits, short, sol, toSol } from '../lib/format.js'
 import { QUANTP, explorer } from '../../shared/network.mjs'
+import { ENGINE_PATH, ENGINE_STATE_LABEL, engineState } from './quantpPayouts.js'
 
 // Rows shown before "Show all": the panel sits in the page's narrow side column.
 const FIRST_ROWS = 8
@@ -103,20 +105,23 @@ function Burst({ burst }) {
 }
 
 /**
- * The payout engine (/api/quantp/engine), shown once it runs: what it does every hour at the
- * current market cap, how many wallets it pays, its next run, and the payout wallet's last payout
- * on-chain (`lastPayoutAt`, from the ledger).
+ * The payout engine (/api/quantp/engine), shown once it is switched on: where it stands, what it
+ * does every hour at the current market cap, how many wallets it pays, its next run, the payout
+ * wallet's last payout on-chain (`lastPayoutAt`, from the ledger) and a link to its own page.
  */
 function Engine({ engine, lastPayoutAt, symbol, decimals }) {
   if (!engine?.live) return null
   const minHold = Number(engine.minHold) / 10 ** decimals
   const holdersPct = engine.holdersShareBps / 100
   const ticker = `$${symbol}`
+  const state = engineState(engine)
   return (
     <div className="qp-engine">
       <p className="qp-engine-head">
         <strong>Automatic payouts</strong>
-        <span className="chip chip-grad">Running hourly</span>
+        <span className={`chip ${state === 'running' ? 'chip-grad' : ''}`}>
+          {ENGINE_STATE_LABEL[state]}
+        </span>
       </p>
       <p className="qp-engine-text">
         Every hour the engine wallet{' '}
@@ -128,7 +133,8 @@ function Engine({ engine, lastPayoutAt, symbol, decimals }) {
       </p>
       <p className="faint qp-engine-text">
         Next run about {sol(toSol(engine.next.release), { digits: 4 })} ·{' '}
-        {lastPayoutAt ? `last payout ${ago(lastPayoutAt)} ago` : 'no payout yet'}
+        {lastPayoutAt ? `last payout ${ago(lastPayoutAt)} ago` : 'no payout yet'} ·{' '}
+        <Link to={ENGINE_PATH}>How it works</Link>
       </p>
     </div>
   )
@@ -137,9 +143,10 @@ function Engine({ engine, lastPayoutAt, symbol, decimals }) {
 /**
  * $QUANTP's payouts to holders and its burns, read from the team's wallets by /api/quantp/ledger,
  * with the payout engine's state from /api/quantp/engine, so holders can see what was actually
- * paid, bought back and burned. `burned` is the whole tokens gone from the supply.
+ * paid, bought back and burned. `burned` is the whole tokens gone from the supply. `showEngine`
+ * false leaves out the engine's block, for the engine's own page, which shows it in full.
  */
-export default function QuantpLedger({ symbol, decimals, burned }) {
+export default function QuantpLedger({ symbol, decimals, burned, showEngine = true }) {
   const [tab, setTab] = useState('payouts')
   const ledger = useResource('/api/quantp/ledger', 30_000)
   const engine = useResource('/api/quantp/engine', 60_000).data
@@ -159,7 +166,7 @@ export default function QuantpLedger({ symbol, decimals, burned }) {
     body = (
       <>
         <Engine
-          engine={engine}
+          engine={showEngine ? engine : null}
           lastPayoutAt={d.payouts[0]?.timestamp ?? null}
           symbol={symbol}
           decimals={decimals}

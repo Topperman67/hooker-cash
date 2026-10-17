@@ -1,10 +1,12 @@
 import { useMemo } from 'react'
+import { Link } from 'react-router-dom'
 import { ArrowUpRight } from 'lucide-react'
 import MarketChart from '../components/MarketChart.jsx'
 import QuantpLedger from '../components/QuantpLedger.jsx'
 import {
   BUYBACK_RULE,
   ENGINE_NOTE,
+  ENGINE_PATH,
   HOLDERS_RULE,
   payoutFigures,
   solFigure,
@@ -258,7 +260,8 @@ export default function QuantpPage() {
             </dl>
             <p className="faint qp-fine">
               {ENGINE_NOTE} These are the amounts actually paid, bought back and burned, read from
-              the chain. <a href="#payouts">See every transaction</a>.
+              the chain. <a href="#payouts">See every transaction</a> or{' '}
+              <Link to={ENGINE_PATH}>how the payout engine works</Link>.
             </p>
           </section>
 

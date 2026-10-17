@@ -1,0 +1,162 @@
+/* The payout engine's page (pages/EnginePage.jsx). It reuses the $QUANTP page's glass hero, stats
+   strip, tier cards and dots (quantp.css), then lays out how it works and every payout and burn
+   beside its tiers, rules and disclosure. Its colours follow the theme through the shared tokens. */
+.eg-page {
+  display: grid;
+  gap: 16px;
+  padding-top: 26px;
+  padding-bottom: 48px;
+}
+.eg-title.qp-ticker {
+  font-size: clamp(2.1rem, 5.2vw, 4.1rem);
+}
+/* the two-line title needs room for its descenders above the line under it */
+.eg-hero .qp-title {
+  gap: 12px;
+}
+.eg-next-split {
+  display: grid;
+  gap: 4px;
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--t-sm);
+  color: var(--steel);
+}
+.eg-next-split li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.eg-next-split .num {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.eg-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 380px;
+  gap: 16px;
+  align-items: start;
+}
+.eg-main,
+.eg-side {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  min-width: 0;
+}
+.eg-main > *,
+.eg-side > * {
+  min-width: 0;
+}
+
+/* how it works: five numbered steps, in the film's order */
+.eg-how,
+.eg-tiers,
+.eg-rules,
+.eg-disclose {
+  display: grid;
+  gap: 12px;
+}
+.eg-steps {
+  display: grid;
+  gap: 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: step;
+}
+.eg-steps li {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  column-gap: 14px;
+  row-gap: 2px;
+  counter-increment: step;
+}
+.eg-steps li::before {
+  content: counter(step);
+  grid-row: span 2;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: var(--cobalt-anodised);
+  border: 1px solid rgba(160, 178, 255, 0.9);
+  color: #fff;
+  font-size: var(--t-sm);
+  font-weight: 700;
+}
+.eg-steps strong {
+  align-self: center;
+  font-size: var(--t-md);
+}
+.eg-steps p {
+  margin: 0;
+  font-size: var(--t-sm);
+}
+
+/* the market-cap tiers, as the $QUANTP page's fee cards */
+.eg-tier-list {
+  display: grid;
+  gap: 8px;
+}
+.eg-tier-label {
+  color: var(--ink);
+  font-weight: 600;
+}
+.eg-tiers .qp-fine,
+.eg-rules .qp-fine {
+  margin-top: 0;
+}
+
+.eg-disclose {
+  border-left: 4px solid var(--yellow);
+}
+.eg-disclose ul {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding-left: 18px;
+  font-size: var(--t-sm);
+  color: var(--steel);
+}
+
+/* ---------- responsive ---------- */
+@media (max-width: 1100px) {
+  .eg-grid {
+    grid-template-columns: minmax(0, 1fr) 340px;
+  }
+}
+/* One column: how it works and its tiers first, then every payout, then the rules and the fine print. */
+@media (max-width: 960px) {
+  .eg-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .eg-main,
+  .eg-side {
+    display: contents;
+  }
+  .eg-how {
+    order: 1;
+  }
+  .eg-tiers {
+    order: 2;
+  }
+  .eg-ledger {
+    order: 3;
+  }
+  .eg-rules {
+    order: 4;
+  }
+  .eg-disclose {
+    order: 5;
+  }
+}
+@media (max-width: 640px) {
+  .eg-page {
+    padding-top: 16px;
+    gap: 12px;
+  }
+}
