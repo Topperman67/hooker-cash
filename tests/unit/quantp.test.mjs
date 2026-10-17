@@ -224,7 +224,10 @@ test('on the bonding curve: price, progress, the 2% fee and the fees earned come
 })
 
 test('after graduation: the verified DAMM v2 pool prices it, the fee is 5% and its LP fees count', async () => {
-  const { feed, connection } = feedWith({ migrated: true, dex: DEX_GRADUATED })
+  // an hour after the DAMM v2 pair opened: the change re-bases on the curve pair only within a day
+  // of it, so the test keeps its own clock instead of the date it runs on
+  const clock = { t: DEX_GRADUATED.pairs[1].pairCreatedAt + 3_600_000 }
+  const { feed, connection } = feedWith({ migrated: true, dex: DEX_GRADUATED, clock })
   const s = await feed.snapshot()
   assert.equal(s.migrated, true)
   assert.equal(s.dammPool, DAMM_POOL)
