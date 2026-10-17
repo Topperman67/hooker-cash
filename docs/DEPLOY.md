@@ -282,8 +282,9 @@ Settings:
 - `QUANTPAD_INDEX_BATCH` (default 40): transactions read per address per indexing pass.
 - `QUANTPAD_SYNC_MS`: time budget of one indexing pass, default 15 000 ms on Vercel and 40 000 ms
   elsewhere. The pass's lease lasts this long plus 45 s. On Vercel the request, the index pass and the
-  keeper share the function's 60 s: the background pass after a response gets what the request left
-  (it is skipped under 10 s), so keep this well under 60 s.
+  keeper share a 40 s budget within the function's 120 s (a keeper tick gives the payout engine up to
+  90 s first, then the same 40 s): the background pass after a response gets what the request left
+  (it is skipped under 10 s), so keep this well under 40 s.
 - `QUANTPAD_BACKGROUND_SYNC_MS` (default 60 000 on Vercel, `0` turns it off): with Redis, the
   request-driven index passes run at most once per this many ms across all instances. A pass costs
   about 15 Redis commands per coin it syncs, and Upstash plans are billed or capped by commands
