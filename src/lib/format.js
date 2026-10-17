@@ -5,11 +5,13 @@ export const TOKEN_DECIMALS = 6
 export const toSol = (lamports) => (lamports == null ? null : Number(lamports) / LAMPORTS)
 export const toTokens = (raw) => (raw == null ? null : Number(raw) / 10 ** TOKEN_DECIMALS)
 
+// An amount `digits` decimals would round to zero (0.000266 at 3 digits) is shown to 3 significant
+// digits instead, so a real amount never reads "0 SOL" or "-0 SOL".
 export function sol(value, { digits = 4, unit = true } = {}) {
   if (value == null || !Number.isFinite(Number(value))) return '—'
-  const n = Number(value)
+  const n = Number(value) || 0 // -0 is 0
   const text =
-    n !== 0 && Math.abs(n) < 0.0001
+    n !== 0 && Math.abs(n) < 0.5 * 10 ** -digits
       ? n.toLocaleString('en-US', { maximumSignificantDigits: 3 })
       : n.toLocaleString('en-US', { maximumFractionDigits: digits })
   return unit ? `${text} SOL` : text

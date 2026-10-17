@@ -14,6 +14,8 @@ import { useTheme } from '../lib/theme.js'
 import { MeteoraMark } from './Meteora.jsx'
 import { supportsWebGL, useInView, usePageVisible, useReducedMotion } from '../three/support.js'
 import { EXAMPLE, LOOP, T, arrival, measure, pathData, routes } from '../three/heroLayout.js'
+import { BUYBACK_PCT, HOLDERS_PCT } from './quantpPayouts.js'
+import { QUANTP } from '../../shared/network.mjs'
 
 // "The Refractor": a white beam of creator fees enters the liquid-glass Q and leaves its cobalt
 // tail as four coloured lines, one per hook, each lighting its readout as the pulse arrives. The
@@ -83,11 +85,19 @@ export default memo(function Refractor({ symbol }) {
     setWebgl(false)
   }, [])
   const loop = !reduce && !webgl
+  // The home page labels the beam with $QUANTP, but $QUANTP did not launch through Quant Pad and
+  // has no Quantum Hooks: the team's payout engine splits its fees 60/40. So with its ticker the
+  // caption and the figure's name say the four readouts (which stay) are an example for coins
+  // launched here, and what $QUANTP's own fees do.
+  const quantp = symbol === QUANTP.symbol
+  const name = quantp
+    ? 'Example Quantum Hooks split for a coin launched here: creator fees enter the Q and leave as four hook lines'
+    : 'Creator fees enter the Q and leave as four hook lines'
 
   return (
     <figure
       className={`refractor${live ? ' is-live' : ''}${loop ? ' is-loop' : ''}`}
-      aria-label="Creator fees enter the Q and leave as four hook lines"
+      aria-label={name}
       style={{ '--loop': `${LOOP}s` }}
     >
       <div className="refractor-stage" ref={stage}>
@@ -145,7 +155,9 @@ export default memo(function Refractor({ symbol }) {
         </ul>
       </div>
       <figcaption className="refractor-caption">
-        Example split. Every coin sets its own at launch.
+        {quantp
+          ? `Example Quantum Hooks split for a coin launched here. $${QUANTP.symbol}’s own fees go ${HOLDERS_PCT}% to holders and ${BUYBACK_PCT}% to buyback and burn through the payout engine.`
+          : 'Example split. Every coin sets its own at launch.'}
       </figcaption>
     </figure>
   )

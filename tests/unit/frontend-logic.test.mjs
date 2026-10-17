@@ -45,6 +45,20 @@ test('tiny token prices keep significant digits', () => {
   assert.equal(sol(0.00001234), '0.0000123 SOL')
 })
 
+test('a SOL amount never rounds to zero, or to minus zero', () => {
+  // below half the last shown decimal, three significant digits instead
+  assert.equal(sol(0.000265899, { digits: 3 }), '0.000266 SOL')
+  assert.equal(sol(0.003, { digits: 2 }), '0.003 SOL')
+  assert.equal(sol(0.0005, { digits: 3 }), '0.001 SOL')
+  assert.equal(sol(0.00049, { digits: 3 }), '0.00049 SOL')
+  assert.equal(sol(0), '0 SOL')
+  assert.equal(sol(-0), '0 SOL')
+  assert.notEqual(sol(-0.0002), '-0 SOL')
+  assert.equal(sol(-0.0002, { digits: 3 }), '-0.0002 SOL')
+  assert.equal(sol(1.23456, { digits: 3 }), '1.235 SOL')
+  assert.equal(sol(0.000265899, { digits: 3, unit: false }), '0.000266')
+})
+
 test('curve maths match Meteora pools', () => {
   // Raw quote per raw base is (sqrtPrice / 2^64)^2: a Q64.64 sqrt price of 2^64 / 10^4 is
   // 1e-8 lamports per raw token, i.e. 1e-8 * 1e6 / 1e9 = 1e-11 SOL per whole token.

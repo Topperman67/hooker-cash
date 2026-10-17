@@ -7,8 +7,9 @@ import { usePlatform } from '../context/PlatformContext.jsx'
 import { bps, compact, pct, sol, usd } from '../lib/format.js'
 import { explorer, QUANTP } from '../../shared/network.mjs'
 // The disclosure every $QUANTP surface carries in some form: it is the platform's own token, and
-// its fee split is paid out by Quant Pad's engine from a wallet the team funds, not by code on-chain.
-import { QUANTP_DISCLOSURE } from './quantpPayouts.js'
+// its fee split is paid out by Quant Pad's engine from a wallet the team funds, at the team's
+// discretion, not by code on-chain. GRADUATED: its curve graduated for good.
+import { GRADUATED, QUANTP_DISCLOSURE } from './quantpPayouts.js'
 
 const finite = (v) => (v != null && Number.isFinite(Number(v)) ? Number(v) : null)
 
@@ -30,7 +31,7 @@ export function quantpFigures(data, solUsd) {
   const marketCapSol = finite(data?.marketCapSol)
   const change = finite(data?.change24h)
   const progress = finite(data?.curveProgress)
-  const migrated = !!data?.migrated
+  const migrated = GRADUATED || !!data?.migrated
   const burned = finite(data?.burned)
   return {
     ready: !!data,
@@ -133,8 +134,8 @@ function Graduation({ f }) {
 
 /** The fee charged now, with the other stage's fee for context. */
 function feeNote(f) {
-  if (f.feeBps == null) return '2% on the curve, 5% after graduation'
   if (f.migrated) return 'in its DAMM v2 pool (2% on the curve)'
+  if (f.feeBps == null) return '2% on the curve, 5% after graduation'
   return `on the curve, ${bps(f.postGradFeeBps ?? 500)} after graduation`
 }
 
