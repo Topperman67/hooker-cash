@@ -56,9 +56,6 @@ export default function HomePage() {
   const trendingItems = withQuantp(trending.data?.items, qpCoin)
   const latestItems = latest.data?.items || []
   const s = stats.data
-  // The hero's fee pill names the newest coin as one whose creator fee Quantum Hooks route, so it
-  // never names $QUANTP (launched via Midas, no hooks).
-  const newest = latest.data?.items?.find((c) => c.mint !== QUANTP.mint)
 
   return (
     <>
@@ -111,7 +108,8 @@ export default function HomePage() {
               </Glass>
             )}
           </div>
-          <Refractor symbol={newest?.symbol} />
+          {/* Always Quant Pad's own coin, not whichever coin launched last. */}
+          <Refractor symbol={QUANTP.symbol} />
         </div>
       </section>
 
