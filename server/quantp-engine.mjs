@@ -104,12 +104,15 @@ const RECLAIM_MAX = 4
 // A run claims its hour only with this long left before its deadline, the time the claim needs
 // to confirm; and never once the hour is over.
 const CLAIM_TIME = 8_000
-// The run check reads at most this many of the wallet's transactions in full.
+// The run check reads at most this many of the wallet's transactions in full, each within this.
 const CHAIN_READS = 6
+const CHAIN_READ_MS = 5_000
 // Preflight refusals that say nothing about the transaction, only that the node is behind the one
 // that gave the blockhash: the same signed bytes are sent again.
 const TRANSIENT = /Blockhash not found|Minimum context slot|Node is behind|unhealthy/i
 const PREFLIGHT_RETRIES = 3
+// Asks for a blockhash before signing (nothing is sent before it, so a failed ask is asked again).
+const BLOCKHASH_TRIES = 3
 
 const sum = (list, field) => list.reduce((s, x) => s + x[field], 0n)
 // An address a wallet can own: on the ed25519 curve, so no program derived it. Being on the curve
@@ -647,15 +650,17 @@ export function createQuantpEngine({
     let conclusive = !(list.length >= 25 && inHour(list.at(-1).blockTime))
     if (candidates.length > CHAIN_READS) conclusive = false
     for (const s of candidates.slice(0, CHAIN_READS)) {
-      // one transaction the node cannot return (in a version it does not read, say) is no answer
-      const tx = await Promise.resolve()
-        .then(() =>
+      // one transaction the node cannot return (in a version it does not read, say) or does not
+      // return in time is no answer
+      const tx = await within(
+        Promise.resolve().then(() =>
           connection.getTransaction(s.signature, {
             maxSupportedTransactionVersion: 0,
             commitment: 'confirmed',
           }),
-        )
-        .catch(() => null)
+        ),
+        CHAIN_READ_MS,
+      ).catch(() => null)
       if (!tx) {
         conclusive = false
         continue
@@ -666,7 +671,12 @@ export function createQuantpEngine({
       const time = tx.blockTime ?? s.blockTime
       const named = memoHour(s.memo)
       if (!inHour(time) || (named != null && named < hour)) continue
-      return { at: time == null ? startedAt : time * 1000, conclusive: true }
+      // recorded within this hour, though it may have landed after the hour turned: a record in
+      // the next hour would hold off that hour's run
+      return {
+        at: time == null ? startedAt : Math.min(time * 1000, hourEnd(hour) - 1),
+        conclusive: true,
+      }
     }
     return { at: null, conclusive }
   }
@@ -685,6 +695,19 @@ export function createQuantpEngine({
     return Math.min(Math.max(p75, 10_000), 500_000)
   }
 
+  // The blockhash to sign with, asked up to BLOCKHASH_TRIES times, 700 ms apart, while there is
+  // time: nothing is signed or sent before it, so one failed ask need not cost the transaction.
+  async function latestBlockhash(deadline) {
+    for (let tries = 1; ; tries++) {
+      try {
+        return await connection.getLatestBlockhashAndContext('confirmed')
+      } catch (e) {
+        if (tries >= BLOCKHASH_TRIES || now() >= deadline) throw e
+        await sleep(700)
+      }
+    }
+  }
+
   // Signs and sends `instructions`, and resolves to the signature once it is confirmed. A refusal
   // that only says the node was behind (no logs, or a blockhash it has not seen yet) is answered by
   // sending the same signed bytes again, never by signing anew: whatever the node did with them,
@@ -697,7 +720,7 @@ export function createQuantpEngine({
     const {
       context,
       value: { blockhash, lastValidBlockHeight },
-    } = await connection.getLatestBlockhashAndContext('confirmed')
+    } = await latestBlockhash(deadline)
     if (signBy != null && now() >= signBy)
       throw Object.assign(Error('It is too late to sign it.'), { late: true })
     const tx = engineTransaction({ payer: walletKey, instructions, units, price, blockhash })
@@ -836,9 +859,9 @@ export function createQuantpEngine({
 
   // Claims hour `hour`: resolves to { signature }, { locked: true } when a run of this hour claimed
   // it first, or { late: true } when `signBy` (ms) came before it could sign; throws on anything
-  // else. A refusal at a reclaim (an earlier account whose balance moved) is tried once more
-  // without the reclaims. Signing anew is safe for a claim: its account can be created once at
-  // most.
+  // else. A claim with reclaims that preflight refuses for another reason (an earlier account
+  // whose balance moved, say, which the runtime may refuse as a whole) is tried once more without
+  // them. Signing anew is safe for a claim: its account can be created once at most.
   async function claimHour(hour, deadline, signBy) {
     const claim = await claimFor(hour, keypair.secretKey)
     let instructions = claim.instructions
@@ -848,12 +871,9 @@ export function createQuantpEngine({
       } catch (e) {
         if (e.late) return { late: true }
         if (claimedAlready(e)) return { locked: true }
-        const [index] = instructionError(e) ?? []
         if (e.stage === 'preflight' && instructions !== claim.bare && claim.reclaims.length) {
-          if (index > 2 && index <= 2 + claim.reclaims.length && now() < deadline) {
-            instructions = claim.bare
-            continue
-          }
+          instructions = claim.bare
+          continue
         }
         throw e
       }

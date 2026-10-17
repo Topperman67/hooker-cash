@@ -1025,8 +1025,16 @@ test('a run that starts at :59:59 and lands after the hour turns leaves the new 
   assert.ok(connection.history.every((s) => s.blockTime === (HOUR0 + 3_602_000) / 1000))
   assert.ok(connection.history.every((s) => memoHour(s.memo) === 500_000))
   connection.onLand = null
-  clock.t = HOUR0 + 3_630_000 // 1:00:30, another instance
-  const next = await engineOn(connection, store, clock).tick()
+  // an instance whose tick started at 0:59:59.5 finds that run, and records it within its own
+  // hour: a record at 1:00:02 would hold off hour 500,001's run
+  clock.t = HOUR0 + 3_599_500
+  store.down = false
+  const other = engineOn(connection, store, clock)
+  const seen = await other.tick()
+  assert.deepEqual([seen.ran, seen.reason, seen.source], [false, 'not-due', 'chain'])
+  assert.equal(store.values.get(LAST), HOUR0 + 3_600_000 - 1)
+  clock.t = HOUR0 + 3_630_000 // 1:00:30: the same instance, and the store's record
+  const next = await other.tick()
   assert.equal(next.ran, true, 'hour 500,001 runs')
   assert.match(memosOf(connection.sent[3])[0], /^qp-engine:v1 h=500001 claim /)
 })
@@ -1298,6 +1306,75 @@ test('a claim the node refuses for another reason skips the hour: nothing is pai
   assert.deepEqual(connection.sent, [])
   clock.t += 60_000
   assert.equal((await engine.tick()).reason, 'not-due')
+})
+
+test('a claim refused over an earlier account whose rent it takes back is sent again without it', async () => {
+  for (const [message, err] of [
+    // someone sent that account a lamport after it was read: the runtime refuses the whole thing
+    [
+      'Transaction simulation failed: Transaction results in an account (2) with insufficient funds for rent',
+      { InsufficientFundsForRent: { account_index: 2 } },
+    ],
+    // refused at the reclaim, whatever the error: it is not the hour's own account
+    [
+      'Transaction simulation failed: Error processing Instruction 3: custom program error: 0x0',
+      { InstructionError: [3, { Custom: 0 }] },
+    ],
+  ]) {
+    const clock = { t: HALF_PAST }
+    const connection = stubChain({ holders: MANY, clock })
+    const engine = engineOn(connection, memoryStore(), clock)
+    assert.equal((await engine.tick()).ran, true)
+    clock.t += 2 * 3_600_000 // the next claim takes back this one's rent
+    const reclaiming = (tx) =>
+      instructionsOf(tx).some((ix) => systemType(ix) === 'TransferWithSeed')
+    connection.refuse = (tx) =>
+      reclaiming(tx)
+        ? refusal(message, ['Program 11111111111111111111111111111111 invoke [1]'])
+        : null
+    connection.simulate = (tx) => (reclaiming(tx) ? { err, logs: [] } : null)
+    const run = await engine.tick()
+    assert.deepEqual([run.ran, run.stopped], [true, undefined], message)
+    assert.equal(payoutsIn(connection).length, 50)
+    assert.deepEqual(
+      connection.attempts
+        .map((a) => VersionedTransaction.deserialize(a.bytes))
+        .filter((tx) => kindOf(tx) === 'claim')
+        .map(reclaiming),
+      [false, true, false],
+    )
+    assert.equal(connection.created.size, 2, 'the earlier account waits for a later claim')
+  }
+})
+
+test('a blockhash the node fails to give is asked for again: nothing was signed yet', async () => {
+  const clock = { t: HOUR0 }
+  const connection = stubChain({ holders: MANY, clock, venue: true })
+  const blockhash = connection.getLatestBlockhashAndContext.bind(connection)
+  let asks = 0
+  // the first ask for the claim, for the second payout and for the buyback fails
+  connection.getLatestBlockhashAndContext = async () => {
+    if ([1, 4, 6].includes(++asks)) throw Error('429 Too Many Requests')
+    return blockhash()
+  }
+  const run = await engineOn(connection, memoryStore(), clock, { policy: PINNED }).tick()
+  assert.deepEqual([run.ran, run.stopped, run.failed], [true, undefined, undefined])
+  assert.deepEqual(connection.sent.map(kindOf), ['claim', 'payout', 'payout', 'buyback'])
+  assert.equal(payoutsIn(connection).length, 25)
+  assert.equal(clock.t, HOUR0 + 3 * 700)
+  // a node that cannot give one at all: three asks, then the hour is skipped with nothing sent
+  const down = stubChain({ holders: MANY, clock })
+  down.getLatestBlockhashAndContext = async () => {
+    throw Error('fetch failed')
+  }
+  clock.t = HOUR0 + 3_600_000
+  const failed = await engineOn(down, memoryStore(), clock).tick()
+  assert.deepEqual(
+    [failed.ran, failed.stopped, failed.error, failed.signature],
+    [true, 'claim failed', 'fetch failed', null],
+  )
+  assert.equal(down.attempts.length, 0)
+  assert.equal(clock.t, HOUR0 + 3_600_000 + 2 * 700)
 })
 
 test('the buyback through a tick: the third transaction swaps in the DAMM v2 pool and burns, memo last', async () => {
