@@ -52,6 +52,14 @@ const MIN = 1_500_000_000_000n // 0.15% of it
 const [A, B, C, D, E] = [11, 12, 13, 14, 15].map(wallet)
 const INCINERATOR = '1nc1nerator11111111111111111111111111111111'
 const MEMO = 'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr'
+// The engine's mechanics are tested at the release rates it launched with (20%, 50% and 100% a
+// day), whatever QUANTP.engine's rates are now: their figures were worked out at those rates.
+const TIERS_AT_LAUNCH = [
+  { belowUsd: 100_000, dailyBps: 2000 },
+  { belowUsd: 1_000_000, dailyBps: 5000 },
+  { belowUsd: null, dailyBps: 10_000 },
+]
+const AT_LAUNCH = { ...QUANTP.engine, tiers: TIERS_AT_LAUNCH }
 
 // The $QUANTP DAMM v2 pool on mainnet just after graduation (tests/unit/quantp.test.mjs), with
 // the DBC pool that graduated to it and its config.
@@ -70,13 +78,16 @@ const CONFIG = Buffer.from(
 )
 
 test('the share of the wallet released per day rises with the market cap', () => {
-  assert.equal(dailyBpsAt(null), 2000)
-  assert.equal(dailyBpsAt(50_000), 2000)
-  assert.equal(dailyBpsAt(99_999), 2000)
-  assert.equal(dailyBpsAt(100_000), 5000)
-  assert.equal(dailyBpsAt(999_999), 5000)
-  assert.equal(dailyBpsAt(1_000_000), 10_000)
-  assert.equal(dailyBpsAt(25_000_000), 10_000)
+  assert.equal(dailyBpsAt(null), 4000)
+  assert.equal(dailyBpsAt(50_000), 4000)
+  assert.equal(dailyBpsAt(99_999), 4000)
+  assert.equal(dailyBpsAt(100_000), 10_000)
+  assert.equal(dailyBpsAt(999_999), 10_000)
+  assert.equal(dailyBpsAt(1_000_000), 20_000)
+  assert.equal(dailyBpsAt(25_000_000), 20_000)
+  // twice the rates the engine launched with, at every market cap
+  for (const cap of [null, 50_000, 100_000, 999_999, 1_000_000, 25_000_000])
+    assert.equal(dailyBpsAt(cap), 2 * dailyBpsAt(cap, TIERS_AT_LAUNCH))
 })
 
 test('eligible: wallets holding at least 0.15% of the supply, summed, team and pools left out', () => {
@@ -131,30 +142,36 @@ const HOLDERS = [
 ]
 
 test('a run releases the tier’s daily share over 24 runs: 60% to holders by balance, 40% to buy back', () => {
-  // 1.02 SOL, 0.02 kept for fees: 1 SOL × 20% a day ÷ 24
+  // 1.02 SOL, 0.02 kept for fees: 1 SOL × 40% a day ÷ 24
   const plan = planRun({ balance: 1_020_000_000n, marketCapUsd: 50_000, holders: HOLDERS })
   assert.equal(plan.available, 1_000_000_000n)
-  assert.equal(plan.dailyBps, 2000)
-  assert.equal(plan.release, 8_333_333n)
-  assert.equal(plan.holdersPot, 4_999_999n)
-  assert.equal(plan.buybackPot, 3_333_334n)
-  assert.equal(plan.buyback, 3_333_334n)
+  assert.equal(plan.dailyBps, 4000)
+  assert.equal(plan.release, 16_666_666n)
+  assert.equal(plan.holdersPot, 9_999_999n)
+  assert.equal(plan.buybackPot, 6_666_667n)
+  assert.equal(plan.buyback, 6_666_667n)
   assert.equal(plan.buybackSkipped, null)
   assert.equal(plan.eligible, 3)
   assert.equal(plan.held, 7_500_000_000_000n)
   assert.deepEqual(
     plan.payouts.map((p) => [p.wallet, p.lamports]),
     [
-      [D, 2_666_666n],
-      [C, 1_333_333n],
-      [A, 999_999n],
+      [D, 5_333_332n],
+      [C, 2_666_666n],
+      [A, 1_999_999n],
     ],
   )
-  assert.equal(plan.paying, 4_999_998n)
-  // above $1M each run releases 100%/24 of the wallet: 24 runs release about 64% of it
+  assert.equal(plan.paying, 9_999_997n)
+  // twice what a run released at launch
+  assert.equal(
+    planRun({ balance: 1_020_000_000n, marketCapUsd: 50_000, holders: HOLDERS, policy: AT_LAUNCH })
+      .release,
+    8_333_333n,
+  )
+  // above $1M each run releases 200%/24 of the wallet: 24 runs release about 88% of it
   assert.equal(
     planRun({ balance: 1_020_000_000n, marketCapUsd: 2_000_000, holders: HOLDERS }).release,
-    41_666_666n,
+    83_333_333n,
   )
   // never more than 1 SOL in one run, and nothing below the fee reserve
   assert.equal(
@@ -172,7 +189,7 @@ test('shares too small are skipped that run: under the minimum, or under rent fo
     marketCapUsd: 50_000,
     holders: HOLDERS,
     lamportsOf: new Map([[D, 0n]]), // D's wallet is empty: 213,332 is under its rent minimum
-    policy: { ...QUANTP.engine, minTransferLamports: '100000' },
+    policy: { ...AT_LAUNCH, minTransferLamports: '100000' },
   })
   assert.equal(plan.holdersPot, 399_999n)
   assert.deepEqual(
@@ -201,6 +218,7 @@ test('an empty wallet is paid when its share covers the chain’s rent exemption
       marketCapUsd: 50_000,
       holders: [{ owner: D, amount: MIN }],
       lamportsOf: new Map([[D, 0n]]),
+      policy: AT_LAUNCH,
       ...(rentExemptLamports ? { rentExemptLamports } : {}),
     })
   const paid = run(650_240n)
@@ -296,7 +314,7 @@ test('a buyback swaps SOL for $QUANTP in its DAMM v2 pool and burns what it boug
 
 const KEY = Keypair.fromSeed(new Uint8Array(32).fill(7))
 const SECRET = bs58.encode(KEY.secretKey)
-const PINNED = { ...QUANTP.engine, wallet: KEY.publicKey.toBase58() }
+const PINNED = { ...AT_LAUNCH, wallet: KEY.publicKey.toBase58() }
 const ENGINE = KEY.publicKey.toBase58()
 
 test('it never sends without its pinned key: unpinned, no key, a bad key, another key, paused', async () => {
@@ -635,6 +653,12 @@ const MANY_HELD = MANY.reduce((s, [, amount]) => s + amount, 0n)
 // Payouts only: no buyback is big enough (the buyback has tests of its own below).
 const PAYOUTS_ONLY = { ...PINNED, minBuybackLamports: '1000000000000' }
 const quiet = { error() {}, warn() {} }
+/** The kinds of transaction `connection` was sent: the claim first, then the rest sorted, since
+ * the buyback goes out beside the payouts and either may land first. */
+const sentKinds = (connection) => {
+  const [first, ...rest] = connection.sent.map(kindOf)
+  return [first, ...rest.sort()]
+}
 /** An engine on `connection` and `store`, its clock `clock` (which its waits move on). */
 const engineOn = (connection, store, clock, options = {}) =>
   createQuantpEngine({
@@ -1242,7 +1266,7 @@ test('a recipient preflight refuses is left out, its batch sent again, and the r
   assert.ok(run.buyback?.signature, 'the buyback still went out')
   assert.equal(run.failed, undefined)
   assert.equal(run.error, undefined)
-  assert.deepEqual(connection.sent.map(kindOf), ['claim', 'payout', 'payout', 'buyback'])
+  assert.deepEqual(sentKinds(connection), ['claim', 'buyback', 'payout', 'payout'])
   assert.ok(!payoutsIn(connection).some(([, to]) => to === hostile))
 })
 
@@ -1274,7 +1298,7 @@ test('a payout batch that fails for another reason is recorded, and the next bat
     [7],
   )
   assert.ok(run.buyback?.signature)
-  assert.deepEqual(connection.sent.map(kindOf), ['claim', 'payout', 'buyback'])
+  assert.deepEqual(sentKinds(connection), ['claim', 'buyback', 'payout'])
 })
 
 test('a refusal from a node that is behind is answered with the same signed bytes, never new ones', async () => {
@@ -1416,7 +1440,7 @@ test('a blockhash the node fails to give is asked for again: nothing was signed 
   }
   const run = await engineOn(connection, memoryStore(), clock, { policy: PINNED }).tick()
   assert.deepEqual([run.ran, run.stopped, run.failed], [true, undefined, undefined])
-  assert.deepEqual(connection.sent.map(kindOf), ['claim', 'payout', 'payout', 'buyback'])
+  assert.deepEqual(sentKinds(connection), ['claim', 'buyback', 'payout', 'payout'])
   assert.equal(payoutsIn(connection).length, 25)
   assert.equal(clock.t, HOUR0 + 3 * 700)
   // a node that cannot give one at all: three asks, then the hour is skipped with nothing sent
@@ -1474,7 +1498,7 @@ test('the buyback through a tick: the third transaction swaps in the DAMM v2 poo
   const connection = stubChain({ holders: MANY.slice(0, 5), clock, venue: true, held })
   const warned = []
   const engine = engineOn(connection, memoryStore(), clock, {
-    policy: PINNED, // QUANTP.engine as it is, pinned to the test key
+    policy: PINNED, // QUANTP.engine at its launch rates, pinned to the test key
     log: { error() {}, warn: (...m) => warned.push(m.join(' ')) },
   })
   const run = await engine.tick()
@@ -1516,7 +1540,7 @@ test('the buyback through a tick: the third transaction swaps in the DAMM v2 poo
   assert.deepEqual(warned, [])
 })
 
-test('a run says why its buyback did not go out: no DAMM v2 pool, or the time ran out after the payouts', async () => {
+test('a run says why its buyback did not go out, and slow payouts no longer cost it the burn', async () => {
   const clock = { t: HOUR0 }
   const warned = []
   const log = { error() {}, warn: (...m) => warned.push(m.join(' ')) }
@@ -1526,6 +1550,8 @@ test('a run says why its buyback did not go out: no DAMM v2 pool, or the time ra
   assert.equal(run.payouts.length, 1)
   assert.deepEqual(warned, ['[quantp-engine] stopped: no DAMM v2 pool'])
 
+  // A payout that takes the rest of the run's time once left no time for the buyback, which went
+  // out after the payouts: it now goes out beside them, so the burn still happens.
   const late = { t: HOUR0 }
   const slow = stubChain({ holders: MANY.slice(0, 5), clock: late, venue: true })
   slow.onLand = (tx) => {
@@ -1535,10 +1561,11 @@ test('a run says why its buyback did not go out: no DAMM v2 pool, or the time ra
     deadline: HOUR0 + 25_000,
   })
   assert.deepEqual(
-    [timed.ran, timed.stopped, timed.buyback, timed.plannedBuyback],
-    [true, 'time limit before buyback', null, '3333334'],
+    [timed.ran, timed.stopped, timed.plannedBuyback, timed.buyback?.lamports],
+    [true, undefined, '3333334', '3333334'],
   )
-  assert.deepEqual(slow.sent.map(kindOf), ['claim', 'payout'])
+  assert.ok(timed.buyback.signature)
+  assert.deepEqual(sentKinds(slow), ['claim', 'buyback', 'payout'])
 })
 
 test('a read that fails is tried once more, then reported without anything sent', async () => {

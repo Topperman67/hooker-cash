@@ -34,8 +34,8 @@ export const ENGINE_PATH = '/engine'
 
 /**
  * The share of a fixed balance an engine at `bps` a day releases over a day: each hourly run
- * releases a 24th of the daily rate of what the wallet holds then, so it compounds (about 18%,
- * 40% and 64% at the 20%, 50% and 100% tiers).
+ * releases a 24th of the daily rate of what the wallet holds then, so it compounds (about 33%,
+ * 64% and 88% at the 40%, 100% and 200% tiers).
  */
 export const dailyShare = (bps) => 1 - (1 - bps / 240_000) ** 24
 

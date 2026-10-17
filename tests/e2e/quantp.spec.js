@@ -33,7 +33,7 @@ test('the payout engine shows once it runs: the hourly rule at this tier, who it
   await expect(engine.locator('.chip')).toHaveClass(/chip-grad/)
   // an hourly rate, and what it adds up to over a day, not "20% a day"
   await expect(engine).toContainText(
-    'releases 0.83% of its SOL (about 18% of it a day at this market cap): 60% to wallets holding at least 1.5M $QUANTP (0.15% of the supply), by balance, and 40% to buy back and burn $QUANTP.',
+    'releases 1.67% of its SOL (about 33% of it a day at this market cap): 60% to wallets holding at least 1.5M $QUANTP (0.15% of the supply), by balance, and 40% to buy back and burn $QUANTP.',
   )
   await expect(engine).toContainText(
     'Next run pays 28 of 31 eligible wallets, releasing about 0.0083 SOL',

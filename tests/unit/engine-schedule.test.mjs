@@ -29,11 +29,14 @@ test('the next run is due at the start of the clock hour after the last run', ()
   assert.equal(nextRunAt(null), null)
 })
 
-test('a day of hourly runs releases about 18%, 40% or 64% of a wallet nobody refills', () => {
+test('a day of hourly runs releases about 33%, 64% or 88% of a wallet nobody refills', () => {
   const [low, mid, top] = QUANTP.engine.tiers.map((t) => dailyShare(t.dailyBps))
-  assert.ok(Math.abs(low - 0.182) < 0.001, String(low))
-  assert.ok(Math.abs(mid - 0.397) < 0.001, String(mid))
-  assert.ok(Math.abs(top - 0.64) < 0.001, String(top))
+  assert.ok(Math.abs(low - 0.332) < 0.001, String(low))
+  assert.ok(Math.abs(mid - 0.64) < 0.001, String(mid))
+  assert.ok(Math.abs(top - 0.876) < 0.001, String(top))
+  // the rates the engine launched with: about 18%, 40% and 64%
+  assert.ok(Math.abs(dailyShare(2000) - 0.182) < 0.001)
+  assert.ok(Math.abs(dailyShare(5000) - 0.397) < 0.001)
   assert.equal(dailyShare(0), 0)
 })
 
@@ -43,17 +46,20 @@ test('each run releases a 24th of the daily rate', () => {
   assert.equal(hourlyBps(10_000), 10_000 / 24)
 })
 
-test('buybacks need about 0.62 SOL in the wallet at the 20% tier', () => {
-  const floor = buybackFloorLamports(QUANTP.engine, 2000, QUANTP.buybackShareBps)
-  assert.ok(Math.abs(floor - 620_000_000) <= 1, String(floor))
+test('buybacks need about 0.32 SOL in the wallet at the 40% tier', () => {
+  const [low, mid, top] = QUANTP.engine.tiers.map((t) => t.dailyBps)
+  const floor = buybackFloorLamports(QUANTP.engine, low, QUANTP.buybackShareBps)
+  assert.ok(Math.abs(floor - 320_000_000) <= 1, String(floor))
   // a wallet at the floor releases a buyback share of the minimum; just under it, less
-  const share = (balance, dailyBps = 2000) =>
+  const share = (balance, dailyBps = low) =>
     ((((balance - 20_000_000) * dailyBps * 3600) / (10_000 * 86_400)) * 4000) / 10_000
   assert.ok(share(floor) >= 2_000_000)
   assert.ok(share(floor - 1_000_000) < 2_000_000)
   // higher tiers release faster, so the floor drops
-  assert.ok(Math.abs(buybackFloorLamports(QUANTP.engine, 5000, 4000) - 260_000_000) <= 1)
-  assert.ok(Math.abs(buybackFloorLamports(QUANTP.engine, 10_000, 4000) - 140_000_000) <= 1)
+  assert.ok(Math.abs(buybackFloorLamports(QUANTP.engine, mid, 4000) - 140_000_000) <= 1)
+  assert.ok(Math.abs(buybackFloorLamports(QUANTP.engine, top, 4000) - 80_000_000) <= 1)
+  // at the rate the engine launched with, it took about 0.62 SOL
+  assert.ok(Math.abs(buybackFloorLamports(QUANTP.engine, 2000, 4000) - 620_000_000) <= 1)
 })
 
 test('a holder’s share is its part of the holders’ pot by balance, as the engine works it out', () => {

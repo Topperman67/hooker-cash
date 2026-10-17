@@ -168,7 +168,7 @@ export function eligibleHolders(accounts, { supply, minHoldBps, exclude = [] }) 
 /**
  * One run: what the engine releases from `balance` (its wallet's lamports) and where it goes.
  * Each run releases the tier's dailyBps/24 of what the wallet holds then, so 24 runs with nothing
- * coming in release about 18%, 40% or 64% of it, not the whole daily share.
+ * coming in release about 33%, 64% or 88% of it, not the whole daily share.
  * `holders` are eligibleHolders whose wallets can be paid; `lamportsOf` maps a holder to its SOL
  * now. A share below the minimum transfer, or below `rentExemptLamports` for a wallet holding no
  * SOL (the least a new account can receive), is skipped that run and stays in the wallet
@@ -944,12 +944,39 @@ export function createQuantpEngine({
     }
   }
 
+  // Sends the plan's buyback and records it in `report`. Resolves to why there is none, or null.
+  async function buyback(plan, hour, deadline, report) {
+    const b = await buybackFor(plan, hour)
+    if (b.stopped) return b.stopped
+    const signature = await send(b.buy.instructions, {
+      units: BUYBACK_UNITS,
+      deadline,
+      accounts: b.accounts,
+    })
+    report.buyback = {
+      signature,
+      lamports: plan.buyback.toString(),
+      burned: b.buy.burn.toString(),
+    }
+    return null
+  }
+
   // Sends the plan, recording each transaction in `report` as it confirms (so a run that fails
-  // part way still says what it sent). Each payout batch stands alone: one that fails is recorded
-  // and the next one sent. The buyback is tried whatever the payouts did, while there is time.
-  // Resolves to why it stopped early, or null.
+  // part way still says what it sent). The buyback goes out at the same time as the payouts, not
+  // after them: one after the other, a run with several payout batches used up its time before
+  // the buyback and burned nothing. The plan's transfers and buyback together never come to more
+  // than the wallet can spend, so they need no order. Each payout batch stands alone: one that
+  // fails is recorded and the next one sent. Resolves to why it stopped early, or null; a buyback
+  // that fails is thrown once the payouts are done.
   async function execute({ plan }, hour, deadline, report) {
     const memo = engineMemo.payout(hour, plan)
+    // settled at once, so a buyback failing while payouts are still going is no unhandled rejection
+    const buying = (
+      plan.buyback > 0n ? buyback(plan, hour, deadline, report) : Promise.resolve(null)
+    ).then(
+      (stopped) => ({ stopped }),
+      (error) => ({ error }),
+    )
     let stopped = null
     for (const batch of payoutTransactions(wallet, plan.payouts, { memo })) {
       if (now() > deadline) {
@@ -962,22 +989,9 @@ export function createQuantpEngine({
         break
       }
     }
-    if (plan.buyback > 0n) {
-      if (now() > deadline) return stopped ?? 'time limit before buyback'
-      const b = await buybackFor(plan, hour)
-      if (b.stopped) return stopped ?? b.stopped
-      const signature = await send(b.buy.instructions, {
-        units: BUYBACK_UNITS,
-        deadline,
-        accounts: b.accounts,
-      })
-      report.buyback = {
-        signature,
-        lamports: plan.buyback.toString(),
-        burned: b.buy.burn.toString(),
-      }
-    }
-    return stopped
+    const bought = await buying
+    if (bought.error) throw bought.error
+    return stopped ?? bought.stopped
   }
 
   // Keeps what status() shows of this instance's last run, and warns of a run that stopped early.

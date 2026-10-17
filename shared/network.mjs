@@ -64,10 +64,12 @@ export const QUANTP = Object.freeze({
     wallet: 'GLAn4nGLTcwCmPJsTkLL4LrFaWCADb5dGXKjNCd2FAvn',
     minHoldBps: 15, // 0.15% of the supply
     everySecs: 3600,
+    // The daily rate at each market cap, in bps; a run releases a 24th of it. The rates were
+    // doubled on 2026-10-17 (from 20%, 50% and 100%), so each hourly slice is twice as big.
     tiers: Object.freeze([
-      Object.freeze({ belowUsd: 100_000, dailyBps: 2000 }),
-      Object.freeze({ belowUsd: 1_000_000, dailyBps: 5000 }),
-      Object.freeze({ belowUsd: null, dailyBps: 10_000 }),
+      Object.freeze({ belowUsd: 100_000, dailyBps: 4000 }),
+      Object.freeze({ belowUsd: 1_000_000, dailyBps: 10_000 }),
+      Object.freeze({ belowUsd: null, dailyBps: 20_000 }),
     ]),
     reserveLamports: '20000000', // kept in the wallet for network fees
     maxRunLamports: '1000000000', // released in one run at most

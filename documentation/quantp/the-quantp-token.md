@@ -48,7 +48,7 @@ The team sends SOL from the creator's fee claims to the payout wallet, [`GLAn4nG
 * **60% to holders**: in SOL about once an hour, to wallets holding at least **0.15% of the supply**, by balance. Pools and the team's own wallets are not paid. A wallet whose share of a run is under 0.00002 SOL is skipped that run, and its share stays in the payout wallet; so is a wallet holding no SOL whose share is under Solana's minimum account balance (about 0.00089 SOL).
 * **40% to buyback and burn**: it buys $QUANTP in its DAMM v2 pool and burns it in the same transaction, when its share of the run is at least 0.002 SOL. A smaller share is skipped that run and stays in the payout wallet.
 
-Each hourly run releases a 24th of a daily rate (20% below $100k, 50% up to $1M, 100% above) of what the wallet holds then, at most 1 SOL a run, keeping 0.02 SOL for fees: about 18%, 40% or 64% of a fixed balance over a day.
+Each hourly run releases a 24th of a daily rate (40% below $100k, 100% up to $1M, 200% above) of what the wallet holds then, at most 1 SOL a run, keeping 0.02 SOL for fees: about 33%, 64% or 88% of a fixed balance over a day.
 
 The engine runs on Quant Pad's server, not in an on-chain program, so payouts depend on the team funding the wallet and on the server running it. Every payout, buyback and burn is a public transaction: the [$QUANTP page](https://www.quantpad.company/quantp) lists them all, with what has actually been paid and burned so far.
 

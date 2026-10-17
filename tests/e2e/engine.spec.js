@@ -56,7 +56,7 @@ test('the engine page shows its state, the next run, the tiers and rules, and ev
   )
 
   const stats = page.locator('.eg-stats')
-  await expect(stats).toContainText('Release rate0.83% / hour')
+  await expect(stats).toContainText('Release rate1.67% / hour')
   await expect(stats).toContainText('In the payout wallet1.022 SOL')
   await expect(stats).toContainText('Eligible / paid next run31 / 28')
   await expect(stats).toContainText('Paid to holders0.55 SOL')
@@ -71,7 +71,7 @@ test('the engine page shows its state, the next run, the tiers and rules, and ev
   )
   await expect(how).toContainText(
     'A slice is released each hour' +
-      'Each hourly run releases 0.83% of what the wallet holds at today’s market cap (about 18% ' +
+      'Each hourly run releases 1.67% of what the wallet holds at today’s market cap (about 33% ' +
       'of it over a day if nothing new comes in).',
   )
   await expect(how).toContainText('(1.5M $QUANTP), by balance. Pools and the team’s wallets')
@@ -81,10 +81,10 @@ test('the engine page shows its state, the next run, the tiers and rules, and ev
   const tiers = page.getByRole('region', { name: 'Release rate, by market cap' })
   await expect(tiers.locator('.is-now')).toHaveCount(1)
   await expect(tiers.locator('.is-now')).toHaveText(
-    'Below $100KNow0.83%of the wallet each hour, about 18% of it a day',
+    'Below $100KNow1.67%of the wallet each hour, about 33% of it a day',
   )
-  await expect(tiers).toContainText('$100K to $1M2.08%of the wallet each hour, about 40% of it')
-  await expect(tiers).toContainText('Above $1M4.17%of the wallet each hour, about 64% of it a day')
+  await expect(tiers).toContainText('$100K to $1M4.17%of the wallet each hour, about 64% of it')
+  await expect(tiers).toContainText('Above $1M8.33%of the wallet each hour, about 88% of it a day')
   await expect(tiers).not.toContainText('all of the wallet')
   await expect(tiers).toContainText('Each run releases at most 1 SOL and keeps 0.02 SOL')
 
@@ -180,8 +180,8 @@ test('the last run says what it sent, when a batch failed or it stopped early', 
       'it hit an error and sent nothing; the next run tries again',
     ],
     [
-      run({ error: null, stopped: 'time limit before buyback', payouts: ['a'], buyback: null }),
-      '1 payout transaction, no buyback, then it stopped (time limit before buyback)',
+      run({ error: null, stopped: 'payout not confirmed', payouts: ['a'], buyback: null }),
+      '1 payout transaction, no buyback, then it stopped (payout not confirmed)',
     ],
     [
       run({ stopped: 'claim failed', payouts: [], buyback: null, skipped: [{}, {}] }),
@@ -235,7 +235,7 @@ test('a run too small to buy back says why, and when buybacks resume', async ({ 
   )
   await expect(hero(page)).toContainText(
     'No buyback this run: its share (0.0016 SOL) is under 0.002 SOL and stays in the wallet; ' +
-      'buybacks resume once the wallet holds more than 0.62 SOL or the market cap reaches the ' +
+      'buybacks resume once the wallet holds more than 0.32 SOL or the market cap reaches the ' +
       'next tier.',
   )
   await expect(hero(page)).not.toContainText('to buy back and burn')
@@ -622,7 +622,7 @@ for (const width of [360, 375])
       // the widest figures there can be: at most 666 wallets each hold 0.15% of the supply
       engine: quantpEngine({
         marketCapUsd: 1_234_567,
-        dailyBps: 10_000,
+        dailyBps: 20_000,
         eligible: 666,
         next: { paying: 650 },
       }),
@@ -631,7 +631,7 @@ for (const width of [360, 375])
     await page.goto(ENGINE)
     const stats = page.locator('.eg-stats')
     await expect(stats).toContainText('Bought back and burned12.35M QUANTP')
-    await expect(stats).toContainText('Release rate4.17% / hour')
+    await expect(stats).toContainText('Release rate8.33% / hour')
     await expect(stats).toContainText('Eligible / paid next run666 / 650')
     await expect(stats.locator('dd').last()).toHaveAttribute('title', '12,345,678 QUANTP')
     const clipped = await stats

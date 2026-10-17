@@ -512,8 +512,9 @@ export const quantpLedger = ({
   }
 }
 
-// /api/quantp/engine for the payout engine running on the payout wallet: the 20%-a-day tier, 31
-// wallets eligible, last run 20 minutes ago (as planned from mainnet on 2026-10-16). `next` merges
+// /api/quantp/engine for the payout engine running on the payout wallet: the 40%-a-day tier, 31
+// wallets eligible, last run 20 minutes ago (its next run as planned from mainnet on 2026-10-16,
+// before the rates doubled). `next` merges
 // into the default next run, so { next: { buyback: '0' } } changes only the buyback; `state`
 // 'stale' is a status the server could not refresh from the chain.
 export const quantpEngine = ({ next, ...over } = {}) => ({
@@ -527,7 +528,7 @@ export const quantpEngine = ({ next, ...over } = {}) => ({
   tiers: QUANTP.engine.tiers,
   holdersShareBps: 6000,
   marketCapUsd: 6381,
-  dailyBps: 2000,
+  dailyBps: 4000,
   balance: '1021862000',
   next: { release: '8349000', holders: '4958000', buyback: '3340000', paying: 28, ...next },
   eligible: 31,
