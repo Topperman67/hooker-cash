@@ -257,22 +257,27 @@ const MESSAGE_FIELDS = new Set(['error', 'detail', 'rpcMessage', 'message'])
  */
 export function engineReport(run) {
   if (!run || typeof run !== 'object') return run
+  const { report, replaced } = cleanMessages(run)
+  if (run.error || replaced) console.error('[tick] engine', run)
+  return run.error ? { ...report, code: safeCode(run.code) } : report
+}
+
+/** `value` with every MESSAGE_FIELDS string through safeMessage, at any depth, and whether any changed. */
+function cleanMessages(value) {
   let replaced = false
-  const clean = (value) => {
-    if (Array.isArray(value)) return value.map(clean)
-    if (!value || typeof value !== 'object') return value
+  const clean = (v) => {
+    if (Array.isArray(v)) return v.map(clean)
+    if (!v || typeof v !== 'object') return v
     return Object.fromEntries(
-      Object.entries(value).map(([field, v]) => {
-        if (!MESSAGE_FIELDS.has(field) || typeof v !== 'string') return [field, clean(v)]
-        const shown = safeMessage(v)
-        if (shown !== v) replaced = true
+      Object.entries(v).map(([field, x]) => {
+        if (!MESSAGE_FIELDS.has(field) || typeof x !== 'string') return [field, clean(x)]
+        const shown = safeMessage(x)
+        if (shown !== x) replaced = true
         return [field, shown]
       }),
     )
   }
-  const report = clean(run)
-  if (run.error || replaced) console.error('[tick] engine', run)
-  return run.error ? { ...report, code: safeCode(run.code) } : report
+  return { report: clean(value), replaced }
 }
 
 // Vercel Cron runs the payout engine. Other callers of the tick (the GitHub backup, every 5 min
@@ -661,7 +666,7 @@ export async function createApplication(options = {}) {
   // The $QUANTP payout engine (server/quantp-engine.mjs): it sends only with QUANTP_ENGINE_SECRET
   // set to the wallet pinned in QUANTP.engine.wallet, from the keeper tick, once an hour. It has a
   // connection of its own: each call is given up after 8 s and a 429 fails at once, so one slow or
-  // rate-limited call cannot use up the run's 25 s deadline.
+  // rate-limited call cannot use up the run's 32 s deadline.
   const quantpEngine =
     options.quantpEngine ||
     createQuantpEngine({
@@ -724,6 +729,10 @@ export async function createApplication(options = {}) {
   // that started the work, so an index pass (15 s unless QUANTPAD_SYNC_MS says otherwise) and
   // the keeper share one budget below that.
   const WORK_MS = serverless ? 40_000 : 180_000
+  // The payout engine runs first in a keeper tick, within this: its hour claim, two or three
+  // payout transactions and the buyback, each confirmed. Its worst case, the index pass's 15 s and
+  // the keeper's least (5 s) stay under the 60 s limit.
+  const ENGINE_MS = 32_000
   const INDEX_MS = serverless ? { timeMs: Number(process.env.QUANTPAD_SYNC_MS) || 15_000 } : {}
   const keeperBudget = (started) => Math.max(5_000, WORK_MS - (Date.now() - started))
   // Time left in this invocation's budget, counted from when the request arrived.
@@ -1386,16 +1395,20 @@ export async function createApplication(options = {}) {
   }
 
   // The payout engine's status, or a 503 the page can show whatever made it unavailable (logged
-  // unless it was written for users).
+  // unless it was written for users). Its last run's messages go through the tick's sanitizer: the
+  // page is public, and a send error can carry an RPC provider's words.
   const engineStatus = () =>
-    quantpEngine.status().catch((e) => {
-      if (e?.expose !== true) console.error('[quantp-engine] status', e)
-      throw Object.assign(Error('The payout engine’s state is unavailable right now.'), {
-        status: 503,
-        expose: true,
-        code: 'ENGINE_UNAVAILABLE',
-      })
-    })
+    quantpEngine.status().then(
+      (s) => (s?.lastRun ? { ...s, lastRun: cleanMessages(s.lastRun).report } : s),
+      (e) => {
+        if (e?.expose !== true) console.error('[quantp-engine] status', e)
+        throw Object.assign(Error('The payout engine’s state is unavailable right now.'), {
+          status: 503,
+          expose: true,
+          code: 'ENGINE_UNAVAILABLE',
+        })
+      },
+    )
 
   // The keeper tick's payout engine step: its run, when its hour is up, within `deadline`. In the
   // first quarter of each UTC hour only Vercel Cron runs it (BACKUP_WINDOW_MINUTES). A run that
@@ -1740,9 +1753,9 @@ export async function createApplication(options = {}) {
         // command) never stops the others. `ok` is false when any step failed. Every error is
         // reported through tickError, which logs it whole.
         const step = (name, promise) => promise.catch((e) => tickError(name, e))
-        // The payout engine first, when its hour is up (a store read otherwise), within 25 s: the
-        // index pass and the keeper then share what is left of the budget.
-        const engine = await engineStep(req, started + 25_000)
+        // The payout engine first, when its hour is up (a store read otherwise), within ENGINE_MS:
+        // the index pass and the keeper then share what is left of the budget.
+        const engine = await engineStep(req, started + ENGINE_MS)
         const index = await step('index', indexer.sync({ budget: 8, ...INDEX_MS }))
         const keep = await step('keeper', keeper.tick({ timeLimitMs: keeperBudget(started) }))
         // the keeper just ran: the background pass after this response must not run it again

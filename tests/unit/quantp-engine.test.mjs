@@ -1720,12 +1720,12 @@ test('the keeper tick runs the engine first, and GET /api/quantp/engine shows it
     })
     const body = await tick.json()
     assert.deepEqual(body.engine, { ran: false, reason: 'not-due' })
-    // the engine before the index pass and the keeper, within its 25 s
+    // the engine before the index pass and the keeper, within its 32 s
     assert.deepEqual(
       calls.map(([step]) => step),
       ['engine', 'sync', 'keeper'],
     )
-    assert.ok(calls[0][1] >= started + 25_000 - 1_000 && calls[0][1] <= Date.now() + 25_000)
+    assert.ok(calls[0][1] >= started + 32_000 - 1_000 && calls[0][1] <= Date.now() + 32_000)
   } finally {
     process.env.CRON_SECRET = previous
     if (previous === undefined) delete process.env.CRON_SECRET
