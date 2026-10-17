@@ -12,7 +12,7 @@
 // first claims its hour on-chain (claimInstructions), so no hour is paid twice, whatever the store
 // says.
 import { Buffer } from 'node:buffer'
-import { createHmac } from 'node:crypto'
+import { createHmac, randomBytes } from 'node:crypto'
 import bs58 from 'bs58'
 import {
   ComputeBudgetProgram,
@@ -93,10 +93,17 @@ const MEMO_UNITS = 45_000
 const CLAIM_UNITS = 5_000 + MEMO_UNITS
 const payoutUnits = (recipients) => 2_000 + 300 * recipients + MEMO_UNITS
 const BUYBACK_UNITS = 75_000 + MEMO_UNITS
-// A claim takes back the rent of earlier hours' claim accounts: it looks this many hours back, and
-// takes back at most this many at once.
-const RECLAIM_HOURS = 24
+// A claim takes back the rent of earlier hours' claim accounts, at most RECLAIM_MAX at once. It
+// starts RECLAIM_FROM hours back, never nearer: an emptied account can be created again, so an
+// hour's account stays until no run of that hour can still claim it (a run signs its claim only
+// within its own hour, and the claim's blockhash expires about a minute later). It looks a week
+// back, so the rent of the last claims before a pause or an empty wallet still comes back.
+const RECLAIM_FROM = 2
+const RECLAIM_HOURS = 24 * 7
 const RECLAIM_MAX = 4
+// A run claims its hour only with this long left before its deadline, the time the claim needs
+// to confirm; and never once the hour is over.
+const CLAIM_TIME = 8_000
 // The run check reads at most this many of the wallet's transactions in full.
 const CHAIN_READS = 6
 // Preflight refusals that say nothing about the transaction, only that the node is behind the one
@@ -229,12 +236,13 @@ export function memoHour(memo) {
 
 /**
  * The memos of a run in `hour`: its payout batches carry the holders' pot and the eligible
- * balance it is shared over, its buyback the SOL it spends, and its claim says what it is.
+ * balance it is shared over, its buyback the SOL it spends, and its claim says what it is and
+ * ends with the run's own `nonce` (claimInstructions).
  */
 export const engineMemo = {
   payout: (hour, plan) => `${ENGINE_MEMO} h=${hour} pot=${plan.holdersPot} H=${plan.held}`,
   buyback: (hour, lamports) => `${ENGINE_MEMO} h=${hour} bb=${lamports}`,
-  claim: (hour) => `${ENGINE_MEMO} h=${hour} claim`,
+  claim: (hour, nonce) => `${ENGINE_MEMO} h=${hour} claim ${nonce}`,
 }
 
 /**
@@ -289,10 +297,21 @@ export const hourAccount = (wallet, seed) =>
  * account (`account`, from `seed`, holding `lamports` of rent), which the System Program refuses
  * with AccountAlreadyInUse when a run of the same hour got there first: two runs racing for one
  * hour cannot both pay. It also takes back the rent of earlier hours' accounts (`reclaims`:
- * { seed, address, lamports }, at most RECLAIM_MAX), and ends with the memo. Nothing in it is a
- * transfer from the wallet, so the ledger (server/quantp.mjs) never counts it as a payout.
+ * { seed, address, lamports }, at most RECLAIM_MAX), and ends with the memo, which carries
+ * `nonce`, a random word of this run's own: two runs that build the same claim in the same slot
+ * would otherwise sign the same bytes, which the network takes as one transaction, so both would
+ * see it confirm and pay. Nothing in it is a transfer from the wallet, so the ledger
+ * (server/quantp.mjs) never counts it as a payout.
  */
-export function claimInstructions({ wallet, period, seed, account, lamports, reclaims = [] }) {
+export function claimInstructions({
+  wallet,
+  period,
+  seed,
+  account,
+  lamports,
+  reclaims = [],
+  nonce = randomBytes(4).toString('hex'),
+}) {
   const owner = new PublicKey(wallet)
   return [
     SystemProgram.createAccountWithSeed({
@@ -314,7 +333,7 @@ export function claimInstructions({ wallet, period, seed, account, lamports, rec
         programId: SystemProgram.programId,
       }),
     ),
-    memoInstruction(engineMemo.claim(period)),
+    memoInstruction(engineMemo.claim(period, nonce)),
   ]
 }
 
@@ -608,6 +627,7 @@ export function createQuantpEngine({
   // scheduler that starts anywhere within the hour, as Vercel Cron does on Hobby, still runs it
   // every hour, and a day never has more runs than the 24 a release is sized for.
   const period = (t) => Math.floor(t / (policy.everySecs * 1000))
+  const hourEnd = (hour) => (hour + 1) * policy.everySecs * 1000
 
   // Whether the chain shows a run in `startedAt`'s hour, read fresh: a transaction of the wallet's
   // that the wallet paid the fee for (which only its key can sign), unless its memo names an
@@ -670,13 +690,16 @@ export function createQuantpEngine({
   // sending the same signed bytes again, never by signing anew: whatever the node did with them,
   // the transaction can land once at most. Errors carry `stage`: 'preflight' when the node refused
   // it (it was not sent: `signature` is null), 'confirm' after it was sent (with its signature, and
-  // `unknown` when it may still land).
-  async function send(instructions, { units, deadline, accounts = [walletKey] }) {
+  // `unknown` when it may still land). With `signBy` (ms), it signs nothing from then on and throws
+  // an error marked `late` instead.
+  async function send(instructions, { units, deadline, accounts = [walletKey], signBy = null }) {
     const price = await priorityFee(accounts)
     const {
       context,
       value: { blockhash, lastValidBlockHeight },
     } = await connection.getLatestBlockhashAndContext('confirmed')
+    if (signBy != null && now() >= signBy)
+      throw Object.assign(Error('It is too late to sign it.'), { late: true })
     const tx = engineTransaction({ payer: walletKey, instructions, units, price, blockhash })
     tx.sign([keypair])
     const signature = bs58.encode(tx.signatures[0])
@@ -766,27 +789,36 @@ export function createQuantpEngine({
   }
 
   // Hour `hour`'s claim (claimInstructions), with the earlier hours' accounts that still hold rent:
-  // one read of the last RECLAIM_HOURS hours' addresses (none when it fails: they wait). `bare` is
-  // the claim without them.
+  // the addresses of RECLAIM_HOURS hours from RECLAIM_FROM back, read 100 at a time (none from a
+  // read that fails: they wait). `bare` is the claim without them. Both carry one new nonce.
   async function claimFor(hour, secretKey) {
     const seed = hourSeed(secretKey, hour)
     const earlier = await Promise.all(
       Array.from({ length: RECLAIM_HOURS }, async (_, i) => {
-        const s = hourSeed(secretKey, hour - 1 - i)
+        const s = hourSeed(secretKey, hour - RECLAIM_FROM - i)
         return { seed: s, address: await hourAccount(walletKey, s) }
       }),
     )
-    const infos = await Promise.resolve()
-      .then(() =>
-        connection.getMultipleAccountsInfo(
-          earlier.map((e) => e.address),
-          'confirmed',
+    const chunks = []
+    for (let i = 0; i < earlier.length; i += 100) chunks.push(earlier.slice(i, i + 100))
+    const infos = (
+      await Promise.all(
+        chunks.map((chunk) =>
+          Promise.resolve()
+            .then(() =>
+              connection.getMultipleAccountsInfo(
+                chunk.map((e) => e.address),
+                'confirmed',
+              ),
+            )
+            .catch(() => null)
+            .then((list) => chunk.map((_, j) => list?.[j] ?? null)),
         ),
       )
-      .catch(() => [])
+    ).flat()
     const reclaims = earlier
       .flatMap((e, i) => {
-        const info = infos?.[i]
+        const info = infos[i]
         return info?.lamports > 0 &&
           new PublicKey(info.owner).equals(SystemProgram.programId) &&
           (info.data?.length ?? 0) === 0
@@ -796,22 +828,25 @@ export function createQuantpEngine({
       .slice(0, RECLAIM_MAX)
     const account = await hourAccount(walletKey, seed)
     const lamports = await rentExempt()
+    const nonce = randomBytes(4).toString('hex')
     const build = (r) =>
-      claimInstructions({ wallet, period: hour, seed, account, lamports, reclaims: r })
+      claimInstructions({ wallet, period: hour, seed, account, lamports, reclaims: r, nonce })
     return { seed, account, reclaims, instructions: build(reclaims), bare: build([]) }
   }
 
-  // Claims hour `hour`: resolves to { signature }, or { locked: true } when a run of this hour
-  // claimed it first; throws on anything else. A refusal at a reclaim (an earlier account whose
-  // balance moved) is tried once more without the reclaims. Signing anew is safe for a claim: its
-  // account can be created once at most.
-  async function claimHour(hour, deadline) {
+  // Claims hour `hour`: resolves to { signature }, { locked: true } when a run of this hour claimed
+  // it first, or { late: true } when `signBy` (ms) came before it could sign; throws on anything
+  // else. A refusal at a reclaim (an earlier account whose balance moved) is tried once more
+  // without the reclaims. Signing anew is safe for a claim: its account can be created once at
+  // most.
+  async function claimHour(hour, deadline, signBy) {
     const claim = await claimFor(hour, keypair.secretKey)
     let instructions = claim.instructions
     for (;;) {
       try {
-        return { signature: await send(instructions, { units: CLAIM_UNITS, deadline }) }
+        return { signature: await send(instructions, { units: CLAIM_UNITS, deadline, signBy }) }
       } catch (e) {
+        if (e.late) return { late: true }
         if (claimedAlready(e)) return { locked: true }
         const [index] = instructionError(e) ?? []
         if (e.stage === 'preflight' && instructions !== claim.bare && claim.reclaims.length) {
@@ -999,6 +1034,9 @@ export function createQuantpEngine({
   }
 
   async function runHour(startedAt, hour, deadline) {
+    // The claim goes out with CLAIM_TIME left before the deadline, and never once its hour is
+    // over: a late run of an hour must not claim it after the next hours' runs have begun.
+    const claimBy = Math.min(deadline - CLAIM_TIME, hourEnd(hour))
     let state
     try {
       state = await read().catch(async (e) => {
@@ -1010,6 +1048,11 @@ export function createQuantpEngine({
     } catch (e) {
       log.error('[quantp-engine]', e.message)
       return remember(startedAt, { ran: false, error: e.message })
+    }
+    // Too late to claim the hour: nothing is recorded, so a later tick in the hour runs it.
+    if (now() >= claimBy) {
+      log.warn('[quantp-engine] too little time left to claim the hour: nothing was sent')
+      return { ran: false, reason: 'time limit' }
     }
     // Recorded before anything is sent: a run that dies part way is not repeated that hour.
     lastLocal = startedAt
@@ -1035,7 +1078,7 @@ export function createQuantpEngine({
       })
     let claim
     try {
-      claim = await claimHour(hour, deadline)
+      claim = await claimHour(hour, deadline, claimBy)
     } catch (e) {
       // the hour is skipped, never repeated: its claim may yet land
       log.error('[quantp-engine] claim failed:', e.rpcMessage ?? e.message)
@@ -1049,6 +1092,15 @@ export function createQuantpEngine({
       })
     }
     if (claim.locked) return { ran: false, reason: 'locked', source: 'claim' }
+    // nothing was signed, but the hour is recorded: it is skipped
+    if (claim.late)
+      return remember(startedAt, {
+        ran: true,
+        ...summary,
+        payouts: [],
+        buyback: null,
+        stopped: 'time limit before claim',
+      })
     const report = { claim: claim.signature, payouts: [], buyback: null, skipped: [], failed: [] }
     const outcome = (extra) => {
       const { skipped, failed, ...sent } = report

@@ -2,8 +2,9 @@
 // what a run releases and where it goes, the transactions it builds (the buyback against the
 // $QUANTP DAMM v2 pool's mainnet state, as in quantp.test.mjs), that it never sends without its
 // pinned key, and runs against a stubbed chain: once an hour whatever the store does, the hour
-// claimed on-chain, one failing payout batch or recipient never stopping the rest, and refusals
-// resent as the same signed bytes. Nothing here reaches a network.
+// claimed on-chain (by one run's own claim, never late), one failing payout batch or recipient
+// never stopping the rest, and refusals resent as the same signed bytes. Nothing here reaches a
+// network.
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { Buffer } from 'node:buffer'
@@ -398,7 +399,7 @@ const memosOf = (tx) =>
 /** What an engine transaction is, from its memo: 'claim', 'payout' or 'buyback'. */
 const kindOf = (tx) => {
   const memo = memosOf(tx).join(' ')
-  return / claim$/.test(memo)
+  return / h=\d+ claim [0-9a-f]{8}$/.test(memo)
     ? 'claim'
     : / pot=/.test(memo)
       ? 'payout'
@@ -431,7 +432,10 @@ const refusal = (message, logs) =>
  *   venue: serve the $QUANTP pools for the buyback; held: the wallet's $QUANTP
  * Tests set `refuse(tx, n)` to refuse the n-th preflight with an error of their own (a plain
  * Error is a network error: not refused, not landed), `simulate(tx)` to say what a simulation
- * finds, and `onLand(tx)` to act as a transaction lands.
+ * finds, and `onLand(tx)` to act as a transaction lands. With `defer(tx)` set, what passes
+ * preflight waits until a status poll finds `defer(tx)` false, and then lands, or fails on-chain
+ * as preflight would refuse it then (listed with its error, and changing nothing). As a node
+ * does, it takes the same signed bytes sent twice as one transaction.
  */
 function stubChain({
   balance = 1_020_000_000,
@@ -452,7 +456,8 @@ function stubChain({
     return data
   }
   const owners = new Set(holders.map(([owner]) => owner))
-  const landed = new Map() // signature -> { tx, blockTime }
+  const landed = new Map() // signature -> { tx, blockTime, err }
+  const pending = new Map() // signature -> tx: past preflight, waiting on `defer`
   // What a node finds wrong with `tx`: { err, message, logs }, or null.
   const judge = (tx) => {
     for (const [i, ix] of instructionsOf(tx).entries()) {
@@ -494,23 +499,25 @@ function stubChain({
     created,
     history,
     signaturesFail: false,
-    land(tx) {
-      for (const ix of instructionsOf(tx)) {
-        const type = systemType(ix)
-        if (type === 'CreateWithSeed')
-          created.add(SystemInstruction.decodeCreateWithSeed(ix).newAccountPubkey.toBase58())
-        if (type === 'TransferWithSeed')
-          created.delete(SystemInstruction.decodeTransferWithSeed(ix).fromPubkey.toBase58())
+    land(tx, err = null) {
+      if (!err) {
+        for (const ix of instructionsOf(tx)) {
+          const type = systemType(ix)
+          if (type === 'CreateWithSeed')
+            created.add(SystemInstruction.decodeCreateWithSeed(ix).newAccountPubkey.toBase58())
+          if (type === 'TransferWithSeed')
+            created.delete(SystemInstruction.decodeTransferWithSeed(ix).fromPubkey.toBase58())
+        }
+        this.onLand?.(tx)
       }
-      this.onLand?.(tx)
       const blockTime = Math.floor(clock.t / 1000)
-      landed.set(signatureOf(tx), { tx, blockTime })
-      this.sent.push(tx)
+      landed.set(signatureOf(tx), { tx, blockTime, err })
+      if (!err) this.sent.push(tx)
       const memos = memosOf(tx)
       history.unshift({
         signature: signatureOf(tx),
         blockTime,
-        err: null,
+        err,
         memo: memos.length ? memos.map((m) => `[${m.length}] ${m}`).join('; ') : null,
       })
     },
@@ -559,7 +566,9 @@ function stubChain({
       if (refused) throw refused
       const wrong = judge(tx)
       if (wrong) throw refusal(wrong.message, wrong.logs)
-      this.land(tx)
+      if (this.defer) {
+        if (!landed.has(signatureOf(tx))) pending.set(signatureOf(tx), tx)
+      } else this.land(tx)
       return signatureOf(tx)
     },
     async simulateTransaction(tx, config) {
@@ -571,9 +580,16 @@ function stubChain({
       }
     },
     async getSignatureStatuses(signatures) {
+      for (const s of signatures) {
+        const tx = pending.get(s)
+        if (tx && !this.defer(tx)) {
+          pending.delete(s)
+          this.land(tx, judge(tx)?.err ?? null)
+        }
+      }
       return {
         value: signatures.map((s) =>
-          landed.has(s) ? { confirmationStatus: 'confirmed', err: null } : null,
+          landed.has(s) ? { confirmationStatus: 'confirmed', err: landed.get(s).err } : null,
         ),
       }
     },
@@ -677,7 +693,8 @@ test('a live run: the hour claimed on-chain, then every eligible holder paid by 
     rest.map((ix) => ix.programId.toBase58()),
     [MEMO],
   )
-  assert.equal(memosOf(connection.sent[0])[0], 'qp-engine:v1 h=500000 claim')
+  // its memo ends with a random word of the run's own, so no two runs sign the same claim
+  assert.match(memosOf(connection.sent[0])[0], /^qp-engine:v1 h=500000 claim [0-9a-f]{8}$/)
   // 25 transfers that add up to the holders' 60%, none to the team or the engine
   const transfers = payoutsIn(connection)
   assert.equal(transfers.length, 25)
@@ -716,13 +733,30 @@ test('a live run: the hour claimed on-chain, then every eligible holder paid by 
   await store.set('quantp:engine:lock', 'someone', { nx: true })
   assert.equal((await engine.tick()).reason, 'locked')
   await store.release('quantp:engine:lock', 'someone')
-  // an hour on: it runs again, and its claim takes the last hour's rent back
+  // an hour on: it runs again, and keeps the last hour's account, which a late run of that hour
+  // could otherwise create again
   assert.equal((await engine.tick()).ran, true)
   assert.equal(connection.sent.length, 6)
-  const claim = instructionsOf(connection.sent[3])
+  const next = instructionsOf(connection.sent[3])
+  assert.equal(
+    SystemInstruction.decodeCreateWithSeed(next[2]).seed,
+    hourSeed(KEY.secretKey, 500_001),
+  )
+  assert.deepEqual(
+    next.slice(3).map((ix) => ix.programId.toBase58()),
+    [MEMO],
+  )
+  const [first, second] = [0, 3].map((i) => memosOf(connection.sent[i])[0])
+  assert.match(second, /^qp-engine:v1 h=500001 claim [0-9a-f]{8}$/)
+  assert.notEqual(second.slice(-8), first.slice(-8))
+  // two hours on: its claim takes back the rent of the first hour's account
+  clock.t += 3_600_000
+  assert.equal((await engine.tick()).ran, true)
+  assert.equal(connection.sent.length, 9)
+  const claim = instructionsOf(connection.sent[6])
   assert.equal(
     SystemInstruction.decodeCreateWithSeed(claim[2]).seed,
-    hourSeed(KEY.secretKey, 500_001),
+    hourSeed(KEY.secretKey, 500_002),
   )
   const back = SystemInstruction.decodeTransferWithSeed(claim[3])
   assert.equal(back.fromPubkey.toBase58(), made.newAccountPubkey.toBase58())
@@ -730,10 +764,41 @@ test('a live run: the hour claimed on-chain, then every eligible holder paid by 
   assert.equal(back.toPubkey.toBase58(), ENGINE)
   assert.equal(back.seed, seed)
   assert.equal(back.lamports, 890_880n)
-  assert.equal(memosOf(connection.sent[3])[0], 'qp-engine:v1 h=500001 claim')
+  assert.deepEqual(
+    claim.slice(4).map((ix) => ix.programId.toBase58()),
+    [MEMO],
+  )
   assert.deepEqual(
     [...connection.created],
-    [(await hourAccount(ENGINE, hourSeed(KEY.secretKey, 500_001))).toBase58()],
+    await Promise.all(
+      [500_001, 500_002].map(async (h) =>
+        (await hourAccount(ENGINE, hourSeed(KEY.secretKey, h))).toBase58(),
+      ),
+    ),
+  )
+})
+
+test('a claim after days without one still takes back the rent of the last claims', async () => {
+  const clock = { t: HALF_PAST }
+  const connection = stubChain({ holders: MANY, clock })
+  const engine = engineOn(connection, memoryStore(), clock)
+  for (let i = 0; i < 2; i++) {
+    assert.equal((await engine.tick()).ran, true)
+    clock.t += 3_600_000
+  }
+  // two days with nothing sent (the engine paused, or its wallet nearly empty), then a run
+  clock.t += 48 * 3_600_000
+  assert.equal((await engine.tick()).ran, true)
+  const claim = connection.sent.filter((tx) => kindOf(tx) === 'claim').at(-1)
+  assert.deepEqual(
+    instructionsOf(claim)
+      .filter((ix) => systemType(ix) === 'TransferWithSeed')
+      .map((ix) => SystemInstruction.decodeTransferWithSeed(ix).seed),
+    [500_001, 500_000].map((h) => hourSeed(KEY.secretKey, h)),
+  )
+  assert.deepEqual(
+    [...connection.created],
+    [(await hourAccount(ENGINE, hourSeed(KEY.secretKey, 500_050))).toBase58()],
   )
 })
 
@@ -863,6 +928,37 @@ test('with the store down, two instances ticking at once make one run: the hour�
   assert.equal(payoutsIn(connection).length, 25, 'one run’s transfers')
 })
 
+test('two instances that build the hour’s claim in the same slot make one run: each claim is its own', async () => {
+  const clock = { t: HALF_PAST }
+  const store = memoryStore()
+  store.down = true
+  const connection = stubChain({ holders: MANY, clock })
+  // the same blockhash and fee for both (the stub's are fixed), and nothing lands until both
+  // claims are out, so each passes preflight: only the chain can refuse one
+  const claims = () =>
+    connection.attempts.filter(
+      (a) =>
+        !a.options.skipPreflight && kindOf(VersionedTransaction.deserialize(a.bytes)) === 'claim',
+    )
+  connection.defer = () => claims().length < 2
+  const runs = await Promise.all([
+    engineOn(connection, store, clock).tick(),
+    engineOn(connection, store, clock).tick(),
+  ])
+  assert.deepEqual(runs.map((r) => r.ran).sort(), [false, true])
+  assert.deepEqual(
+    runs.find((r) => !r.ran),
+    { ran: false, reason: 'locked', source: 'claim' },
+  )
+  // two claims, two signatures: one landed, and the other failed on-chain at its account
+  assert.equal(new Set(claims().map((a) => a.signature)).size, 2)
+  assert.deepEqual(
+    connection.history.filter((s) => s.err).map((s) => s.err),
+    [{ InstructionError: [2, { Custom: 0 }] }],
+  )
+  assert.equal(payoutsIn(connection).length, 25, 'one run’s transfers')
+})
+
 test('with the store down and back up mid-hour with no record, the chain says the hour ran', async () => {
   const clock = { t: HALF_PAST }
   const store = memoryStore()
@@ -932,7 +1028,84 @@ test('a run that starts at :59:59 and lands after the hour turns leaves the new 
   clock.t = HOUR0 + 3_630_000 // 1:00:30, another instance
   const next = await engineOn(connection, store, clock).tick()
   assert.equal(next.ran, true, 'hour 500,001 runs')
-  assert.equal(memosOf(connection.sent[3])[0], 'qp-engine:v1 h=500001 claim')
+  assert.match(memosOf(connection.sent[3])[0], /^qp-engine:v1 h=500001 claim /)
+})
+
+test('a late run of an hour never claims it once the hour is over, so the hour is paid once', async () => {
+  // the store down and nothing landed yet when the late run checked the chain: the claim decides
+  const clock = { t: HOUR0 + 3_590_000 } // 0:59:50, hour 500,000
+  const store = memoryStore()
+  store.down = true
+  const connection = stubChain({ holders: MANY, clock })
+  // one instance ticks first, and its read is slow
+  let answer
+  const gate = new Promise((r) => (answer = r))
+  const slow = {
+    snapshot: async () => {
+      await gate
+      return feed.snapshot()
+    },
+  }
+  const late = engineOn(connection, store, clock, { feed: slow }).tick()
+  await new Promise((r) => setImmediate(r))
+  // another runs the hour meanwhile; the hour turns, and a third runs hour 500,001
+  assert.equal((await engineOn(connection, store, clock).tick()).ran, true)
+  clock.t = HOUR0 + 3_602_000
+  assert.equal((await engineOn(connection, store, clock).tick()).ran, true)
+  // the slow read answers within its tick's 25 s, but in the next hour: nothing is signed
+  answer()
+  assert.deepEqual(await late, { ran: false, reason: 'time limit' })
+  const paid = (hour) =>
+    connection.sent
+      .filter((tx) => memosOf(tx).some((m) => m.startsWith(`qp-engine:v1 h=${hour} pot=`)))
+      .flatMap(transfersIn).length
+  assert.deepEqual([paid(500_000), paid(500_001)], [25, 25])
+  assert.equal(connection.attempts.length, 6)
+  // and hour 500,000's account is still there, so a claim of that hour would be refused
+  const account = await hourAccount(ENGINE, hourSeed(KEY.secretKey, 500_000))
+  assert.ok(connection.created.has(account.toBase58()))
+})
+
+test('a run with too little time left to claim its hour records nothing, and a later tick runs it', async () => {
+  const clock = { t: HALF_PAST }
+  const store = memoryStore()
+  const connection = stubChain({ holders: MANY, clock })
+  // the read takes 18 of the tick's 25 s: 7 left, under the 8 a claim is given
+  const slow = {
+    snapshot: async () => {
+      clock.t += 18_000
+      return feed.snapshot()
+    },
+  }
+  const warned = []
+  const log = { error() {}, warn: (...m) => warned.push(m.join(' ')) }
+  const run = await engineOn(connection, store, clock, { feed: slow, log }).tick()
+  assert.deepEqual(run, { ran: false, reason: 'time limit' })
+  assert.deepEqual([connection.attempts.length, store.values.has(LAST)], [0, false])
+  assert.equal(warned.length, 1)
+  clock.t += 300_000 // the next tick, quicker
+  assert.equal((await engineOn(connection, store, clock).tick()).ran, true)
+  assert.equal(payoutsIn(connection).length, 25)
+})
+
+test('a claim that cannot be signed in time after all is not sent, and its recorded hour is skipped', async () => {
+  const clock = { t: HALF_PAST }
+  const store = memoryStore()
+  // the store takes 20 s to record the run
+  const set = store.set.bind(store)
+  store.set = async (name, value, options) => {
+    if (name === LAST) clock.t += 20_000
+    return set(name, value, options)
+  }
+  const connection = stubChain({ holders: MANY, clock })
+  const run = await engineOn(connection, store, clock).tick()
+  assert.deepEqual(
+    [run.ran, run.stopped, run.payouts, run.buyback],
+    [true, 'time limit before claim', [], null],
+  )
+  assert.equal(connection.attempts.length, 0)
+  clock.t += 60_000
+  assert.equal((await engineOn(connection, store, clock).tick()).reason, 'not-due')
 })
 
 test('when the wallet’s history cannot be read, a due tick does not run: unverified', async () => {
