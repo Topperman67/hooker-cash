@@ -6,6 +6,7 @@ import { request as httpsRequest } from 'node:https'
 import { BlockList, isIP } from 'node:net'
 import { pipeline } from 'node:stream'
 import { createBrotliDecompress, createGunzip, createInflate } from 'node:zlib'
+import bs58 from 'bs58'
 import { createConnection } from './solana.mjs'
 import { createIndexer, issuedUriClaimKey, issuedUriKey, summarize } from './indexer.mjs'
 import {
@@ -52,11 +53,19 @@ export const MEDIA_CACHE = 'public, max-age=31536000, s-maxage=31536000, immutab
 // $QUANTP's live figures change every few seconds but cost RPC and DexScreener calls: the CDN
 // answers for 10 s and revalidates in the background for 50 more.
 export const QUANTP_CACHE = 'public, max-age=0, s-maxage=10, stale-while-revalidate=50'
+// The same figures from an instance still reading the payouts and burns (`payouts` null): held
+// only briefly, so the next answer, with them, follows within seconds.
+export const QUANTP_COLD_CACHE = 'public, max-age=0, s-maxage=2, stale-while-revalidate=5'
 // Its chart and trades from GeckoTerminal (30 calls a minute per IP) are held a little longer.
 export const QUANTP_MARKET_CACHE = 'public, max-age=0, s-maxage=15, stale-while-revalidate=45'
-// Its payouts and burns change a few times a week and are read from the team wallets' histories:
-// the CDN answers for a minute and revalidates in the background for 5 more.
+// Its payouts and burns (the ledger, read from the team wallets' histories) and the payout
+// engine's status change about every hour, when the engine runs: the CDN answers for a minute and
+// revalidates in the background for 5 more, so a run shows on the site within minutes.
 export const QUANTP_LEDGER_CACHE = 'public, max-age=0, s-maxage=60, stale-while-revalidate=300'
+// The engine's health check, which an uptime monitor polls: a minute, and never served stale.
+export const QUANTP_HEALTH_CACHE = 'public, max-age=0, s-maxage=60'
+// Payout and burn rows /api/quantp/ledger lists unless asked for all (?all=1).
+const LEDGER_ROWS = 50
 
 const { clientKey, createLimiter, createWriteGuard } = requestLimits
 
@@ -98,7 +107,9 @@ const GET_ROUTES = new Set([
   '/api/quantp/candles',
   '/api/quantp/trades',
   '/api/quantp/ledger',
+  '/api/quantp/holder',
   '/api/quantp/engine',
+  '/api/quantp/engine/health',
 ])
 const COIN_ROUTE = /^\/api\/coins\/([^/]+)(?:\/(trades|candles))?$/
 const QUANTUM_ROUTE = /^\/api\/quantum\/([^/]+)(?:\/(claims))?$/
@@ -138,6 +149,52 @@ function within(promise, ms) {
       timer.unref?.()
     }),
   ]).finally(() => clearTimeout(timer))
+}
+
+// A wallet address: base58 of exactly 32 bytes.
+function isWallet(value) {
+  if (!isAddress(value)) return false
+  try {
+    return bs58.decode(value).length === 32
+  } catch {
+    return false
+  }
+}
+
+// The payout engine is late when holders are due a payout and its newest one is older than this
+// (two hourly runs missed, and a quarter of an hour), and its buybacks are failing when one is due
+// and its newest burn is older than 3 h (seconds).
+const LATE_SECS = 8_100
+const BUYBACK_LATE_SECS = 10_800
+
+/**
+ * The payout engine's health, for an uptime monitor, from its status and the ledger (each null
+ * when unavailable) at `nowSecs`: { ok: true, lastPaidAt, lastBurnAt } (its wallet's newest payout
+ * and burn, in seconds, or null), or { ok: false, reason }. Reasons: 'not-live' (switched off or
+ * not set up), 'late' (holders are due a payout and none went out for LATE_SECS),
+ * 'buyback-failing' (a buyback is due and nothing was burned for BUYBACK_LATE_SECS) and 'unknown'
+ * (no status or ledger, or the ledger has newer transactions still to read).
+ */
+export function engineHealth(status, ledger, nowSecs) {
+  if (!status || !ledger) return { ok: false, reason: 'unknown' }
+  if (!status.configured || !status.live) return { ok: false, reason: 'not-live' }
+  const newest = (times) => (times.length ? Math.max(...times) : null)
+  const ours = (rows) => (rows || []).filter((r) => r.wallet === status.wallet)
+  const lastPaidAt = newest(
+    ours(ledger.payouts).map((p) => p.lastTimestamp ?? p.transactions?.at(-1)?.timestamp ?? 0),
+  )
+  const lastBurnAt = newest(ours(ledger.burns).map((b) => b.timestamp ?? 0))
+  let buyback = 0n
+  try {
+    buyback = BigInt(status.next?.buyback ?? 0)
+  } catch {}
+  const late = Number(status.next?.paying) > 0 && !(lastPaidAt > nowSecs - LATE_SECS)
+  const failing = buyback > 0n && !(lastBurnAt > nowSecs - BUYBACK_LATE_SECS)
+  // the ledger reads newest first: unread transactions may be the run that is missing
+  if ((late || failing) && ledger.unread > 0) return { ok: false, reason: 'unknown' }
+  if (late) return { ok: false, reason: 'late' }
+  if (failing) return { ok: false, reason: 'buyback-failing' }
+  return { ok: true, lastPaidAt, lastBurnAt }
 }
 
 // Internal bookkeeping that never leaves the server: signature cursors, backlog anchors (`gaps`
@@ -501,6 +558,8 @@ export async function createApplication(options = {}) {
   // /api/stats also counts $QUANTP, Quant Pad's own token (an external coin to the indexer).
   const statsListed = new Set([...listed, ...(hidden.has(QUANTP.mint) ? [] : [QUANTP.mint])])
   const solUsd = options.priceFeed || createPriceFeed()
+  // The clock of the payout engine's routes (its health check).
+  const clock = options.now || (() => Date.now())
   // $QUANTP's figures, chart and trades read without the store (server/quantp.mjs), so its page
   // keeps working while Redis is down.
   const quantpRequest = options.quantpFetch ? { request: options.quantpFetch } : {}
@@ -1234,6 +1293,18 @@ export async function createApplication(options = {}) {
     }
   }
 
+  // The payout engine's status, or a 503 the page can show whatever made it unavailable (logged
+  // unless it was written for users).
+  const engineStatus = () =>
+    quantpEngine.status().catch((e) => {
+      if (e?.expose !== true) console.error('[quantp-engine] status', e)
+      throw Object.assign(Error('The payout engine’s state is unavailable right now.'), {
+        status: 503,
+        expose: true,
+        code: 'ENGINE_UNAVAILABLE',
+      })
+    })
+
   async function status() {
     const [price, q, storageNow] = await Promise.all([solUsd(), quantumStatus(), storageStatus()])
     return {
@@ -1348,13 +1419,14 @@ export async function createApplication(options = {}) {
       // $QUANTP: no store reads (the limiter fails open while Redis is down).
       if (req.method === 'GET' && path === '/api/quantp') {
         await limitRead(req)
-        // With what was really paid and burned (the ledger, as cached on this instance: one still
-        // loading answers null this time rather than hold up the live figures).
-        const [snapshot, ledger] = await Promise.all([
-          quantp.snapshot(),
-          within(quantpLedger.ledger(), 1_500).catch(() => null),
-        ])
-        return json(res, 200, { ...snapshot, payouts: ledgerSummary(ledger) }, QUANTP_CACHE)
+        // With what was really paid and burned: the ledger as cached on this instance, never
+        // waited for. Asking starts a refresh when one is due, and asking again once the live
+        // figures are in gets whatever it finished meanwhile. An instance that has read nothing
+        // yet answers `payouts: null`, which the CDN holds only briefly.
+        quantpLedger.peek()
+        const snapshot = await quantp.snapshot()
+        const payouts = ledgerSummary(quantpLedger.peek())
+        return json(res, 200, { ...snapshot, payouts }, payouts ? QUANTP_CACHE : QUANTP_COLD_CACHE)
       }
       if (req.method === 'GET' && path === '/api/quantp/candles') {
         await limitRead(req)
@@ -1388,11 +1460,64 @@ export async function createApplication(options = {}) {
       }
       if (req.method === 'GET' && path === '/api/quantp/engine') {
         await limitRead(req)
-        return json(res, 200, await quantpEngine.status(), QUANTP_LEDGER_CACHE)
+        return json(res, 200, await engineStatus(), QUANTP_LEDGER_CACHE)
       }
+      // What an uptime monitor checks: 200 while the engine pays out and buys back on time, else
+      // a 503 saying why (engineHealth).
+      if (req.method === 'GET' && path === '/api/quantp/engine/health') {
+        await limitRead(req)
+        const [status, ledger] = await Promise.all([
+          quantpEngine.status().catch(() => null),
+          quantpLedger.ledger().catch(() => null),
+        ])
+        const health = engineHealth(status, ledger, Math.floor(clock() / 1000))
+        return json(res, health.ok ? 200 : 503, health, QUANTP_HEALTH_CACHE)
+      }
+      // The newest LEDGER_ROWS payouts and burns, with the totals and counts over all of them;
+      // ?all=1 lists every one. Other parameters are ignored.
       if (req.method === 'GET' && path === '/api/quantp/ledger') {
         await limitRead(req)
-        return json(res, 200, await quantpLedger.ledger(), QUANTP_LEDGER_CACHE)
+        const ledger = await quantpLedger.ledger()
+        const all = url.searchParams.get('all') === '1'
+        const rows = (list) => (all ? list : list.slice(0, LEDGER_ROWS))
+        const body = {
+          ...ledger,
+          payouts: rows(ledger.payouts),
+          burns: rows(ledger.burns),
+          payoutCount: ledger.payouts.length,
+          burnCount: ledger.burns.length,
+          more: !all && Math.max(ledger.payouts.length, ledger.burns.length) > LEDGER_ROWS,
+        }
+        return json(res, 200, body, QUANTP_LEDGER_CACHE)
+      }
+      // What one wallet was paid (its newest LEDGER_ROWS payouts listed), and its row in the
+      // engine's holders for the next run: { eligible: false } when it has none, null when the
+      // engine's status is unavailable. The address is never logged.
+      if (req.method === 'GET' && path === '/api/quantp/holder') {
+        await limitRead(req)
+        const wallet = url.searchParams.get('wallet')
+        if (!isWallet(wallet))
+          throw clientError('Enter a valid Solana wallet address.', 400, 'invalid_wallet')
+        const [paid, status] = await Promise.all([
+          quantpLedger.forWallet(wallet, { limit: LEDGER_ROWS }),
+          quantpEngine.status().catch(() => null),
+        ])
+        const holders = Array.isArray(status?.holders) ? status.holders : null
+        const body = {
+          wallet,
+          paid: {
+            lamports: paid.lamports,
+            payouts: paid.payouts,
+            lastAt: paid.lastAt,
+            items: paid.items,
+          },
+          engine: holders
+            ? (holders.find((h) => h?.wallet === wallet) ?? { eligible: false })
+            : null,
+          minHold: status?.minHold ?? null,
+          complete: paid.complete,
+        }
+        return json(res, 200, body, QUANTP_LEDGER_CACHE)
       }
 
       // POST /api/coins/track is a POST route; every other /api/coins/<x> is a coin read.
