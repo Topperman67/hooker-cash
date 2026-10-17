@@ -340,7 +340,7 @@ function Holders({ engine, symbol, decimals }) {
       {perMillion != null && (
         <p className="muted eg-holders-rate">
           Each 1M ${symbol} held earns about{' '}
-          <span className="num">{sol(toSol(perMillion), { digits: 6 })}</span> this run.
+          <span className="num">{sol(toSol(perMillion), { digits: 7 })}</span> this run.
         </p>
       )}
       <div className="table-wrap">
