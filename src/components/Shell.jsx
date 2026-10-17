@@ -43,8 +43,10 @@ function WalletButton() {
         <Wallet size={16} aria-hidden="true" /> <span className="wallet-label">Connect</span>
       </button>
     )
+  // The name starts with what the button shows ("1.017 SOL, wallet details"), so a voice command
+  // that reads the balance finds it.
   return (
-    <button className="btn wallet-btn" onClick={openDialog} aria-label="Wallet details">
+    <button className="btn wallet-btn" onClick={openDialog}>
       {wallet?.icon ? (
         <img src={wallet.icon} alt="" width="18" height="18" style={{ borderRadius: 5 }} />
       ) : (
@@ -53,6 +55,7 @@ function WalletButton() {
       <span className="num wallet-label">
         {balance == null ? short(address) : sol(toSol(balance), { digits: 3 })}
       </span>
+      <span className="sr-only">, wallet details</span>
     </button>
   )
 }
@@ -114,9 +117,16 @@ export default function Shell({ children }) {
   const { solUsd } = usePlatform()
   const { dialogOpen } = useWallet()
   const toggle = useRef(null)
+  const main = useRef(null)
+  const shown = useRef(location.pathname)
   useEffect(() => {
     setMenu(false)
     window.scrollTo(0, 0)
+    // A new page takes keyboard and screen reader focus, as a full page load would; the first
+    // page leaves it at the top, where the skip link is.
+    if (shown.current === location.pathname) return
+    shown.current = location.pathname
+    main.current?.focus({ preventScroll: true })
   }, [location.pathname])
   // Escape closes the open menu and puts focus back on its toggle. An open dialog handles Escape
   // first (it marks the event as handled).
@@ -132,6 +142,18 @@ export default function Shell({ children }) {
   }, [menu])
   return (
     <div className="app">
+      {/* Focuses the page itself: no #main in the URL, and no jump that tucks the page's top
+          under the sticky header. */}
+      <a
+        className="skip-link"
+        href="#main"
+        onClick={(e) => {
+          e.preventDefault()
+          main.current?.focus()
+        }}
+      >
+        Skip to content
+      </a>
       <StudioLights />
       <header className="topbar">
         <div className="wrap">
@@ -188,7 +210,9 @@ export default function Shell({ children }) {
         </div>
       </header>
       <Tape />
-      <main className="app-main">{children}</main>
+      <main id="main" ref={main} className="app-main" tabIndex={-1}>
+        {children}
+      </main>
       <footer className="footer">
         <div className="wrap footer-inner">
           <div>

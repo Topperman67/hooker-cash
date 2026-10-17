@@ -351,6 +351,11 @@ test('wallet connects through the Wallet Standard and shows the balance', async 
   await expect(page.getByRole('dialog', { name: 'Connect a Solana wallet' })).toBeVisible()
   await page.getByRole('button', { name: 'Test Wallet' }).click()
   await expect(page.getByRole('button', { name: 'Wallet details' })).toContainText('1.5 SOL')
+  // Its name starts with what it shows, so "click 1.5 SOL" finds it. (The hidden suffix is
+  // positioned, so name computation puts a space before its comma.)
+  await expect(page.getByRole('banner').locator('.wallet-btn')).toHaveAccessibleName(
+    /^1\.5 SOL ?, wallet details$/,
+  )
   await page.reload()
   await expect(page.getByRole('button', { name: 'Wallet details' })).toContainText('1.5 SOL')
 })
@@ -598,6 +603,34 @@ test('Escape closes the mobile menu and returns focus to its toggle', async ({ p
   await page.keyboard.press('Escape')
   await expect(page.locator('#mobile-nav')).toBeHidden()
   await expect(page.getByRole('button', { name: 'Open menu' })).toBeFocused()
+})
+
+test('the skip link is the first Tab stop, and the page takes focus on every route change', async ({
+  page,
+}) => {
+  await stubApi(page)
+  await enter(page)
+  await page.goto('/')
+  await expect(page.getByRole('heading', { level: 1 })).toContainText(/Launch on\s+Meteora\./)
+  const skip = page.getByRole('link', { name: 'Skip to content' })
+  const main = page.locator('main#main')
+  await expect(skip).not.toBeInViewport()
+  const bar = await page.locator('.topbar').boundingBox()
+  await page.keyboard.press('Tab')
+  await expect(skip).toBeFocused()
+  await expect(skip).toBeInViewport()
+  // It shows over the page: nothing moves.
+  expect(await page.locator('.topbar').boundingBox()).toEqual(bar)
+  await page.keyboard.press('Enter')
+  await expect(main).toBeFocused()
+  expect(new URL(page.url()).hash).toBe('')
+  // The next Tab lands inside the page, past the header.
+  await page.keyboard.press('Tab')
+  expect(await page.evaluate(() => !!document.activeElement.closest('main'))).toBe(true)
+  // A route change moves focus to the new page instead of leaving it on the link.
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Market' }).click()
+  await expect(page).toHaveURL(/\/market$/)
+  await expect(main).toBeFocused()
 })
 
 test('the header keeps its links on one line until it collapses into the menu', async ({

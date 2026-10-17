@@ -406,6 +406,20 @@ test('the fee flow stacks with downward arrows once it stops fitting on one row'
   assert.equal(decl(pages, '.flow-arrow::after', 'border-top-color', narrow), 'var(--steel)')
 })
 
+test('the header search shows a focus ring in light mode, and keeps the dark one in dark mode', () => {
+  // the glass's resting insets, then the ring
+  assert.equal(
+    decl(shell, '.topbar-search input:focus', 'box-shadow'),
+    'inset 0 1px 3px rgba(21, 24, 29, 0.1), inset 0 -1px 0 rgba(255, 255, 255, 0.7), 0 0 0 3px rgba(46, 75, 255, 0.14)',
+  )
+  // theme-dark.css loads last with the same specificity, so its ring wins there
+  const dark = readCss('theme-dark.css')
+  assert.match(
+    decl(dark, ":where(:root[data-theme='dark']) .topbar-search input:focus", 'box-shadow'),
+    /0 0 0 3px rgba\(143, 164, 255, 0\.22\)$/,
+  )
+})
+
 // ---------- production-04: text contrast over glass and studio light ----------
 
 const hex = (h) => [1, 3, 5].map((k) => parseInt(h.slice(k, k + 2), 16))
