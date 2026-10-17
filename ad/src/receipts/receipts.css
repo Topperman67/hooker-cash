@@ -1,0 +1,336 @@
+/* "The receipts" (Receipts.jsx): a printed log on warm paper. Black ink, oversized Hubot Sans, a
+   thermal receipt in Martian Mono, rubber stamps, and the brand's four colours as highlighter
+   blocks. The burn scene inverts to ink. */
+.rc {
+  --paper: #ece7dc;
+  --paper-2: #e3ddd0;
+  --slip: #fbfaf6;
+  --ink: #121316;
+  --ink-2: #4a4c52;
+  --ink-3: #8b8c90;
+  --blue: #2e4bff;
+  --green: #12c26e;
+  --pink: #ff3ea5;
+  --yellow: #ffc21a;
+  --display: 'Hubot Sans Variable', system-ui, sans-serif;
+  --body: 'Mona Sans Variable', system-ui, sans-serif;
+  --mono: 'Martian Mono Variable', ui-monospace, monospace;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--body);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+.rc-layer {
+  position: absolute;
+  inset: 0;
+}
+
+/* ---------- the document around every scene ---------- */
+.rc-frame {
+  position: absolute;
+  inset: 40px;
+  border: 2px solid currentColor;
+  opacity: 0.9;
+  pointer-events: none;
+}
+.rc-meta {
+  position: absolute;
+  left: 40px;
+  right: 40px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-family: var(--mono);
+  font-size: 15px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.rc-meta.top {
+  top: 12px;
+}
+.rc-meta.bottom {
+  bottom: 12px;
+}
+.rc-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.rc-live i {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--pink);
+}
+
+/* ---------- type ---------- */
+.rc-giant {
+  position: absolute;
+  margin: 0;
+  font-family: var(--display);
+  font-weight: 900;
+  font-stretch: 125%;
+  letter-spacing: -0.045em;
+  line-height: 0.86;
+  white-space: nowrap;
+}
+.rc-kicker {
+  position: absolute;
+  left: 80px;
+  top: 92px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-family: var(--mono);
+  font-size: 20px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.rc-kicker b {
+  width: 14px;
+  height: 14px;
+  background: currentColor;
+}
+.rc-mono {
+  position: absolute;
+  font-family: var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.rc-hl {
+  position: absolute;
+  transform-origin: left center;
+}
+
+/* ---------- the rule ---------- */
+.rc-row {
+  position: absolute;
+  left: 80px;
+  right: 80px;
+  display: grid;
+  grid-template-columns: 430px 1fr;
+  align-items: center;
+  gap: 34px;
+}
+.rc-num {
+  position: relative;
+  justify-self: start;
+  padding: 6px 22px 0;
+  font-family: var(--display);
+  font-weight: 900;
+  font-stretch: 112%;
+  font-size: 138px;
+  line-height: 1;
+  letter-spacing: -0.05em;
+}
+.rc-num span {
+  position: relative;
+}
+.rc-num em {
+  position: absolute;
+  inset: 0;
+  transform-origin: left center;
+}
+.rc-cap {
+  font-size: 33px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: -0.01em;
+}
+.rc-cap small {
+  display: block;
+  margin-top: 8px;
+  font-family: var(--mono);
+  font-size: 17px;
+  font-weight: 400;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+/* ---------- the receipt ---------- */
+.rc-slip {
+  position: absolute;
+  left: 76px;
+  width: 520px;
+  background: var(--slip);
+  font-family: var(--mono);
+  color: var(--ink);
+  box-shadow:
+    0 1px 0 rgba(0, 0, 0, 0.05),
+    0 18px 40px rgba(40, 30, 10, 0.18);
+}
+.rc-slip-in {
+  padding: 26px 30px 20px;
+}
+.rc-slip h4 {
+  margin: 0;
+  text-align: center;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}
+.rc-slip .sub {
+  margin-top: 6px;
+  text-align: center;
+  font-size: 14px;
+  letter-spacing: 0.08em;
+  color: var(--ink-2);
+}
+.rc-rule {
+  margin: 14px 0;
+  border-top: 2px dashed var(--ink-3);
+}
+.rc-entry {
+  height: 66px;
+  display: grid;
+  align-content: center;
+  gap: 4px;
+}
+.rc-entry .l1,
+.rc-entry .l2 {
+  display: flex;
+  justify-content: space-between;
+  white-space: nowrap;
+}
+.rc-entry .l1 {
+  font-size: 19px;
+  font-weight: 600;
+}
+.rc-entry .l2 {
+  font-size: 14px;
+  color: var(--ink-2);
+}
+.rc-entry .burn {
+  color: var(--pink);
+  font-weight: 700;
+}
+.rc-total {
+  font-size: 19px;
+  font-weight: 700;
+}
+.rc-total div {
+  display: flex;
+  justify-content: space-between;
+  padding: 3px 0;
+}
+.rc-thanks {
+  margin-top: 14px;
+  text-align: center;
+  font-size: 15px;
+  letter-spacing: 0.14em;
+}
+.rc-printer {
+  position: absolute;
+  left: 52px;
+  width: 568px;
+  height: 64px;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #2a2c31, #111215);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    0 10px 24px rgba(0, 0, 0, 0.3);
+}
+.rc-printer::before {
+  content: '';
+  position: absolute;
+  left: 18px;
+  right: 18px;
+  top: 10px;
+  height: 6px;
+  border-radius: 3px;
+  background: #050506;
+}
+.rc-printer i {
+  position: absolute;
+  right: 26px;
+  bottom: 16px;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 10px var(--green);
+}
+
+/* the counters beside the receipt */
+.rc-counters {
+  position: absolute;
+  left: 650px;
+  top: 104px;
+  width: 360px;
+  display: grid;
+  gap: 22px;
+}
+.rc-count {
+  border-top: 2px solid var(--ink);
+  padding-top: 10px;
+}
+.rc-count span {
+  display: block;
+  font-family: var(--mono);
+  font-size: 15px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+.rc-count b {
+  display: block;
+  margin-top: 4px;
+  font-family: var(--display);
+  font-weight: 900;
+  font-stretch: 112%;
+  font-size: 70px;
+  line-height: 1;
+  letter-spacing: -0.04em;
+  font-variant-numeric: tabular-nums;
+}
+.rc-count small {
+  display: block;
+  margin-top: 4px;
+  font-family: var(--mono);
+  font-size: 14px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-2);
+}
+
+/* ---------- the burn ---------- */
+.rc-black {
+  background: var(--ink);
+  color: var(--paper);
+}
+.rc-burned {
+  position: absolute;
+  left: 0;
+  right: 0;
+  text-align: center;
+}
+
+/* ---------- the end ---------- */
+.rc-url {
+  position: absolute;
+  left: 80px;
+  display: inline-flex;
+  align-items: center;
+  gap: 16px;
+  padding: 18px 30px;
+  border-radius: 999px;
+  background: var(--blue);
+  color: #fff;
+  font-family: var(--mono);
+  font-size: 36px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.rc-fine {
+  position: absolute;
+  left: 80px;
+  right: 80px;
+  bottom: 70px;
+  font-family: var(--mono);
+  font-size: 15px;
+  line-height: 1.5;
+  letter-spacing: 0.02em;
+  color: var(--ink-2);
+}

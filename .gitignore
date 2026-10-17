@@ -21,6 +21,7 @@ ad/out
 ad/public/review
 ad/public/soundtrack.wav
 ad/public/engine-soundtrack.wav
+ad/public/receipts-soundtrack.wav
 
 # Keypairs of created DBC configs (scripts/create-dbc-config.mjs)
 dbc-config-*.json
