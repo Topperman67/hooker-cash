@@ -5,9 +5,11 @@
 // 120 BPM, so the two belong together. render-engine.mjs runs it before every render of the film.
 import { writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { SECONDS, BPM, CUES, SWEEPS, HOLDERS_T, BURN_T, SCENES, ELIGIBLE, PAID } from '../src/engine/timeline.js'
+import { SECONDS, BPM, CUES, SWEEPS, HOLDERS_T, BURN_T, SCENES, ELIGIBLE, PAID, assertRules } from '../src/engine/timeline.js'
 import { SR, TAU, mtof, db, Biquad, synth, osc, ad, sat, Bus, freeverb, lufs, limit, writeWav24 } from './dsp.mjs'
 import { kick, clap, hat, snare, bassNote, pad, pluck, bell, boom, whoosh, swell, crackle, zap, clink, thud, pour, whomp, shimmer, riser } from './instruments.mjs'
+
+assertRules() // the rules the film states are still the engine's, or no soundtrack (and no film)
 
 const N = Math.ceil(SECONDS * SR)
 const BEAT = 60 / BPM

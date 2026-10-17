@@ -21,6 +21,7 @@ import {
   SCENES,
   SWEEPS,
   TRADES,
+  assertRules,
   beamAt,
   sweepAt,
 } from '../src/engine/timeline.js'
@@ -134,4 +135,18 @@ test('the holders scene pays the wallets planRun pays, on the same snapshot and 
 
 test('the supply counter ends at the supply less the first engine burn', () => {
   assert.equal(SUPPLY - FACTS.firstBurn.amount, 996_880_767)
+})
+
+test('the film refuses to build once the engine changes a rule it states, hourly runs included', () => {
+  assert.doesNotThrow(() => assertRules())
+  assert.equal(FACTS.runsPerDay, 24)
+  const engine = (change) => ({ ...QUANTP, engine: { ...QUANTP.engine, ...change } })
+  const changed = [
+    { ...QUANTP, holdersShareBps: 5000, buybackShareBps: 5000 },
+    { ...QUANTP, postGradFeeBps: 400 },
+    engine({ minHoldBps: 10 }),
+    engine({ everySecs: 1800 }),
+    engine({ tiers: QUANTP.engine.tiers.map((t, i) => (i ? t : { ...t, dailyBps: 1000 })) }),
+  ]
+  for (const q of changed) assert.throws(() => assertRules(q), /rules changed/)
 })

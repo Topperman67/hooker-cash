@@ -31,21 +31,31 @@ const STATED = {
   buybackShareBps: 4000,
   postGradFeeBps: 500,
   minHoldBps: 15,
+  everySecs: 3600, // 'every hour', 'one run an hour', and the tier card's 24 runs a day
   tiers: [
     { belowUsd: 100_000, dailyBps: 2000 },
     { belowUsd: 1_000_000, dailyBps: 5000 },
     { belowUsd: null, dailyBps: 10_000 },
   ],
 }
-const RULES = {
-  holdersShareBps: QUANTP.holdersShareBps,
-  buybackShareBps: QUANTP.buybackShareBps,
-  postGradFeeBps: QUANTP.postGradFeeBps,
-  minHoldBps: QUANTP.engine.minHoldBps,
-  tiers: QUANTP.engine.tiers.map(({ belowUsd, dailyBps }) => ({ belowUsd, dailyBps })),
+/**
+ * Throws if the engine's rules (`q`: shared/network.mjs's QUANTP) are not the ones the film
+ * states. The film (Engine.jsx) and its soundtrack (make-engine-audio.mjs) call it, rather than
+ * this module checking on import: Root.jsx imports this file for every composition, and the ad
+ * and the stills must still build.
+ */
+export function assertRules(q = QUANTP) {
+  const rules = {
+    holdersShareBps: q.holdersShareBps,
+    buybackShareBps: q.buybackShareBps,
+    postGradFeeBps: q.postGradFeeBps,
+    minHoldBps: q.engine.minHoldBps,
+    everySecs: q.engine.everySecs,
+    tiers: q.engine.tiers.map(({ belowUsd, dailyBps }) => ({ belowUsd, dailyBps })),
+  }
+  if (JSON.stringify(rules) !== JSON.stringify(STATED))
+    throw new Error(`The payout engine's rules changed (shared/network.mjs): ${JSON.stringify(rules)}. The film still states ${JSON.stringify(STATED)}.`)
 }
-if (JSON.stringify(RULES) !== JSON.stringify(STATED))
-  throw new Error(`The payout engine's rules changed (shared/network.mjs): ${JSON.stringify(RULES)}. The film still states ${JSON.stringify(STATED)}.`)
 
 // The facts the film states, from the engine's own rules (shared/network.mjs) and the chain.
 export const FACTS = {
@@ -55,6 +65,7 @@ export const FACTS = {
   minHoldPct: QUANTP.engine.minHoldBps / 100, // 0.15
   poolFee: QUANTP.postGradFeeBps / 100, // 5
   tiers: QUANTP.engine.tiers, // 1/120, 1/48 and 1/24 of the wallet each hour, by market cap
+  runsPerDay: 86_400 / QUANTP.engine.everySecs, // 24: each tier's daily share is spread over them
   maxRunSol: Number(QUANTP.engine.maxRunLamports) / 1e9, // released in one run at most
   url: 'quantpad.company/quantp', // the site scene's page: the panel it draws is this one's
   engineUrl: 'quantpad.company/engine', // the end card's: the engine's own page

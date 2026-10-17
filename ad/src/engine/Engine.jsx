@@ -30,6 +30,7 @@ import {
   TRADE_FLIGHT,
   TRADES,
   WIDTH,
+  assertRules,
   beamAt,
   beamLandsAt,
   feeLandsAt,
@@ -487,12 +488,12 @@ function Fees({ t }) {
 }
 
 // The market cap tiers, as the engine runs them: each run releases the tier's daily share over the
-// day's 24 runs, so a 24th of it each hour.
+// day's 24 runs (FACTS.runsPerDay), so a 24th of it each hour.
 const usdShort = (n) => (n >= 1e6 ? `$${n / 1e6}M` : `$${n / 1e3}k`)
 const TIER_ROWS = FACTS.tiers.map(({ belowUsd, dailyBps }, i, all) => {
   const label = i === 0 ? `Below ${usdShort(belowUsd)}` : belowUsd == null ? `Above ${usdShort(all[i - 1].belowUsd)}` : `${usdShort(all[i - 1].belowUsd)} to ${usdShort(belowUsd)}`
-  const share = `1/${(24 * 10_000) / dailyBps}`
-  return [label, i === 0 ? `${share} of the wallet each hour` : `${share} each hour`, `${(dailyBps / 2400).toFixed(2)}%`]
+  const share = `1/${(FACTS.runsPerDay * 10_000) / dailyBps}`
+  return [label, i === 0 ? `${share} of the wallet each hour` : `${share} each hour`, `${(dailyBps / (FACTS.runsPerDay * 100)).toFixed(2)}%`]
 })
 
 function Hourly({ t }) {
@@ -905,6 +906,7 @@ function End({ t }) {
 }
 
 export function Engine() {
+  assertRules() // the rules the film states are still the engine's, or it refuses to render
   useFonts()
   const frame = useCurrentFrame()
   const t = frame / FPS

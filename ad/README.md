@@ -36,8 +36,9 @@ npm test                                  # the timeline checks (tests/engine-ti
 
 - `src/engine/timeline.js` holds every timing and every fact the film states. The picture and
   `scripts/make-engine-audio.mjs` both read its schedules, so each sound lands on its picture
-  event. It refuses to build if the engine's rules in `shared/network.mjs` no longer match what
-  the film says.
+  event. The film and its soundtrack refuse to build if the engine's rules in
+  `shared/network.mjs` (the split, the fee, the minimum hold, hourly runs, the tiers) no longer
+  match what the film says (`assertRules`); the ad and the stills, in the same bundle, still build.
 - `src/engine/holders.js` is a hand-taken mainnet snapshot of the holders (no addresses). The
   holders scene pays the snapshot by the engine's own rule (`planRun` in
   `server/quantp-engine.mjs`) from a stated pot.
