@@ -1,11 +1,11 @@
 // Synthesizes the payout engine film's soundtrack from src/engine/timeline.js (the picture reads
-// the same file) and writes public/engine-soundtrack.wav: 48 kHz, 24-bit stereo, -14 LUFS, true
-// peak under -1 dBTP. The ad's instruments and mastering (instruments.mjs, dsp.mjs), its key and
-// tempo: F#m D A E at 120 BPM, so the two belong together.
+// the same file, and every sound that answers the picture sits on a CUES time) and writes
+// public/engine-soundtrack.wav: 48 kHz, 24-bit stereo, -14 LUFS, true peak under -1 dBTP. The
+// ad's instruments and mastering (instruments.mjs, dsp.mjs), its key and tempo: F#m D A E at
+// 120 BPM, so the two belong together. render-engine.mjs runs it before every render of the film.
 import { writeFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
-import { SECONDS, BPM, CUES, TRADES, COIN_FLIGHT, SWEEPS, HOLDERS_T, BURN_T, SCENES } from '../src/engine/timeline.js'
-import { HOLDERS } from '../src/engine/holders.js'
+import { SECONDS, BPM, CUES, SWEEPS, HOLDERS_T, BURN_T, SCENES, ELIGIBLE, PAID } from '../src/engine/timeline.js'
 import { SR, TAU, mtof, db, Biquad, synth, osc, ad, sat, Bus, freeverb, lufs, limit, writeWav24 } from './dsp.mjs'
 import { kick, clap, hat, snare, bassNote, pad, pluck, bell, boom, whoosh, swell, crackle, zap, clink, thud, pour, whomp, shimmer, riser } from './instruments.mjs'
 
@@ -55,13 +55,13 @@ const PENTA = [69, 71, 73, 76, 78, 81, 83, 85, 88]
 
 // pads over every bar, opening up through the film
 for (let bar = 0; bar < BARS; bar++) {
+  const isEnd = bar >= END_BAR
+  if (isEnd && bar > END_BAR) continue // one long chord carries the end
   const t0 = bar * BAR
   const c = CHORDS[chordAt(bar)]
-  const isEnd = bar >= END_BAR
   const dur = isEnd ? SECONDS - t0 : BAR
   const cut = bar < 2 ? 700 : bar < 8 ? 1300 : bar < 15 ? 2000 : 1500
   const [L, R] = pad(isEnd ? [45, 57, 61, 64, 69] : c.pad, dur, { cutoff: cut, attack: bar === 0 ? 1.2 : 0.06, release: isEnd ? 1.4 : 0.35, seed: 6 + bar })
-  if (isEnd && bar > END_BAR) continue // one long chord carries the end
   music.add2(t0, L, R, isEnd ? 0.55 : 0.42)
   musicVerb.add2(t0, L, R, 0.25)
 }
@@ -161,14 +161,13 @@ CUES.whooshes.forEach((t, i) => {
 })
 
 // fees: each SOL coin lands in the wallet with a clink, climbing the scale
-TRADES.forEach((a, i) => {
-  const t = a + COIN_FLIGHT
+for (const { i, t } of CUES.fees) {
   const m = PENTA[i % PENTA.length]
   sfx.add(t, clink(mtof(m), 61 + i), 0.22, ((i % 5) - 2) * 0.25)
   hall.add(t, clink(mtof(m), 61 + i), 0.08)
-})
+}
 
-// hourly: a tick at each sweep start, a bell at each completed hour
+// hourly: a tick at each sweep start (where its tier lights), a bell at each completed hour
 SWEEPS.forEach((w, i) => {
   sfx.add(w.from, thud(900, 500, 0.02), 0.2, 0.2)
   const [l] = bell(mtof([69, 73, 76][i]), 1.6)
@@ -182,35 +181,21 @@ SWEEPS.forEach((w, i) => {
 {
   sfx.add(HOLDERS_T.line[0], zap(57), 0.35, (u) => -0.8 + u * 2)
   sfx.add(HOLDERS_T.line[0], whoosh(HOLDERS_T.line[1] - HOLDERS_T.line[0] + 0.3, 600, 5200, { peak: 0.5, seed: 33 }), 0.25, (u) => -0.8 + u * 2)
-  const eligible = HOLDERS.filter((h) => h.kind === 'eligible').length
-  const [g0, g1] = HOLDERS_T.light
-  for (let i = 0; i < eligible; i += 2) {
-    const t = g0 + (i / eligible) * (g1 - g0)
-    sfx.add(t, pluck(PENTA[(i / 2) % PENTA.length], 200 + i), 0.16, -0.8 + 1.6 * (i / eligible))
-  }
+  for (const { i, t } of CUES.plucks) sfx.add(t, pluck(PENTA[(i / 2) % PENTA.length], 200 + i), 0.16, -0.8 + 1.6 * (i / ELIGIBLE.length))
   const [b0, b1] = HOLDERS_T.beams
   sfx.add(b0, pour(b1 - b0, 81), 0.12, 0.4)
   const [L, R] = shimmer(b1 - b0 + 1, [69, 73, 76, 81, 85], 102)
   sfx.add2(b0, L, R, 0.2)
   hall.add2(b0, L, R, 0.18)
-  for (let i = 0; i < eligible; i += 2) {
-    const t = b0 + (i / eligible) * (b1 - b0 - 1.2) + 0.9
-    sfx.add(t, clink(mtof(PENTA[(i / 2 + 3) % PENTA.length]), 300 + i), 0.14, -0.8 + 1.6 * (i / eligible))
-  }
+  for (const { i, t } of CUES.beams) sfx.add(t, clink(mtof(PENTA[(i / 2 + 3) % PENTA.length]), 300 + i), 0.14, -0.8 + 1.6 * (i / PAID.length))
 }
 
 // burn: the fire crackles, every token that lands goes up with a soft whomp
 {
   const { from, to } = SCENES.burn
   sfx.add(from + 0.2, crackle(to - from - 0.4, 0.006, 41), 0.35, 0.45)
-  const [c0, c1] = BURN_T.coins
-  for (let i = 0; i < 12; i++) {
-    const t = c0 + (i / 12) * (c1 - c0 - 0.8) + 0.8
-    if (i % 2 === 0) sfx.add(t, clink(mtof(PENTA[i % 5] - 12), 400 + i), 0.12, -0.3)
-  }
-  const [k0, k1] = BURN_T.tokens
-  for (let i = 0; i < 18; i += 3) {
-    const t = k0 + (i / 18) * (k1 - k0 - 1) + 1
+  for (const { i, t } of CUES.burnCoins) sfx.add(t, clink(mtof(PENTA[i % 5] - 12), 400 + i), 0.12, -0.3)
+  for (const { i, t } of CUES.burnTokens) {
     sfx.add(t, whomp([42, 54], 92 + i), 0.28, 0.4)
     sfx.add(t, boom(80, 34, 0.25, 1.5), 0.35, 0.3)
     key(t, 0.25, 0.2)

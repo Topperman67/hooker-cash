@@ -93,7 +93,7 @@
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 74px;
+  bottom: 92px;
   text-align: center;
   font-size: 34px;
   font-weight: 500;
@@ -219,6 +219,13 @@
   letter-spacing: -0.02em;
   color: #fff;
 }
+.eng-tiers-cap {
+  margin: 16px 0 0;
+  text-align: right;
+  font-family: var(--mono);
+  font-size: 19px;
+  color: var(--on-dark-2);
+}
 .eng-now {
   display: inline-block;
   margin-left: 10px;
@@ -261,11 +268,22 @@
 }
 
 /* ---------- the site, recreated ---------- */
-.eng-browser {
+.eng-shot {
   position: absolute;
   left: 960px;
   top: 250px;
   width: 820px;
+}
+.eng-stamp {
+  position: absolute;
+  right: 6px;
+  top: 100%;
+  margin: 12px 0 0;
+  font-family: var(--mono);
+  font-size: 19px;
+  color: var(--on-dark-2);
+}
+.eng-browser {
   border-radius: 28px;
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.2);
@@ -478,8 +496,25 @@
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 48px;
+  bottom: 96px;
+  margin: 0;
   text-align: center;
-  font-size: 21px;
-  color: #8f98a6;
+  font-size: 30px;
+  line-height: 1.3;
+  color: var(--on-dark-2);
+}
+
+/* ---------- the disclaimer, on every frame ---------- */
+.eng-bug {
+  position: absolute;
+  left: 120px;
+  bottom: 22px;
+  margin: 0;
+  padding: 5px 20px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(5, 7, 13, 0.6);
+  font-size: 28px;
+  font-weight: 520;
+  color: var(--on-dark-2);
 }
