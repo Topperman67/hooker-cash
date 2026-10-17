@@ -73,6 +73,9 @@ test('the Meteora mark shows in the hero, the header and the footer', async ({ p
   const footer = page.getByRole('contentinfo').getByRole('link', { name: 'Built on Meteora' })
   for (const link of [header, footer])
     await expect(link).toHaveAttribute('href', 'https://www.meteora.ag')
+  // The header's is the mark alone (its name is its aria-label); the footer's has the words.
+  await expect(header).toHaveText('')
+  await expect(footer).toHaveText('Built on Meteora')
   for (const mark of [
     page.locator('.hero-title .meteora-mark'),
     header.locator('img'),
@@ -707,21 +710,94 @@ test('the skip link is the first Tab stop, and the page takes focus on every rou
   await expect(main).toBeFocused()
 })
 
+// The full header bar, measured: the capsule clips what overflows, so nothing must reach past its
+// right end, and the search box should be wide enough for its whole placeholder (measured in the
+// input's own font).
+const headerBar = (page) =>
+  page.evaluate(async () => {
+    await document.fonts.ready
+    const inner = document.querySelector('.topbar-inner')
+    const input = inner.querySelector('.topbar-search input')
+    const style = getComputedStyle(input)
+    const canvas = document.createElement('canvas').getContext('2d')
+    canvas.font = style.font
+    return {
+      linkHeights: [...document.querySelectorAll('nav.nav a')].map(
+        (a) => a.getBoundingClientRect().height,
+      ),
+      actionsRight: inner.querySelector('.topbar-actions').getBoundingClientRect().right,
+      innerRight: inner.getBoundingClientRect().right,
+      overflow: inner.scrollWidth - inner.clientWidth,
+      searchWidth: inner.querySelector('.topbar-search').getBoundingClientRect().width,
+      searchContent:
+        input.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight),
+      placeholder: canvas.measureText(input.placeholder).width,
+      ellipsis: [style.textOverflow, getComputedStyle(input, '::placeholder').textOverflow],
+    }
+  })
+
+const expectBarInside = async (page) => {
+  await expect(page.locator('nav.nav')).toBeVisible()
+  const bar = await headerBar(page)
+  // five links and Docs, each on one line
+  expect(bar.linkHeights).toHaveLength(6)
+  for (const height of bar.linkHeights) expect(height).toBeLessThan(44)
+  expect(bar.actionsRight).toBeLessThanOrEqual(bar.innerRight)
+  expect(bar.overflow).toBeLessThanOrEqual(1)
+  return bar
+}
+
 test('the header keeps its links on one line until it collapses into the menu', async ({
   page,
 }) => {
   await stubApi(page)
   await enter(page)
-  await page.setViewportSize({ width: 1180, height: 800 })
+  // 1280: the first width with the full bar, and its tightest.
+  await page.setViewportSize({ width: 1280, height: 800 })
   await page.goto('/market')
-  const nav = page.getByRole('navigation', { name: 'Main' }).first()
-  for (const height of await nav
-    .getByRole('link')
-    .evaluateAll((links) => links.map((a) => a.getBoundingClientRect().height)))
-    expect(height).toBeLessThan(44)
-  await page.setViewportSize({ width: 1024, height: 800 })
+  const bar = await expectBarInside(page)
+  expect(bar.searchContent).toBeGreaterThanOrEqual(bar.placeholder)
+  // One pixel less, the menu takes over.
+  await page.setViewportSize({ width: 1279, height: 800 })
   await expect(page.getByRole('button', { name: 'Open menu' })).toBeVisible()
+  await expect(page.locator('nav.nav')).toBeHidden()
 })
+
+// A connected wallet's balance is wider than "Connect". From 100 SOL it shows one decimal.
+for (const width of [1366, 1440])
+  for (const [lamports, label] of [
+    [12_345_000_000, '12.345 SOL'],
+    [1_234_567_000_000, '1,234.6 SOL'],
+  ])
+    test(`at ${width}px the header keeps ${label} and the search inside the bar`, async ({
+      page,
+    }) => {
+      await stubApi(page)
+      // Registered after stubApi, so it answers the balance; everything else falls through.
+      await page.route('**/api/rpc', (route) => {
+        const body = route.request().postDataJSON()
+        const calls = Array.isArray(body) ? body : [body]
+        if (!calls.every((call) => call.method === 'getBalance')) return route.fallback()
+        const answer = (call) => ({
+          jsonrpc: '2.0',
+          id: call.id,
+          result: { context: { slot: 300_000_000 }, value: lamports },
+        })
+        return route.fulfill({ json: Array.isArray(body) ? body.map(answer) : answer(body) })
+      })
+      await enter(page, { wallet: true })
+      await page.setViewportSize({ width, height: 800 })
+      await page.goto('/market')
+      await connectWallet(page)
+      const wallet = page.getByRole('banner').locator('.wallet-btn')
+      await expect(wallet.locator('.wallet-label')).toHaveText(label)
+      // The label and its icon fit inside the button.
+      expect(await wallet.evaluate((b) => b.scrollWidth - b.clientWidth)).toBeLessThanOrEqual(1)
+      const bar = await expectBarInside(page)
+      // The search keeps its floor, and a squeezed placeholder ends in an ellipsis, not a cut.
+      expect(bar.searchWidth).toBeGreaterThanOrEqual(180)
+      expect(bar.ellipsis).toEqual(['ellipsis', 'ellipsis'])
+    })
 
 test('the wallet dialog keeps keyboard focus inside and hands it back on Escape', async ({
   page,

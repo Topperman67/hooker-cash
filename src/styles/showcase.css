@@ -571,10 +571,14 @@
   min-width: 0;
   flex: 1;
 }
+/* clips rather than running into the price if its column gets too narrow (large text zoom) */
 .qp-menu-id strong {
   font-family: var(--font-mono);
   font-weight: 700;
   font-size: var(--t-sm);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .qp-menu-id small {
   font-size: var(--t-xs);
@@ -610,6 +614,12 @@
 }
 @media (max-width: 360px) {
   .qp-menu-id small {
+    display: none;
+  }
+}
+/* The whole row is the link, so the narrowest phones drop the Buy pill to give the ticker room. */
+@media (max-width: 359px) {
+  .qp-menu-buy {
     display: none;
   }
 }

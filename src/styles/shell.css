@@ -221,9 +221,12 @@
   padding: 0 36px;
   text-align: center;
   font-size: var(--t-sm);
+  /* squeezed (a wide wallet balance), it ends in an ellipsis rather than a hard cut */
+  text-overflow: ellipsis;
 }
 .topbar-search input::placeholder {
   color: var(--steel-2);
+  text-overflow: ellipsis;
 }
 /* the glass's resting insets (glass.css) and a soft cobalt ring; theme-dark.css has its own */
 .topbar-search input:focus {
@@ -248,6 +251,13 @@
   display: flex;
   align-items: center;
   gap: 8px;
+}
+/* the wallet's icon keeps its size (img's max-width: 100% let it shrink and push the balance
+   into the button's padding) */
+.wallet-btn img,
+.wallet-btn svg {
+  flex: none;
+  max-width: none;
 }
 .topbar .menu-toggle {
   display: none;
@@ -479,8 +489,9 @@
   display: block;
   flex: none;
 }
+/* In the header it is the mark alone; its aria-label names it. */
 .built-on-top {
-  padding: 4px 10px;
+  padding: 4px;
   border-radius: 999px;
   font-size: var(--t-xs);
   color: var(--ink-2, inherit);
@@ -489,14 +500,6 @@
 }
 .built-on-top:hover {
   border-color: currentColor;
-}
-@media (max-width: 1100px) {
-  .built-on-top span {
-    display: none;
-  }
-  .built-on-top {
-    padding: 4px;
-  }
 }
 
 /* ---------- theme switch: a glass lens holding a sun that sets into a moon ---------- */
@@ -661,7 +664,7 @@
 
 /* Phones: the switch, the wallet and the menu share the bar with the lockup. Tighter gaps first,
    then the wallet button drops to its icon (its name stays for screen readers), then the
-   Meteora badge (still in the footer) makes room at 320px. */
+   Meteora badge (still in the footer) makes room at 374px and below. */
 @media (max-width: 560px) {
   .topbar-inner {
     gap: 10px;
@@ -700,8 +703,8 @@
 }
 
 /* Desktop: the switch takes 48px of the bar, paid for by tighter gaps and link padding, so the
-   search box keeps its whole placeholder. The Meteora badge is a mark only on desktop, and just
-   above the menu breakpoint the lockup steps down too. */
+   search box keeps its whole placeholder. Just above the menu breakpoint the lockup steps down
+   too. */
 @media (min-width: 1280px) {
   .topbar-inner {
     gap: 14px;
@@ -715,14 +718,6 @@
   .nav a.active::after {
     left: 8px;
     right: 8px;
-  }
-}
-@media (min-width: 1280px) {
-  .built-on-top {
-    padding: 4px;
-  }
-  .built-on-top span {
-    display: none;
   }
 }
 @media (min-width: 1280px) and (max-width: 1365px) {

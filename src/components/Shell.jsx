@@ -44,7 +44,8 @@ function WalletButton() {
       </button>
     )
   // The name starts with what the button shows ("1.017 SOL, wallet details"), so a voice command
-  // that reads the balance finds it.
+  // that reads the balance finds it. From 100 SOL one decimal, to leave the search its room.
+  const amount = toSol(balance)
   return (
     <button className="btn wallet-btn" onClick={openDialog}>
       {wallet?.icon ? (
@@ -53,7 +54,7 @@ function WalletButton() {
         <Wallet size={16} aria-hidden="true" />
       )}
       <span className="num wallet-label">
-        {balance == null ? short(address) : sol(toSol(balance), { digits: 3 })}
+        {amount == null ? short(address) : sol(amount, { digits: amount >= 100 ? 1 : 3 })}
       </span>
       <span className="sr-only">, wallet details</span>
     </button>
@@ -176,7 +177,7 @@ export default function Shell({ children }) {
                 title="Coins launch and trade on Meteora"
                 aria-label="Built on Meteora"
               >
-                <MeteoraMark size={16} /> <span>Built on Meteora</span>
+                <MeteoraMark size={16} />
               </a>
               <nav className="nav" aria-label="Main">
                 {LINKS.map(([to, label]) => (
