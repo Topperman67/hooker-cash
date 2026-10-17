@@ -331,18 +331,6 @@
 .tape .down {
   color: var(--sell-bright);
 }
-.mini-split {
-  display: inline-flex;
-  width: 44px;
-  height: 5px;
-  border-radius: 3px;
-  overflow: hidden;
-  gap: 1px;
-  background: var(--graphite-3);
-}
-.mini-split span {
-  height: 100%;
-}
 @keyframes tape {
   to {
     transform: translateX(-50%);

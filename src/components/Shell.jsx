@@ -13,7 +13,7 @@ import { useWallet } from '../context/WalletContext.jsx'
 import { usePlatform } from '../context/PlatformContext.jsx'
 import { Address } from './UI.jsx'
 import { changeClass, QuantpPrice, useQuantpFigures } from './QuantpShowcase.jsx'
-import { ENGINE_PATH } from './quantpPayouts.js'
+import { ENGINE_PATH, QUANTP_DISCLOSURE } from './quantpPayouts.js'
 import { pct, short, sol, toSol, usd } from '../lib/format.js'
 import { DOCS_URL } from '../lib/links.js'
 import { explorer, QUANTP } from '../../shared/network.mjs'
@@ -82,7 +82,8 @@ function QuantpMenuRow() {
   )
 }
 
-// The footer's $QUANTP row: the contract with a copy button, and where to trade and track it.
+// The footer's $QUANTP row: the contract with a copy button, where to trade and track it, and the
+// disclosure every $QUANTP card carries.
 function QuantpFooter() {
   const { q } = useQuantpFigures()
   return (
@@ -104,10 +105,7 @@ function QuantpFooter() {
           </a>
         </span>
       </div>
-      <p className="footer-token-note">
-        Quant Pad’s own token. Its fee split is paid out every hour by Quant Pad’s payout engine
-        from a wallet the team funds; nothing on-chain enforces it.
-      </p>
+      <p className="footer-token-note">{QUANTP_DISCLOSURE}</p>
     </div>
   )
 }
