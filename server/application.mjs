@@ -508,11 +508,15 @@ export async function createApplication(options = {}) {
   const gecko = options.geckoFeed || createGeckoFeed(quantpRequest)
   const quantpLedger = options.quantpLedger || createQuantpLedger({ connection })
   // The $QUANTP payout engine (server/quantp-engine.mjs): it sends only with QUANTP_ENGINE_SECRET
-  // set to the wallet pinned in QUANTP.engine.wallet, from the keeper tick, once an hour.
+  // set to the wallet pinned in QUANTP.engine.wallet, from the keeper tick, once an hour. It has a
+  // connection of its own: each call is given up after 8 s and a 429 fails at once, so one slow or
+  // rate-limited call cannot use up the run's 25 s deadline.
   const quantpEngine =
     options.quantpEngine ||
     createQuantpEngine({
-      connection,
+      connection: options.connection
+        ? connection
+        : createConnection(rpcUrl, { timeoutMs: 8_000, disableRetryOnRateLimit: true }),
       store,
       feed: quantp,
       ledger: quantpLedger,
