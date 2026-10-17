@@ -1,5 +1,6 @@
-// The $QUANTP routes (server/application.mjs) with a stub ledger and engine, and the payout
-// engine's own RPC connection (server/solana.mjs createConnection).
+// The $QUANTP routes (server/application.mjs) with a stub ledger and engine, the keeper tick's
+// error reports and alerts, and the payout engine's own RPC connection (server/solana.mjs
+// createConnection).
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
@@ -12,6 +13,7 @@ import {
   QUANTP_COLD_CACHE,
   QUANTP_HEALTH_CACHE,
   QUANTP_LEDGER_CACHE,
+  tickError,
 } from '../../server/application.mjs'
 import { createConnection } from '../../server/solana.mjs'
 import { QUANTP } from '../../shared/network.mjs'
@@ -352,6 +354,248 @@ test('GET /api/quantp/engine/health: 200 while it pays and buys back on time, el
     assert.deepEqual(await health(), [503, { ok: false, reason: 'late' }])
   } finally {
     await close()
+  }
+})
+
+const SIG =
+  '5ZkTqgeDKeMDQ3d4AZpeMmLDPCCV5BrHhpqhgCzKRFr3yTyuFAbBpcosdwVcsSd8hSmJAxG8G6PGfBCjb8mhWBUm'
+
+test('tickError: a step’s message only when written for users or the engine’s own; its signature', async () => {
+  const cases = [
+    // written for users
+    [
+      Object.assign(Error('Persistent storage is unavailable. Try again shortly.'), {
+        status: 503,
+        code: 'STORAGE_UNAVAILABLE',
+        expose: true,
+      }),
+      {
+        error: 'Persistent storage is unavailable. Try again shortly.',
+        code: 'STORAGE_UNAVAILABLE',
+      },
+    ],
+    // the engine's own: a transaction that failed on-chain, or is not confirmed yet
+    [
+      Object.assign(Error(`Transaction ${SIG} failed: {"InstructionError":[2,{"Custom":6001}]}`), {
+        signature: SIG,
+      }),
+      {
+        error: `Transaction ${SIG} failed: {"InstructionError":[2,{"Custom":6001}]}`,
+        code: null,
+        signature: SIG,
+      },
+    ],
+    [
+      Object.assign(Error(`Transaction ${SIG} is not confirmed yet.`), {
+        signature: SIG,
+        unknown: true,
+      }),
+      { error: `Transaction ${SIG} is not confirmed yet.`, code: null, signature: SIG },
+    ],
+    [
+      Error('The $QUANTP supply could not be read.'),
+      { error: 'The $QUANTP supply could not be read.', code: null },
+    ],
+    [
+      { message: 'The hourly claim failed: its marker exists', signature: null },
+      { error: 'The hourly claim failed: its marker exists', code: null, signature: null },
+    ],
+    // anything else, a provider's text above all, by its code alone
+    [
+      Object.assign(Error('failed to get balance: fetch failed'), {
+        cause: { code: 'ECONNRESET' },
+      }),
+      { error: 'RPC or dependency error', code: 'ECONNRESET' },
+    ],
+    [
+      Object.assign(Error('429 Too Many Requests: {"url":"https://rpc.invalid/?api-key=secret"}'), {
+        code: -32429,
+      }),
+      { error: 'RPC or dependency error', code: -32429 },
+    ],
+    [
+      Error('Simulation failed. \nMessage: Transaction simulation failed: Blockhash not found.'),
+      { error: 'RPC or dependency error', code: null },
+    ],
+    // an engine-like message carrying a URL or a key, or an odd code, is not kept either
+    [
+      Object.assign(Error(`Transaction ${SIG} failed: see https://rpc.invalid/?api-key=secret`), {
+        signature: SIG,
+      }),
+      { error: 'RPC or dependency error', code: null, signature: SIG },
+    ],
+    [
+      Object.assign(Error('claim failed at rpc.invalid?api-key=secret'), {
+        code: 'https://rpc.invalid/?api-key=secret',
+      }),
+      { error: 'RPC or dependency error', code: null },
+    ],
+    [Error(), { error: 'RPC or dependency error', code: null }],
+  ]
+  const logged = await quietly(async () => {
+    for (const [e, expected] of cases) assert.deepEqual(tickError('engine', e), expected)
+  })
+  // each logged whole
+  assert.equal(logged.length, cases.length)
+  assert.deepEqual(
+    logged.map(([label, e]) => [label, e]),
+    cases.map(([e]) => ['[tick] engine', e]),
+  )
+})
+
+/** Resolves once `ready()` holds (checked every 10 ms, for at most 2 s). */
+async function until(ready) {
+  for (let i = 0; i < 200 && !ready(); i++) await new Promise((r) => setTimeout(r, 10))
+  assert.ok(ready(), 'in time')
+}
+// Lets work the tick does after its answer (its alert) finish.
+const settled = () => new Promise((r) => setTimeout(r, 50))
+
+/** An HTTP endpoint on localhost recording what is POSTed to it, answering `status`. */
+async function webhookServer() {
+  const posts = []
+  const hook = { status: 204, hold: null, posts }
+  const server = createServer((req, res) => {
+    let body = ''
+    req.on('data', (c) => (body += c))
+    req.on('end', async () => {
+      posts.push({ type: req.headers['content-type'], body: JSON.parse(body) })
+      await hook.hold
+      res.writeHead(hook.status)
+      res.end()
+    })
+  })
+  await new Promise((r) => server.listen(0, '127.0.0.1', r))
+  hook.url = `http://127.0.0.1:${server.address().port}/hook/secret-token`
+  hook.close = () => {
+    server.closeAllConnections()
+    return new Promise((r) => server.close(r))
+  }
+  return hook
+}
+
+test('the keeper tick: an engine run that failed part way, its alert sent once an hour after the answer', async () => {
+  const hook = await webhookServer()
+  process.env.CRON_SECRET = 'tick-secret'
+  process.env.QUANTP_ALERT_WEBHOOK = hook.url
+  const clock = { t: Date.parse('2026-10-17T08:20:00Z') }
+  const { app, engine, base, close } = await boot({ now: () => clock.t })
+  const sent = { signature: SIG, lamports: '3607526', recipients: 18 }
+  engine.tick = async () => ({
+    ran: true,
+    paying: 30,
+    payouts: [sent],
+    buyback: null,
+    error: 'failed to send transaction: 503 from https://rpc.invalid/?api-key=secret',
+    signature: null,
+  })
+  app.indexer.sync = async () => ({ synced: 0 })
+  const FOREIGN = {
+    kind: 'foreign-epoch',
+    mint: QUANTP.mint,
+    index: 7,
+    claimStart: 1_792_300_000,
+    total: '1000',
+    payer: OTHER,
+  }
+  app.keeper.tick = async () => ({ enabled: true, ran: 1, alerts: [FOREIGN] })
+  const tick = () =>
+    fetch(base + '/api/keeper/tick', {
+      headers: { Authorization: 'Bearer tick-secret', 'User-Agent': 'vercel-cron/1.0' },
+    }).then((r) => r.json())
+  try {
+    // the webhook holds its answer: the tick has answered without waiting for it
+    let release
+    hook.hold = new Promise((r) => (release = r))
+    let body
+    const logged = await quietly(async () => {
+      body = await tick()
+      await until(() => hook.posts.length === 1)
+      release()
+      await settled()
+    })
+    // what it sent is kept beside the error, which says nothing of the provider
+    assert.deepEqual(body.engine, {
+      ran: true,
+      paying: 30,
+      payouts: [sent],
+      buyback: null,
+      error: 'RPC or dependency error',
+      code: null,
+      signature: null,
+    })
+    assert.equal(body.ok, false)
+    assert.deepEqual(body.keeper.alerts, [FOREIGN])
+    // logged: the engine's error whole, then the tick in one line
+    const line = logged.find(([label]) => label === '[tick]')
+    assert.deepEqual(JSON.parse(line[1]), {
+      ok: false,
+      engine: body.engine,
+      keeper: [FOREIGN],
+    })
+    assert.ok(logged.some(([label, e]) => label === '[tick] engine' && /api-key/.test(e.message)))
+
+    // one line for every reason, with neither the webhook's URL nor any other setting
+    const [post] = hook.posts
+    assert.equal(post.type, 'application/json')
+    assert.equal(post.body.content, post.body.text)
+    const text = post.body.text
+    assert.ok(!text.includes('\n'))
+    assert.match(text, /^Quant Pad keeper tick: payout engine failed: RPC or dependency error; /)
+    assert.ok(text.includes(`${QUANTP.mint}#7 before ${new Date(1_792_300_000_000).toISOString()}`))
+    for (const secret of ['secret-token', 'tick-secret', 'api-key', '127.0.0.1'])
+      assert.ok(!text.includes(secret), secret)
+
+    // within the hour: not again on this instance
+    hook.hold = null
+    await quietly(tick)
+    assert.equal(hook.posts.length, 1)
+    // a new reason is sent at once, alone
+    engine.tick = async () => ({ ran: true, payouts: [sent], buyback: null, stopped: 'time limit' })
+    await quietly(async () => {
+      const stopped = await tick()
+      assert.equal(stopped.engine.stopped, 'time limit')
+      await until(() => hook.posts.length === 2)
+    })
+    assert.equal(
+      hook.posts[1].body.text,
+      'Quant Pad keeper tick: payout engine stopped early: time limit',
+    )
+    // an hour on, again; a webhook that fails is logged by name and tried on the next tick
+    clock.t += 3_600_000
+    hook.status = 500
+    const failing = await quietly(async () => {
+      await tick()
+      await until(() => hook.posts.length === 3)
+      await settled()
+    })
+    assert.match(hook.posts[2].body.text, /stopped early: time limit; epochs this keeper did not/)
+    assert.deepEqual(
+      failing.find(([label]) => label === '[tick] alert webhook failed:'),
+      ['[tick] alert webhook failed:', 'HTTP 500'],
+    )
+    hook.status = 204
+    await quietly(async () => {
+      await tick()
+      await until(() => hook.posts.length === 4)
+      await settled()
+    })
+
+    // a tick with nothing to report sends nothing, and logs nothing
+    clock.t += 3_600_000
+    engine.tick = async () => ({ ran: false, reason: 'not-due' })
+    app.keeper.tick = async () => ({ enabled: true, ran: 0 })
+    assert.deepEqual(await quietly(async () => assert.equal((await tick()).ok, true)), [])
+    // and without a webhook set, nothing is sent
+    delete process.env.QUANTP_ALERT_WEBHOOK
+    engine.tick = async () => ({ ran: true, payouts: [], buyback: null, stopped: 'time limit' })
+    await quietly(tick)
+    assert.equal(hook.posts.length, 4)
+  } finally {
+    delete process.env.CRON_SECRET
+    delete process.env.QUANTP_ALERT_WEBHOOK
+    await close()
+    await hook.close()
   }
 })
 

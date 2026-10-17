@@ -197,6 +197,53 @@ export function engineHealth(status, ledger, nowSecs) {
   return { ok: true, lastPaidAt, lastBurnAt }
 }
 
+// The payout engine's own messages, which say what happened on-chain and echo no provider: a
+// transaction that failed (with its on-chain error) or is not confirmed yet, the supply it could
+// not read, and its hourly claim failing.
+const ENGINE_MESSAGES = [
+  /^Transaction [1-9A-HJ-NP-Za-km-z]{32,88} failed\b/,
+  /\bis not confirmed yet\.?$/,
+  /^The \$QUANTP supply could not be read\b/,
+  /\bclaim failed\b/i,
+]
+// What a URL, or a key in a query string, looks like: never kept, whatever else matches.
+const URL_LIKE = /:\/\/|[?&][\w-]+=/
+
+/**
+ * A keeper tick step's error as the tick reports it: its response reaches public run logs (the
+ * GitHub backup prints it), and RPC, storage and fetch errors can carry provider bodies, URLs or
+ * keys. { error, code, signature }: the message only when written for users (`expose`) or one of
+ * the engine's own (ENGINE_MESSAGES), else 'RPC or dependency error'; the error's code (or its
+ * cause's), or null; the transaction it concerns, when it names one. The whole error is logged.
+ */
+export function tickError(step, e) {
+  console.error(`[tick] ${step}`, e)
+  const message = String(e?.message ?? e ?? '')
+  const shown =
+    e?.expose === true ||
+    (ENGINE_MESSAGES.some((pattern) => pattern.test(message)) && !URL_LIKE.test(message))
+  const code = e?.code ?? e?.cause?.code
+  return {
+    error: shown ? message : 'RPC or dependency error',
+    code:
+      Number.isInteger(code) || (typeof code === 'string' && /^[\w.:-]{1,64}$/.test(code))
+        ? code
+        : null,
+    ...(e?.signature !== undefined ? { signature: e.signature } : {}),
+  }
+}
+
+// Vercel Cron runs the payout engine. Other callers of the tick (the GitHub backup, every 5 min
+// from minute 2) leave it the first quarter of each hour, so they run it only in hours Vercel
+// missed, never racing its run.
+const BACKUP_WINDOW_MINUTES = 15
+const fromVercelCron = (req) =>
+  String(req.headers['user-agent'] || '')
+    .toLowerCase()
+    .startsWith('vercel-cron')
+// An alert reason is sent at most once in this long per instance (ms).
+const ALERT_COOLDOWN_MS = 3_600_000
+
 // Internal bookkeeping that never leaves the server: signature cursors, backlog anchors (`gaps`
 // holds signatures too), the indexer's sync state and its onNativeLaunch notice state (K5).
 export const INTERNAL_COIN_FIELDS = [
@@ -558,7 +605,8 @@ export async function createApplication(options = {}) {
   // /api/stats also counts $QUANTP, Quant Pad's own token (an external coin to the indexer).
   const statsListed = new Set([...listed, ...(hidden.has(QUANTP.mint) ? [] : [QUANTP.mint])])
   const solUsd = options.priceFeed || createPriceFeed()
-  // The clock of the payout engine's routes (its health check).
+  // The clock of the payout engine's routes (its health check, the keeper tick's schedule and its
+  // alerts' cooldown).
   const clock = options.now || (() => Date.now())
   // $QUANTP's figures, chart and trades read without the store (server/quantp.mjs), so its page
   // keeps working while Redis is down.
@@ -1305,6 +1353,75 @@ export async function createApplication(options = {}) {
       })
     })
 
+  // The keeper tick's payout engine step: its run, when its hour is up, within `deadline`. In the
+  // first quarter of each UTC hour only Vercel Cron runs it (BACKUP_WINDOW_MINUTES). A run that
+  // fails part way reports its error (through tickError) beside what it sent.
+  async function engineStep(req, deadline) {
+    if (!fromVercelCron(req) && new Date(clock()).getUTCMinutes() < BACKUP_WINDOW_MINUTES)
+      return { ran: false, reason: 'backup-window' }
+    let run
+    try {
+      run = await quantpEngine.tick({ deadline })
+    } catch (e) {
+      return { ran: false, ...tickError('engine', e) }
+    }
+    if (!run?.error) return run
+    const { error: message, code, signature } = run
+    return { ...run, ...tickError('engine', { message, code, signature }) }
+  }
+
+  // The keeper tick's alerts to QUANTP_ALERT_WEBHOOK (a Discord, Slack or Telegram webhook URL):
+  // one line when the payout engine failed or stopped part way, or the keeper found an epoch it
+  // did not post (cancel it before its claimStart). Each reason is sent at most once an hour per
+  // instance. The line holds only the tick's own report (its errors already sanitized), never
+  // the environment; a webhook that fails is logged by the error's name alone, since fetch puts
+  // the URL in its messages.
+  const alertedAt = new Map() // reason -> when it was last sent (ms)
+  async function alert({ engine, keeper: keep }) {
+    const webhook = String(process.env.QUANTP_ALERT_WEBHOOK || '').trim()
+    if (!webhook) return
+    const foreign = (Array.isArray(keep?.alerts) ? keep.alerts : []).filter(
+      (a) => a?.kind === 'foreign-epoch',
+    )
+    const before = (secs) => {
+      const at = new Date(Number(secs) * 1000)
+      return Number.isNaN(at.getTime()) ? '' : ` before ${at.toISOString()}`
+    }
+    const reasons = [
+      engine?.error && [
+        'engine-error',
+        `payout engine failed: ${engine.error}${engine.signature ? ` (${engine.signature})` : ''}`,
+      ],
+      engine?.stopped && ['engine-stopped', `payout engine stopped early: ${engine.stopped}`],
+      foreign.length && [
+        'foreign-epoch',
+        `epochs this keeper did not post, cancel each with cancel_epoch: ${foreign
+          .map((a) => `${a.mint}#${a.index}${before(a.claimStart)}`)
+          .join(', ')}`,
+      ],
+    ].filter((r) => r && !(clock() - (alertedAt.get(r[0]) ?? -Infinity) < ALERT_COOLDOWN_MS))
+    if (!reasons.length) return
+    for (const [reason] of reasons) alertedAt.set(reason, clock())
+    const text = `${brand.name} keeper tick: ${reasons.map(([, line]) => line).join('; ')}`
+      .replace(/\s+/g, ' ')
+      .slice(0, 1_900)
+    try {
+      const r = await fetch(webhook, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        // Discord reads `content`, Slack and Telegram `text`
+        body: JSON.stringify({ content: text, text }),
+        signal: AbortSignal.timeout(3_000),
+      })
+      r.body?.cancel().catch(() => {})
+      if (!r.ok) throw Object.assign(Error(), { name: `HTTP ${r.status}` })
+    } catch (e) {
+      // not sent: the next tick tries again
+      for (const [reason] of reasons) alertedAt.delete(reason)
+      console.error('[tick] alert webhook failed:', String(e?.name || 'Error'))
+    }
+  }
+
   async function status() {
     const [price, q, storageNow] = await Promise.all([solUsd(), quantumStatus(), storageStatus()])
     return {
@@ -1576,19 +1693,31 @@ export async function createApplication(options = {}) {
         const started = Date.now()
         // Each step reports its own failure in the response instead of failing the tick, so one
         // that cannot run (the index pass and the keeper need the store, which can refuse every
-        // command) never stops the others. `ok` is false when any step failed.
-        const step = (promise) => promise.catch((e) => ({ error: e.message, code: e.code ?? null }))
+        // command) never stops the others. `ok` is false when any step failed. Every error is
+        // reported through tickError, which logs it whole.
+        const step = (name, promise) => promise.catch((e) => tickError(name, e))
         // The payout engine first, when its hour is up (a store read otherwise), within 25 s: the
         // index pass and the keeper then share what is left of the budget.
-        const payouts = await quantpEngine
-          .tick({ deadline: started + 25_000 })
-          .catch((e) => ({ ran: false, error: e.message }))
-        const index = await step(indexer.sync({ budget: 8, ...INDEX_MS }))
-        const keep = await step(keeper.tick({ timeLimitMs: keeperBudget(started) }))
+        const engine = await engineStep(req, started + 25_000)
+        const index = await step('index', indexer.sync({ budget: 8, ...INDEX_MS }))
+        const keep = await step('keeper', keeper.tick({ timeLimitMs: keeperBudget(started) }))
         // the keeper just ran: the background pass after this response must not run it again
         await store.set('keeper:throttle', 1, { ttl: 120000 }).catch(() => {})
-        const ok = ![payouts, index, keep].some((r) => r?.error)
-        return json(res, 200, { ok, index, keeper: keep, engine: payouts })
+        const ok = ![engine, index, keep].some((r) => r?.error)
+        if (!ok || engine?.error || engine?.stopped)
+          console.error(
+            '[tick]',
+            JSON.stringify({
+              ok,
+              engine,
+              index: index?.error,
+              keeper: keep?.error ?? keep?.alerts,
+            }),
+          )
+        const body = { ok, index, keeper: keep, engine }
+        json(res, 200, body)
+        // after the answer, so the scheduler never waits on the webhook
+        return alert(body)
       }
 
       // Only the POST routes are left (allowedMethods above).
