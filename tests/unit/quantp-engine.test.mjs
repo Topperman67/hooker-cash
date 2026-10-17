@@ -1714,8 +1714,9 @@ test('the keeper tick runs the engine first, and GET /api/quantp/engine shows it
     assert.equal((await fetch(base + '/api/keeper/tick')).status, 401)
     assert.equal(calls.length, 0)
     const started = Date.now()
+    // as Vercel Cron calls it: other callers leave the engine alone in each hour's first quarter
     const tick = await fetch(base + '/api/keeper/tick', {
-      headers: { authorization: 'Bearer tick-secret' },
+      headers: { authorization: 'Bearer tick-secret', 'user-agent': 'vercel-cron/1.0' },
     })
     const body = await tick.json()
     assert.deepEqual(body.engine, { ran: false, reason: 'not-due' })
