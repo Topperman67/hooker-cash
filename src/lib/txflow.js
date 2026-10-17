@@ -1,7 +1,7 @@
 // Transaction plumbing without module-level RPC, shared by solana.js, WalletContext and the unit
 // tests: packing instruction groups, classifying RPC failures, polling for confirmation, loading
 // lookup tables, the wallet approval flow and the send-then-confirm loop.
-import { VersionedTransaction } from '@solana/web3.js'
+import { ComputeBudgetProgram, TransactionInstruction, VersionedTransaction } from '@solana/web3.js'
 import bs58 from 'bs58'
 import {
   MESSAGES,
@@ -18,18 +18,19 @@ const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 /**
  * Ordered instruction groups → as few transactions as fit. A group is never split or reordered; it
- * joins the previous transaction only when the merged message `fits`. Returns
+ * joins the previous transaction only when the merged message passes `canMerge` (by default
+ * `fits`; a stricter check leaves the wallet room in shared transactions). Returns
  * `[{ instructions, groups }]`, where `groups` lists the indexes of the groups each transaction
  * carries. Throws `{ code: 'too_large', group }` when a single group cannot fit on its own.
  */
-export function packGroups(groups, fits) {
+export function packGroups(groups, fits, canMerge = fits) {
   const out = []
   let current = null
   groups.forEach((group, index) => {
     if (!group?.length) return
     if (current) {
       const merged = [...current.instructions, ...group]
-      if (fits(merged)) {
+      if (canMerge(merged)) {
         current = { instructions: merged, groups: [...current.groups, index] }
         return
       }
@@ -316,27 +317,85 @@ export function cosign(transaction, signers = []) {
   return transaction
 }
 
+// ComputeBudget SetLoadedAccountsDataSizeLimit: instruction 4 with a u32 byte count. web3.js 1.x
+// has no builder for it.
+const SET_LOADED_DATA_LIMIT = 4
+// The protocol ceiling, which is also the limit of a transaction that sets none.
+export const MAX_LOADED_DATA_BYTES = 64 * 1024 * 1024
+// Room above what the simulation loaded: the wallet's Lighthouse guard program (about 415 KiB) is
+// loaded too once Phantom adds it.
+export const LOADED_DATA_HEADROOM = 1024 * 1024
+
+function loadedDataLimitData(bytes) {
+  const data = Buffer.alloc(5)
+  data[0] = SET_LOADED_DATA_LIMIT
+  data.writeUInt32LE(bytes, 1)
+  return data
+}
+
+/**
+ * The instruction that sets a transaction's loaded-accounts-data limit. Phantom asks dApps to set
+ * it explicitly along with the compute unit limit; walletSendAll narrows it after simulating.
+ */
+export const loadedDataLimitInstruction = (bytes = MAX_LOADED_DATA_BYTES) =>
+  new TransactionInstruction({
+    programId: ComputeBudgetProgram.programId,
+    keys: [],
+    data: loadedDataLimitData(bytes),
+  })
+
+/**
+ * Sets the limit instruction of an unsigned `transaction` to the `loaded` bytes its simulation
+ * reported plus LOADED_DATA_HEADROOM, rounded up to 32 KiB and capped at the protocol ceiling. The
+ * instruction keeps its size, so the transaction does too. Without such an instruction, or without
+ * a reported size, the transaction is left as it is.
+ */
+export function fitLoadedDataLimit(transaction, loaded) {
+  if (!(Number(loaded) > 0)) return transaction
+  const { compiledInstructions, staticAccountKeys } = transaction.message
+  const budget = ComputeBudgetProgram.programId
+  const ix = compiledInstructions.find(
+    (ix) =>
+      staticAccountKeys[ix.programIdIndex]?.equals(budget) &&
+      ix.data.length === 5 &&
+      ix.data[0] === SET_LOADED_DATA_LIMIT,
+  )
+  if (!ix) return transaction
+  const step = 32 * 1024
+  const bytes = Math.ceil((Number(loaded) + LOADED_DATA_HEADROOM) / step) * step
+  ix.data = loadedDataLimitData(Math.min(bytes, MAX_LOADED_DATA_BYTES))
+  return transaction
+}
+
 /**
  * Simulates a transaction before the wallet sees it (`simulate()` resolves to
  * `simulateTransaction(...).value`) and throws `{ friendly, simulated }` when it would fail: Phantom
- * answers a transaction that fails its own simulation with a red "could be malicious" warning. A
- * simulation that cannot run (the RPC is busy or down) does not block, since the wallet simulates
- * it again anyway. With `attempts` > 1 a failure is simulated again after `delayMs`: the
- * transaction after one that just confirmed can reach an RPC node that has not seen it yet.
+ * answers a transaction it cannot simulate cleanly with a red "This dApp could be malicious"
+ * warning. A simulation that cannot run (the RPC is busy or down) is tried `rpcAttempts` times,
+ * then refused with `{ friendly, retryable }`, so the wallet never sees a transaction nobody
+ * checked. With `attempts` > 1 a failure is simulated again after `delayMs`: the transaction after
+ * one that just confirmed can reach an RPC node that has not seen it yet.
  */
 export async function assertSimulates(
   simulate,
-  { programIds, attempts = 1, delayMs = 1500, sleep = pause } = {},
+  { programIds, attempts = 1, rpcAttempts = 3, delayMs = 1500, sleep = pause } = {},
 ) {
-  for (let attempt = 1; ; attempt++) {
+  for (let attempt = 1, unreachable = 0; ;) {
     let result
     try {
       result = await simulate()
-    } catch {
-      return null
+    } catch (e) {
+      if (++unreachable >= rpcAttempts)
+        throw Object.assign(Error(MESSAGES.uncheckable), {
+          friendly: true,
+          retryable: true,
+          cause: e,
+        })
+      await sleep(delayMs * unreachable)
+      continue
     }
     if (!result?.err) return result
-    if (attempt >= attempts)
+    if (attempt++ >= attempts)
       throw Object.assign(Error(explainSimulation(result, { programIds })), {
         friendly: true,
         simulated: true,
@@ -352,7 +411,9 @@ export async function assertSimulates(
  * an earlier one, so it can only simulate once that landed):
  * 1. after the first, a fresh blockhash: nothing is signed before its prompt, so a later
  *    transaction cannot expire while earlier ones are approved and confirmed;
- * 2. a simulation (assertSimulates): one that would fail never reaches the wallet;
+ * 2. a simulation (assertSimulates): one that would fail, or that could not be simulated, never
+ *    reaches the wallet; its loaded-accounts-data limit is narrowed to what the simulation loaded
+ *    (fitLoadedDataLimit);
  * 3. the wallet signs first and `signers` add their signatures after it (cosign), the order Phantom
  *    asks dApps to use; a wallet that can only sign and send gets it already co-signed;
  * 4. send and confirm.
@@ -385,11 +446,12 @@ export async function walletSendAll(
           expiry[index] = latest.lastValidBlockHeight
         } catch {}
       onStatus?.({ phase: 'check', index, total })
-      await assertSimulates(() => rpc.simulate(transaction), {
+      const simulation = await assertSimulates(() => rpc.simulate(transaction), {
         programIds: programs[index],
         attempts: index > 0 ? 3 : 1,
         sleep,
       })
+      fitLoadedDataLimit(transaction, simulation?.loadedAccountsDataSize)
       onStatus?.({ phase: 'sign', index, total })
       try {
         if (!signFeature) {

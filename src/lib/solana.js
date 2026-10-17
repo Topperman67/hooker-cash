@@ -12,6 +12,7 @@ import {
   createLookupTableLoader,
   instructionPrograms,
   isTransientRpcError,
+  loadedDataLimitInstruction,
   packGroups,
 } from './txflow.js'
 import { explainError, friendlyWalletError } from './txerrors.js'
@@ -55,6 +56,13 @@ const lookupTableUnavailable = () =>
   )
 
 const MAX_TX_BYTES = 1232
+// Bytes left free when groups share a transaction. Phantom adds Lighthouse guard instructions before
+// it signs, and its guidance for the "This dApp could be malicious" warning is to split a
+// transaction near the size limit into separate prompts (Phantom publishes no exact margin). A
+// single group (the create + dev buy) may still use the whole limit, since it is never split.
+const WALLET_HEADROOM = 150
+// Phantom asks for the compute unit and loaded-accounts-data limits to be set explicitly. The data
+// limit starts at the ceiling and walletSendAll narrows it to what the simulation loaded.
 function compile(payer, blockhash, instructions, microLamports, units, alts) {
   return new TransactionMessage({
     payerKey: payer,
@@ -62,14 +70,15 @@ function compile(payer, blockhash, instructions, microLamports, units, alts) {
     instructions: [
       ComputeBudgetProgram.setComputeUnitLimit({ units }),
       ComputeBudgetProgram.setComputeUnitPrice({ microLamports }),
+      loadedDataLimitInstruction(),
       ...instructions,
     ],
   }).compileToV0Message(alts)
 }
-function fits(message) {
+function fits(message, reserve = 0) {
   try {
     const signatures = message.header.numRequiredSignatures
-    return message.serialize().length + 1 + signatures * 64 <= MAX_TX_BYTES
+    return message.serialize().length + 1 + signatures * 64 + reserve <= MAX_TX_BYTES
   } catch {
     return false
   }
@@ -91,6 +100,7 @@ export async function buildTransaction(
 /**
  * Ordered instruction groups → as few transactions as fit. Groups are never split or reordered,
  * so a group that cannot fit on its own fails with `{ code: 'too_large', group, lookupTable }`.
+ * Groups share a transaction only when it keeps WALLET_HEADROOM bytes free for the wallet.
  * `groupIndexes[i]` lists the groups carried by `transactions[i]`.
  * With `requireLookupTables`, a requested lookup table that cannot be loaded is an error instead
  * of a silent fallback; without it, it only becomes an error when a group needs the table to fit.
@@ -110,8 +120,11 @@ export async function packTransactions(
   if (missing.length && requireLookupTables) throw lookupTableUnavailable()
   let packed
   try {
-    packed = packGroups(groups, (ixs) =>
-      fits(compile(payerKey, blockhash, ixs, microLamports, units, alts)),
+    const message = (ixs) => compile(payerKey, blockhash, ixs, microLamports, units, alts)
+    packed = packGroups(
+      groups,
+      (ixs) => fits(message(ixs)),
+      (ixs) => fits(message(ixs), WALLET_HEADROOM),
     )
   } catch (e) {
     if (e.code !== 'too_large') throw e
