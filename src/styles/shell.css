@@ -190,7 +190,9 @@
   border: 1px solid var(--mercury-2);
   background: var(--plate);
   box-shadow: inset 0 1px 2px rgba(21, 24, 29, 0.06);
-  padding: 0 14px 0 36px;
+  /* the icon's room on both sides, so the centred placeholder and text sit in the middle */
+  padding: 0 36px;
+  text-align: center;
   font-size: var(--t-sm);
 }
 .topbar-search input::placeholder {
@@ -206,6 +208,9 @@
   top: 50%;
   transform: translateY(-50%);
   color: var(--steel-2);
+  /* above the input: its glass (backdrop blur, glass.css) paints over the siblings before it */
+  z-index: 1;
+  pointer-events: none;
 }
 .topbar-actions {
   display: flex;
