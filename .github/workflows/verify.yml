@@ -25,6 +25,14 @@ jobs:
       - run: npm run test:unit
       - run: npm run format:check
       - run: npm run build
+      # /burn is a dev-only page (src/App.jsx imports it under import.meta.env.DEV): neither its
+      # chunk nor its copy may reach the bundle that ships.
+      - name: Check the dev-only burn page stays out of the production bundle
+        run: |
+          if ls dist/assets/BurnPage-*.js 2>/dev/null || grep -rlF 'Amount to burn' dist/assets; then
+            echo '::error::dev-only /burn page leaked into the production bundle'
+            exit 1
+          fi
       # Vercel bundles only the files @vercel/nft traces from the function entry; a dependency it
       # cannot see is missing in production and every /api request fails.
       - name: Check the Vercel function bundle includes its dependencies
