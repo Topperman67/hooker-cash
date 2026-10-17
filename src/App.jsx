@@ -19,6 +19,7 @@ const DocsPage = lazyPage(() => import('./pages/DocsPage.jsx'))
 const TermsPage = lazyPage(() => import('./pages/TermsPage.jsx'))
 const PortfolioPage = lazyPage(() => import('./pages/PortfolioPage.jsx'))
 const QuantpPage = lazyPage(() => import('./pages/QuantpPage.jsx'))
+const EnginePage = lazyPage(() => import('./pages/EnginePage.jsx'))
 
 // The $QUANTP buyback burner runs only under `vite dev`: production builds drop it.
 const BurnPage = import.meta.env.DEV ? lazyPage(() => import('./pages/BurnPage.jsx')) : null
@@ -35,6 +36,7 @@ export default function App() {
               <Route path="/" element={<HomePage />} />
               <Route path="/launch" element={<LaunchPage />} />
               <Route path="/market" element={<MarketPage />} />
+              <Route path="/engine" element={<EnginePage />} />
               {/* $QUANTP has its own page, which works without the store: its coin page goes there. */}
               <Route path={QUANTP.path} element={<QuantpPage />} />
               <Route

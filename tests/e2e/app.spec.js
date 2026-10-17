@@ -5,6 +5,7 @@ import {
   devBuyTokens,
   enter,
   stubApi,
+  stubQuantp,
   stubTrades,
   DAMM_POOL,
   DBC_POOL,
@@ -604,15 +605,27 @@ test('the header keeps its links on one line until it collapses into the menu', 
   page,
 }) => {
   await stubApi(page)
+  await stubQuantp(page)
   await enter(page)
-  await page.setViewportSize({ width: 1180, height: 800 })
   await page.goto('/market')
   const nav = page.getByRole('navigation', { name: 'Main' }).first()
-  for (const height of await nav
-    .getByRole('link')
-    .evaluateAll((links) => links.map((a) => a.getBoundingClientRect().height)))
-    expect(height).toBeLessThan(44)
-  await page.setViewportSize({ width: 1024, height: 800 })
+  // just above the menu breakpoint, just below and above where the $QUANTP pill joins, and wide
+  for (const width of [1261, 1319, 1320, 1440]) {
+    await page.setViewportSize({ width, height: 800 })
+    await expect(nav.getByRole('link', { name: 'Engine' })).toBeVisible()
+    for (const height of await nav
+      .getByRole('link')
+      .evaluateAll((links) => links.map((a) => a.getBoundingClientRect().height)))
+      expect(height).toBeLessThan(44)
+    // nothing runs past the end of the bar: the wallet button sits inside it
+    const [wallet, bar] = await Promise.all(
+      ['.wallet-btn', '.topbar-inner'].map((s) =>
+        page.locator(s).evaluate((el) => el.getBoundingClientRect().right),
+      ),
+    )
+    expect(wallet, `at ${width}px`).toBeLessThanOrEqual(bar + 0.5)
+  }
+  await page.setViewportSize({ width: 1260, height: 800 })
   await expect(page.getByRole('button', { name: 'Open menu' })).toBeVisible()
 })
 

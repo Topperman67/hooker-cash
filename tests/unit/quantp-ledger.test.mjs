@@ -377,6 +377,58 @@ test('payouts come in bursts: transactions sent together are one, newest first',
   assert.deepEqual(teamWallets().all, [PAYOUT, CREATOR])
 })
 
+test('every wallet paid, with what it received in all and in how many bursts, most paid first', () => {
+  const later = tx({
+    slot: 457_800_000,
+    blockTime: REAL.payout3.blockTime + 7200,
+    keys: [PAYOUT, HOLDER, NEW_HOLDER],
+    // HOLDER twice in one transaction: summed, and still one burst
+    instructions: [
+      transfer(PAYOUT, HOLDER, 600_000),
+      transfer(PAYOUT, NEW_HOLDER, 900_000_000),
+      transfer(PAYOUT, HOLDER, 400_000),
+    ],
+    pre: [9, 0, 0],
+    post: [9, 0, 0],
+  })
+  const [entry] = ledgerEntries(later)
+  assert.deepEqual(entry.recipients, [HOLDER, NEW_HOLDER])
+  assert.deepEqual(entry.transfers, [
+    { wallet: HOLDER, lamports: 1_000_000n },
+    { wallet: NEW_HOLDER, lamports: 900_000_000n },
+  ])
+  const entries = [REAL.payout1, REAL.payout3, REAL.funding, later].flatMap((t) => ledgerEntries(t))
+  const ledger = quantpLedger(entries)
+  const wallets = ledger.paidWallets
+  assert.equal(wallets.length, 32)
+  assert.equal(
+    wallets.reduce((s, w) => s + BigInt(w.lamports), 0n).toString(),
+    ledger.totals.paidLamports,
+  )
+  assert.deepEqual(wallets[0], {
+    wallet: NEW_HOLDER,
+    lamports: '900000000',
+    rounds: 1,
+    lastAt: later.blockTime,
+  })
+  const inRound1 = REAL.payout1.transaction.message.instructions
+    .filter((ix) => ix.parsed?.info?.destination === HOLDER)
+    .reduce((s, ix) => s + BigInt(ix.parsed.info.lamports), 0n)
+  assert.ok(inRound1 > 0n)
+  assert.deepEqual(
+    wallets.find((w) => w.wallet === HOLDER),
+    {
+      wallet: HOLDER,
+      lamports: (inRound1 + 1_000_000n).toString(),
+      rounds: 2,
+      lastAt: later.blockTime,
+    },
+  )
+  for (let i = 1; i < wallets.length; i++)
+    assert.ok(BigInt(wallets[i - 1].lamports) >= BigInt(wallets[i].lamports))
+  assert.deepEqual(quantpLedger([]).paidWallets, [])
+})
+
 // ---- the cached reader --------------------------------------------------------------------------
 
 /** A connection answering the two wallets' histories (newest first) and their transactions. */

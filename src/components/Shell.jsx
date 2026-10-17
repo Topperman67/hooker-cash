@@ -17,12 +17,23 @@ import { pct, short, sol, toSol, usd } from '../lib/format.js'
 import { DOCS_URL } from '../lib/links.js'
 import { explorer, QUANTP } from '../../shared/network.mjs'
 
+// The Engine link carries a lit dot: the $QUANTP payout engine runs every hour.
 const LINKS = [
   ['/launch', 'Launch'],
   ['/market', 'Market'],
+  ['/engine', 'Engine', true],
   ['/hooks', 'Quantum Hooks'],
   ['/portfolio', 'Portfolio'],
 ]
+
+function NavLinks() {
+  return LINKS.map(([to, label, live]) => (
+    <NavLink key={to} to={to}>
+      {live && <span className="nav-live" aria-hidden="true" />}
+      {label}
+    </NavLink>
+  ))
+}
 
 // The docs live on GitBook. In the header the link shimmers blue every 3 s (shell.css).
 function DocsLink({ onClick }) {
@@ -55,8 +66,8 @@ function WalletButton() {
   )
 }
 
-// $QUANTP, Quant Pad's own token, in the bar: price (and 24h change where it fits). Desktop only
-// (showcase.css); the tape under the header carries it at every width.
+// $QUANTP, Quant Pad's own token, in the bar: its price. Desktop only (showcase.css); the tape
+// under the header carries it, with its 24h change, at every width.
 function QuantpPill() {
   const { q, f } = useQuantpFigures()
   return (
@@ -65,7 +76,6 @@ function QuantpPill() {
       <span className="num">
         <QuantpPrice f={f} />
       </span>
-      <span className={`num qp-pill-change ${changeClass(f.change)}`}>{pct(f.change)}</span>
     </Link>
   )
 }
@@ -163,11 +173,7 @@ export default function Shell({ children }) {
                 <MeteoraMark size={16} /> <span>Built on Meteora</span>
               </a>
               <nav className="nav" aria-label="Main">
-                {LINKS.map(([to, label]) => (
-                  <NavLink key={to} to={to}>
-                    {label}
-                  </NavLink>
-                ))}
+                <NavLinks />
                 <DocsLink />
               </nav>
               <SearchBox />
@@ -190,11 +196,7 @@ export default function Shell({ children }) {
             <nav id="mobile-nav" className="mobile-nav" hidden={!menu} aria-label="Main">
               <SearchBox onDone={() => setMenu(false)} />
               <QuantpMenuRow />
-              {LINKS.map(([to, label]) => (
-                <NavLink key={to} to={to}>
-                  {label}
-                </NavLink>
-              ))}
+              <NavLinks />
               <DocsLink onClick={() => setMenu(false)} />
             </nav>
           </Glass>
@@ -216,6 +218,7 @@ export default function Shell({ children }) {
           </div>
           <div className="footer-links">
             <Link to={QUANTP.path}>${QUANTP.symbol}</Link>
+            <Link to="/engine">Fees engine</Link>
             <Link to="/hooks">Quantum Hooks</Link>
             <a href={DOCS_URL} target="_blank" rel="noreferrer">
               Docs

@@ -342,9 +342,9 @@
   text-decoration: underline;
 }
 
-/* The five links, a usable search box and the wallet button need about 1140px; below that the
+/* The six links, a usable search box and the wallet button need about 1260px; below that the
    header collapses into the menu (which carries the search too). */
-@media (max-width: 1140px) {
+@media (max-width: 1260px) {
   .nav,
   .topbar-search {
     display: none;
@@ -631,7 +631,7 @@
 /* Desktop: the switch takes 48px of the bar, paid for by tighter gaps and link padding, so the
    search box keeps its width. The Meteora badge is a mark only on desktop, and just above the
    menu breakpoint the lockup steps down too. */
-@media (min-width: 1141px) {
+@media (min-width: 1261px) {
   .topbar-inner {
     gap: 14px;
   }
@@ -643,7 +643,7 @@
     right: 10px;
   }
 }
-@media (min-width: 1141px) {
+@media (min-width: 1261px) {
   .built-on-top {
     padding: 4px;
   }
@@ -651,12 +651,19 @@
     display: none;
   }
 }
-/* From 1280px the bar also carries the $QUANTP pill (showcase.css): the Meteora badge stays a
+/* From 1320px the bar also carries the $QUANTP pill (showcase.css): the Meteora badge stays a
    mark (its name is its aria-label; the footer and hero still say "Built on Meteora"), the gaps
-   and link padding tighten, and the search gives up a little width. */
-@media (min-width: 1280px) {
+   and link padding tighten, the lockup steps down a little and the search gives up some width,
+   leaving room for a connected wallet's balance. */
+@media (min-width: 1320px) {
   .topbar-inner {
-    gap: 10px;
+    gap: 8px;
+  }
+  .brand-lockup {
+    height: 34px;
+  }
+  .nav {
+    margin-left: 6px;
   }
   .nav a {
     padding: 8px 8px;
@@ -666,10 +673,10 @@
     right: 8px;
   }
   .topbar-search {
-    min-width: 150px;
+    min-width: 140px;
   }
 }
-@media (min-width: 1141px) and (max-width: 1199px) {
+@media (min-width: 1261px) and (max-width: 1299px) {
   .brand-lockup {
     height: 32px;
   }

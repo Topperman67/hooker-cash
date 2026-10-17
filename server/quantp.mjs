@@ -549,13 +549,20 @@ export function ledgerEntries(tx, { token = QUANTP, wallets = teamWallets(token)
         isTransfer(ix) && ix.parsed.info.source === payer && ix.parsed.info.destination !== payer,
     )
     const paid = sent.some((ix) => !team.has(ix.parsed.info.destination)) ? sent : []
+    const to = new Map() // recipient -> lamports, a wallet paid twice here summed
+    for (const ix of paid)
+      to.set(
+        ix.parsed.info.destination,
+        (to.get(ix.parsed.info.destination) || 0n) + big(ix.parsed.info.lamports),
+      )
     if (paid.length)
       out.push({
         kind: 'payout',
         ...base,
         wallet: payer,
         lamports: paid.reduce((s, ix) => s + big(ix.parsed.info.lamports), 0n),
-        recipients: [...new Set(paid.map((ix) => ix.parsed.info.destination))],
+        recipients: [...to.keys()],
+        transfers: [...to].map(([wallet, lamports]) => ({ wallet, lamports })),
       })
   }
 
@@ -651,6 +658,8 @@ export function ledgerSummary(ledger) {
  *     the burn before (the buyback, in small buys or in the burn's own transaction), in proportion
  *     to the amount burned; null when nothing was bought for it. Buys in the launch (the creator's
  *     dev buy) are not buybacks. `totals.unburned` is what was bought and not burned yet.
+ *   - paidWallets: every wallet paid, with what it received in all, in how many bursts, and when
+ *     it was last paid; most paid first. The engine page lists them.
  * `payoutLamports` is the payout wallet's balance now (null when unknown).
  */
 export function quantpLedger(
@@ -691,6 +700,17 @@ export function quantpLedger(
   }
   const sum = (list, field) => list.reduce((s, e) => s + (e[field] ?? 0n), 0n)
   const paid = bursts.flat()
+  const byWallet = new Map()
+  bursts.forEach((burst, round) => {
+    for (const e of burst)
+      for (const t of e.transfers ?? []) {
+        const w = byWallet.get(t.wallet) || { lamports: 0n, rounds: new Set(), lastAt: null }
+        w.lamports += t.lamports
+        w.rounds.add(round)
+        w.lastAt = Math.max(w.lastAt ?? 0, e.timestamp ?? 0) || null
+        byWallet.set(t.wallet, w)
+      }
+  })
   return {
     mint: token.mint,
     wallets: { payout: wallets.payout, creator: wallets.creator, engine: wallets.engine },
@@ -721,6 +741,16 @@ export function quantpLedger(
       amount: e.amount.toString(),
       solSpent: e.solSpent == null ? null : e.solSpent.toString(),
     })),
+    paidWallets: [...byWallet]
+      .sort(([a, x], [b, y]) =>
+        y.lamports > x.lamports ? 1 : y.lamports < x.lamports ? -1 : a < b ? -1 : 1,
+      )
+      .map(([wallet, w]) => ({
+        wallet,
+        lamports: w.lamports.toString(),
+        rounds: w.rounds.size,
+        lastAt: w.lastAt,
+      })),
     totals: {
       paidLamports: sum(paid, 'lamports').toString(),
       payoutTxs: paid.length,

@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { ChevronDown } from 'lucide-react'
 import { useResource } from '../lib/api.js'
 import { Address, Segmented, Stat } from './UI.jsx'
@@ -204,7 +205,8 @@ export default function QuantpLedger({ symbol, decimals, burned }) {
         <p className="faint qp-fine">
           Each row is one payout of SOL from the payout wallet{' '}
           <Address value={d.wallets.payout} href={explorer.account(d.wallets.payout)} />{' '}
-          (transactions sent together count as one), read from the chain.
+          (transactions sent together count as one), read from the chain.{' '}
+          <Link to="/engine">See every wallet paid on the fees engine page</Link>.
         </p>
       </>
     )

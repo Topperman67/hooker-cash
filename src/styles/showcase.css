@@ -549,8 +549,9 @@
 }
 
 /* ---------- desktop header pill (components/Shell.jsx) ---------- */
-/* Only where the bar has room: from 1280px, beside the switch. Below that the tape under the
-   header carries $QUANTP, and the menu has its own row. */
+/* Only where the bar has room: from 1320px, beside the switch, with the price alone (the tape
+   right under it carries the 24h change). Below that the tape carries $QUANTP, and the menu has its
+   own row. */
 .qp-pill {
   display: none;
   align-items: center;
@@ -573,17 +574,9 @@
   font-weight: 700;
   color: var(--ink);
 }
-.qp-pill-change {
-  display: none;
-}
-@media (min-width: 1280px) {
+@media (min-width: 1320px) {
   .qp-pill {
     display: inline-flex;
-  }
-}
-@media (min-width: 1320px) {
-  .qp-pill-change {
-    display: inline;
   }
 }
 
