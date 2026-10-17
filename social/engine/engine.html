@@ -7,7 +7,11 @@
      really paid and burned when it was made (read from /api/quantp/ledger on 2026-10-17; they
      include round 1, which the team sent by hand from the same wallet). Update the four figures
      and the date before rendering it again. Laid out at 1600×900.
-     Render: node social/render.mjs social/engine/engine.html 3200 1800 social/quantpad-engine.png --2x -->
+     Render: node social/render.mjs social/engine/engine.html 3200 1800 social/quantpad-engine.png --2x
+     Loaded with ?video, the page builds itself over 15 s and comes to rest on the still (the story:
+     the lights come up, a trade's fee flows into the engine, the hour runs out and it fires, SOL
+     goes out to holders and to the burn, the totals count up). Render the video, without sound:
+     node social/render-video.mjs social/engine/engine.html 15 social/quantpad-engine.mp4 -->
 <style>
   @font-face { font-family: 'Hubot Sans'; src: url('../../node_modules/@fontsource-variable/hubot-sans/files/hubot-sans-latin-wdth-normal.woff2') format('woff2'); font-weight: 200 900; font-stretch: 75% 125%; }
   @font-face { font-family: 'Mona Sans'; src: url('../../node_modules/@fontsource-variable/mona-sans/files/mona-sans-latin-wdth-normal.woff2') format('woff2'); font-weight: 200 900; font-stretch: 75% 125%; }
@@ -16,6 +20,8 @@
     --green: #12C26E; --green-hi: #5CF0A6; --pink: #FF3EA5; --pink-hi: #FF8CC8;
     --blue: #2E4BFF; --blue-tint: #8FA4FF; --yellow: #FFC21A;
     --text-2: #C4CAD4; --line: rgba(255,255,255,.1);
+    --chrome: linear-gradient(180deg, #FFFFFF 0%, #EEF2F7 22%, #B7C0CC 38%, #4A5260 44%, #7C8798 51%, #D6DDE7 66%, #FFFFFF 86%);
+    --ease: cubic-bezier(.2, .8, .2, 1);
   }
   html, body { margin: 0; width: 1600px; height: 900px; overflow: hidden; color: #fff; }
   body {
@@ -64,8 +70,7 @@
   h1 span { display: block; }
   h1 b {
     display: block; font-weight: 900; font-stretch: 125%; padding-bottom: .14em; margin-bottom: -.14em;
-    background:
-      linear-gradient(180deg, #FFFFFF 0%, #EEF2F7 22%, #B7C0CC 38%, #4A5260 44%, #7C8798 51%, #D6DDE7 66%, #FFFFFF 86%);
+    background: var(--chrome);
     -webkit-background-clip: text; background-clip: text; color: transparent;
     filter: drop-shadow(0 8px 24px rgba(0,0,0,.55));
   }
@@ -135,9 +140,112 @@
   .url { font-family: 'Martian Mono'; font-weight: 500; font-size: 17px; color: #E9ECF0; display: flex; align-items: center; gap: 12px; }
   .url i { width: 9px; height: 9px; border-radius: 50%; background: var(--green); box-shadow: 0 0 10px var(--green); }
   .note { font-size: 13px; color: #9AA3B2; }
+
+  /* ---------- the video (?video) ----------
+     Every animation is paused and stepped to each frame by window.seek(ms), and each ends where the
+     still is drawn, so the last frame is the still. Pulses of light run the wires; the ring sweeps
+     a full hour, fires, and starts its next hour. */
+  .fx, .burst, .curtain { display: none; }
+  .video .fx, .video .burst, .video .curtain { display: block; }
+  .video .still { display: none; }
+  .curtain { position: absolute; inset: 0; z-index: 10; background: #05060a; pointer-events: none; }
+  .video .curtain { animation: fade-out 1s ease-out both; }
+
+  .video .lines { animation: lines-in 1.8s var(--ease) .2s both; }
+  .video .lockup { animation: rise .8s var(--ease) .5s both; }
+  .video .live { animation: pop .7s var(--ease) .8s both; }
+  .video .live i { animation: ping 1.6s ease-out 1.4s infinite both; }
+  .video h1 span { animation: rise-big 1s var(--ease) 1s both; }
+  .video h1 b {
+    background: linear-gradient(100deg, transparent 30%, rgba(255,255,255,.95) 50%, transparent 70%) -80% 0 / 36% 100% no-repeat, var(--chrome);
+    -webkit-background-clip: text; background-clip: text;
+    animation: rise 1s var(--ease) 1.3s both, glint 1.3s ease-in-out 2.3s both;
+  }
+  .video .lede { animation: rise .9s var(--ease) 2.1s both; }
+  .video .rules span { animation: pop .6s var(--ease) both; }
+  .video .rules span:nth-child(1) { animation-delay: 8.4s; }
+  .video .rules span:nth-child(2) { animation-delay: 8.6s; }
+  .video .rules span:nth-child(3) { animation-delay: 8.8s; }
+
+  .video .fees { animation: from-left .8s var(--ease) 2.8s both; }
+  .video .wire-in { animation: appear .5s ease-out 3s both; }
+  .video .ring { animation: pop .9s var(--ease) 3.7s both; }
+  /* the hour: empty, sweeps full by 6.6 s, fires, empties and starts again, three quarters by the end */
+  .video .arc { animation: arc 15s linear both; }
+  .video .arcs { animation: arcs 15s linear both; }
+  .video .ring-face { animation: flash .9s ease-out 6.55s both; }
+  .burst {
+    position: absolute; inset: 6px; border-radius: 50%; opacity: 0; pointer-events: none;
+    box-shadow: 0 0 0 3px rgba(143,164,255,.95), 0 0 40px rgba(70,98,255,.9), inset 0 0 30px rgba(143,164,255,.5);
+  }
+  .video .burst { animation: burst 1.1s ease-out 6.6s both; }
+  .video .fork { animation: appear .5s ease-out 6.65s both; }
+  .video .out.holders { animation: from-right .8s var(--ease) 7.1s both; }
+  .video .out.burn { animation: from-right .8s var(--ease) 7.3s both; }
+  .video .holders .pct { animation: pop .6s var(--ease) 7.4s both; }
+  .video .burn .pct { animation: pop .6s var(--ease) 7.6s both; }
+
+  .pulse { fill: none; stroke-width: 4; stroke-linecap: round; stroke-dasharray: var(--dash) 100; opacity: 0; }
+  .pulse.white { --dash: 24; stroke: #fff; filter: drop-shadow(0 0 5px #fff) drop-shadow(0 0 10px #8FA4FF); }
+  .pulse.green { --dash: 14; stroke: #B8FFDA; filter: drop-shadow(0 0 5px var(--green)) drop-shadow(0 0 10px var(--green)); }
+  .pulse.pink { --dash: 14; stroke: #FFD0E8; filter: drop-shadow(0 0 5px var(--pink)) drop-shadow(0 0 10px var(--pink)); }
+  .video .pulse.once { animation: pulse .7s linear 3.35s both; }
+  .video .pulse.once.green, .video .pulse.once.pink { animation-duration: .8s; animation-delay: 6.75s; }
+  .video .pulse.loop { animation: pulse-loop 1.6s linear 11s infinite both; }
+  .video .pulse.loop.green, .video .pulse.loop.pink { animation-delay: 11.7s; }
+
+  .video .figure { animation: rise .8s var(--ease) both; }
+  .video .figure:nth-child(1) { animation-delay: 9.2s; }
+  .video .figure:nth-child(2) { animation-delay: 9.35s; }
+  .video .figure:nth-child(3) { animation-delay: 9.5s; }
+  .video .figure:nth-child(4) { animation-delay: 9.65s; }
+  .video .url { animation: rise .8s var(--ease) 10.9s both; }
+  .video .note { animation: appear 1s ease-out 11.1s both; }
+
+  @keyframes fade-out { to { opacity: 0; } }
+  @keyframes appear { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes rise { from { opacity: 0; transform: translateY(28px); } to { opacity: 1; transform: none; } }
+  @keyframes rise-big { from { opacity: 0; transform: translateY(64px); filter: blur(10px); } to { opacity: 1; transform: none; filter: blur(0); } }
+  @keyframes from-left { from { opacity: 0; transform: translateX(-48px); } to { opacity: 1; transform: none; } }
+  @keyframes from-right { from { opacity: 0; transform: translateX(60px); } to { opacity: 1; transform: none; } }
+  @keyframes pop { 0% { opacity: 0; transform: scale(.82); } 70% { opacity: 1; transform: scale(1.04); } 100% { opacity: 1; transform: none; } }
+  @keyframes lines-in { from { opacity: 0; transform: translate(280px, -280px); } to { opacity: 1; transform: none; } }
+  @keyframes glint { from { background-position: -80% 0, 0 0; } to { background-position: 220% 0, 0 0; } }
+  @keyframes ping {
+    0% { box-shadow: 0 0 0 0 rgba(18,194,110,.65), 0 0 12px var(--green); }
+    70%, 100% { box-shadow: 0 0 0 11px rgba(18,194,110,0), 0 0 12px var(--green); }
+  }
+  @keyframes arc {
+    0%, 28% { stroke-dashoffset: 728.85; animation-timing-function: cubic-bezier(.45, 0, .25, 1); }
+    44%, 46.4% { stroke-dashoffset: 0; }
+    46.5%, 47.4% { stroke-dashoffset: 728.85; animation-timing-function: linear; }
+    100% { stroke-dashoffset: 182; }
+  }
+  @keyframes arcs {
+    0%, 27.9% { opacity: 0; }
+    28%, 46% { opacity: 1; }
+    46.4%, 47.3% { opacity: 0; }
+    47.4%, 100% { opacity: 1; }
+  }
+  @keyframes flash {
+    0%, 100% { box-shadow: inset 0 1px 0 rgba(255,255,255,.55), inset 0 -10px 24px rgba(10,20,120,.45), 0 0 60px rgba(46,75,255,.55), 0 18px 40px rgba(0,0,0,.45); }
+    25% { box-shadow: inset 0 1px 0 rgba(255,255,255,.9), inset 0 0 40px rgba(200,212,255,.7), 0 0 140px rgba(110,134,255,1), 0 18px 40px rgba(0,0,0,.45); }
+  }
+  @keyframes burst { 0% { opacity: 0; transform: scale(.96); } 12% { opacity: 1; } 100% { opacity: 0; transform: scale(1.7); } }
+  @keyframes pulse {
+    0% { stroke-dashoffset: var(--dash); opacity: 0; }
+    12%, 88% { opacity: 1; }
+    100% { stroke-dashoffset: calc(var(--dash) - 100); opacity: 0; }
+  }
+  @keyframes pulse-loop {
+    0% { stroke-dashoffset: var(--dash); opacity: 0; }
+    5%, 40% { opacity: 1; }
+    45%, 100% { stroke-dashoffset: calc(var(--dash) - 100); opacity: 0; }
+  }
 </style>
 </head>
 <body>
+<div class="curtain"></div>
 <div class="lines"></div>
 <div class="grain"></div>
 
@@ -160,16 +268,29 @@
       <linearGradient id="wire-in" x1="0" x2="1"><stop offset="0" stop-color="#fff" stop-opacity=".15"/><stop offset="1" stop-color="#8FA4FF" stop-opacity=".9"/></linearGradient>
     </defs>
     <!-- fees -> ring -->
-    <path d="M184 240 H238" stroke="url(#wire-in)" stroke-width="3" fill="none"/>
-    <circle cx="214" cy="240" r="4" fill="#fff" filter="url(#glow)"/>
-    <circle cx="214" cy="240" r="2.5" fill="#fff"/>
+    <path class="wire-in" d="M184 240 H238" stroke="url(#wire-in)" stroke-width="3" fill="none"/>
+    <g class="still">
+      <circle cx="214" cy="240" r="4" fill="#fff" filter="url(#glow)"/>
+      <circle cx="214" cy="240" r="2.5" fill="#fff"/>
+    </g>
     <!-- ring -> holders / burn -->
-    <path d="M490 240 C526 240 514 116 552 116" stroke="#12C26E" stroke-opacity=".35" stroke-width="8" fill="none" filter="url(#glow)"/>
-    <path d="M490 240 C526 240 514 116 552 116" stroke="#12C26E" stroke-width="3" fill="none"/>
-    <path d="M490 240 C526 240 514 352 552 352" stroke="#FF3EA5" stroke-opacity=".35" stroke-width="8" fill="none" filter="url(#glow)"/>
-    <path d="M490 240 C526 240 514 352 552 352" stroke="#FF3EA5" stroke-width="3" fill="none"/>
-    <circle cx="524" cy="170" r="5" fill="#5CF0A6" filter="url(#glow)"/><circle cx="524" cy="170" r="3" fill="#EFFFF6"/>
-    <circle cx="524" cy="310" r="5" fill="#FF8CC8" filter="url(#glow)"/><circle cx="524" cy="310" r="3" fill="#FFF1F8"/>
+    <g class="fork">
+      <path d="M490 240 C526 240 514 116 552 116" stroke="#12C26E" stroke-opacity=".35" stroke-width="8" fill="none" filter="url(#glow)"/>
+      <path d="M490 240 C526 240 514 116 552 116" stroke="#12C26E" stroke-width="3" fill="none"/>
+      <path d="M490 240 C526 240 514 352 552 352" stroke="#FF3EA5" stroke-opacity=".35" stroke-width="8" fill="none" filter="url(#glow)"/>
+      <path d="M490 240 C526 240 514 352 552 352" stroke="#FF3EA5" stroke-width="3" fill="none"/>
+    </g>
+    <g class="still">
+      <circle cx="524" cy="170" r="5" fill="#5CF0A6" filter="url(#glow)"/><circle cx="524" cy="170" r="3" fill="#EFFFF6"/>
+      <circle cx="524" cy="310" r="5" fill="#FF8CC8" filter="url(#glow)"/><circle cx="524" cy="310" r="3" fill="#FFF1F8"/>
+    </g>
+    <!-- the video's pulses of light: a trade's fee in, then SOL out each way -->
+    <path class="fx pulse white once" d="M184 240 H238" pathLength="100"/>
+    <path class="fx pulse white loop" d="M184 240 H238" pathLength="100"/>
+    <path class="fx pulse green once" d="M490 240 C526 240 514 116 552 116" pathLength="100"/>
+    <path class="fx pulse pink once" d="M490 240 C526 240 514 352 552 352" pathLength="100"/>
+    <path class="fx pulse green loop" d="M490 240 C526 240 514 116 552 116" pathLength="100"/>
+    <path class="fx pulse pink loop" d="M490 240 C526 240 514 352 552 352" pathLength="100"/>
   </svg>
 
   <div class="node fees">
@@ -186,9 +307,12 @@
       </defs>
       <circle cx="126" cy="126" r="116" fill="rgba(0,0,0,.35)" stroke="rgba(255,255,255,.09)" stroke-width="10"/>
       <g id="ticks"></g>
-      <circle cx="126" cy="126" r="116" fill="none" stroke="url(#arc)" stroke-width="10" stroke-linecap="round" stroke-dasharray="728.85" stroke-dashoffset="182" transform="rotate(-90 126 126)" filter="url(#arcglow)" opacity=".9"/>
-      <circle cx="126" cy="126" r="116" fill="none" stroke="url(#arc)" stroke-width="10" stroke-linecap="round" stroke-dasharray="728.85" stroke-dashoffset="182" transform="rotate(-90 126 126)"/>
+      <g class="arcs">
+        <circle class="arc" cx="126" cy="126" r="116" fill="none" stroke="url(#arc)" stroke-width="10" stroke-linecap="round" stroke-dasharray="728.85" stroke-dashoffset="182" transform="rotate(-90 126 126)" filter="url(#arcglow)" opacity=".9"/>
+        <circle class="arc" cx="126" cy="126" r="116" fill="none" stroke="url(#arc)" stroke-width="10" stroke-linecap="round" stroke-dasharray="728.85" stroke-dashoffset="182" transform="rotate(-90 126 126)"/>
+      </g>
     </svg>
+    <div class="burst"></div>
     <div class="ring-face">
       <span>Runs every</span>
       <strong>60</strong>
@@ -209,10 +333,10 @@
 </div>
 
 <div class="figures">
-  <div class="figure g"><strong>0.57<small>SOL</small></strong><span>paid to holders</span></div>
-  <div class="figure g"><strong>67</strong><span>wallets paid</span></div>
-  <div class="figure p"><strong>0.56<small>SOL</small></strong><span>spent on buybacks</span></div>
-  <div class="figure p"><strong>3.22M</strong><span>$QUANTP burned, 0.32% of supply</span></div>
+  <div class="figure g"><strong data-count="9350">0.57<small>SOL</small></strong><span>paid to holders</span></div>
+  <div class="figure g"><strong data-count="9500">67</strong><span>wallets paid</span></div>
+  <div class="figure p"><strong data-count="9650">0.56<small>SOL</small></strong><span>spent on buybacks</span></div>
+  <div class="figure p"><strong data-count="9800">3.22M</strong><span>$QUANTP burned, 0.32% of supply</span></div>
 </div>
 
 <div class="foot">
@@ -233,6 +357,26 @@
     l.setAttribute('stroke-linecap', 'round')
     l.setAttribute('transform', `rotate(${i * 6} 126 126)`)
     g.appendChild(l)
+  }
+
+  // The video: ?video turns the animations on; seek(ms) pauses every one at that moment and counts
+  // each figure up from 0 (from its data-count time, over 1.5 s) to the number it shows.
+  if (new URLSearchParams(location.search).has('video')) document.documentElement.classList.add('video')
+  const figures = [...document.querySelectorAll('[data-count]')].map((el) => {
+    const text = el.firstChild.nodeValue
+    const [, number, suffix] = text.match(/^([\d.]+)(.*)$/)
+    return { node: el.firstChild, at: Number(el.dataset.count), to: Number(number), places: (number.split('.')[1] || '').length, suffix }
+  })
+  window.seek = (ms) => {
+    for (const a of document.getAnimations()) {
+      a.pause()
+      a.currentTime = ms
+    }
+    for (const f of figures) {
+      const p = Math.min(1, Math.max(0, (ms - f.at) / 1500))
+      const eased = 1 - (1 - p) ** 3
+      f.node.nodeValue = (f.to * eased).toFixed(f.places) + f.suffix
+    }
   }
 </script>
 </body>
