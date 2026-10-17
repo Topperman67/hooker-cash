@@ -25,12 +25,26 @@
 }
 .eg-next-split li {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 8px;
 }
 .eg-next-split .num {
   color: var(--ink);
   font-weight: 600;
+}
+
+/* how fresh the figures are, and the last payout, burn and run, under the hero */
+.eg-fresh {
+  margin: 0;
+  padding: 0 4px;
+  font-size: var(--t-xs);
+}
+/* a stat's unit, smaller than its figure so the figure always fits a phone's column */
+.eg-unit {
+  font-family: var(--font-ui);
+  font-size: var(--t-xs);
+  font-weight: 650;
+  color: var(--steel);
 }
 
 .eg-grid {
@@ -52,12 +66,50 @@
 }
 
 /* how it works: five numbered steps, in the film's order */
+.eg-wallet,
 .eg-how,
+.eg-holders,
 .eg-tiers,
 .eg-rules,
 .eg-disclose {
   display: grid;
   gap: 12px;
+}
+
+/* a holder's own wallet: an address to look up, then its figures */
+.eg-wallet-form {
+  display: flex;
+  gap: 8px;
+}
+.eg-wallet-form .input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--t-sm);
+}
+.eg-wallet-form .btn {
+  flex: none;
+  height: auto;
+}
+.eg-wallet-note,
+.eg-holders-rate {
+  margin: 0;
+  font-size: var(--t-sm);
+}
+
+/* every wallet eligible for the next run; the skipped ones are greyed */
+.eg-holders .table th:first-child,
+.eg-holders .table td:first-child {
+  padding-left: 0;
+}
+.eg-holders .table th:last-child,
+.eg-holders .table td:last-child {
+  padding-right: 0;
+}
+.eg-holders .eg-skipped td {
+  color: var(--steel);
+}
+.eg-holders-more {
+  justify-self: start;
 }
 .eg-steps {
   display: grid;
@@ -129,7 +181,8 @@
     grid-template-columns: minmax(0, 1fr) 340px;
   }
 }
-/* One column: how it works and its tiers first, then every payout, then the rules and the fine print. */
+/* One column: the holder's wallet, how it works and its tiers first, then who the next run pays,
+   the fine print before any payout is listed, then every payout and the rules. */
 @media (max-width: 960px) {
   .eg-grid {
     grid-template-columns: minmax(0, 1fr);
@@ -138,25 +191,48 @@
   .eg-side {
     display: contents;
   }
-  .eg-how {
+  .eg-wallet {
     order: 1;
   }
-  .eg-tiers {
+  .eg-how {
     order: 2;
   }
-  .eg-ledger {
+  .eg-tiers {
     order: 3;
   }
-  .eg-rules {
+  .eg-holders {
     order: 4;
   }
   .eg-disclose {
     order: 5;
+  }
+  .eg-ledger {
+    order: 6;
+  }
+  .eg-rules {
+    order: 7;
   }
 }
 @media (max-width: 640px) {
   .eg-page {
     padding-top: 16px;
     gap: 12px;
+  }
+  /* the eligible wallets keep what each is paid and why in a phone's width: the share is left out,
+     and the headings and statuses may wrap */
+  .eg-holders .eg-share {
+    display: none;
+  }
+  .eg-holders .table {
+    font-size: var(--t-xs);
+  }
+  .eg-holders .table th,
+  .eg-holders .table td {
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+  .eg-holders .table th,
+  .eg-holders .table td:last-child {
+    white-space: normal;
   }
 }
