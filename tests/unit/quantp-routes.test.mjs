@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   createApplication,
+  engineReport,
   QUANTP_CACHE,
   QUANTP_COLD_CACHE,
   QUANTP_HEALTH_CACHE,
@@ -477,6 +478,93 @@ test('tickError: a step’s message only when written for users or the engine’
   )
 })
 
+const LEAK = 'https://rpc.invalid/?api-key=secret'
+
+test('engineReport: every message in an engine run through the same rule, at any depth', async () => {
+  // a run that could not check the chain: why, in the node's words
+  const unverified = { ran: false, reason: 'unverified', detail: `429 Too Many Requests: ${LEAK}` }
+  // a run whose batches failed: a preflight refusal (the node's message, the program's logs and
+  // the simulation's error) and a send the provider cut off
+  const refused = {
+    recipients: 18,
+    lamports: '3607526',
+    error:
+      'Transaction simulation failed: Error processing Instruction 3: custom program error: 0x1',
+    stage: 'preflight',
+    rpcMessage: `Transaction simulation failed (${LEAK})`,
+    logs: ['Program 11111111111111111111111111111111 failed: custom program error: 0x1'],
+    simErr: '{"InstructionError":[3,{"Custom":1}]}',
+    unitsConsumed: 450,
+    signature: null,
+  }
+  const lost = {
+    recipients: 12,
+    lamports: '1200000',
+    error: `Transaction ${SIG} is not confirmed yet.`,
+    stage: 'confirm',
+    signature: SIG,
+    unknown: true,
+  }
+  const failedRun = {
+    ran: true,
+    paying: 30,
+    claim: SIG,
+    payouts: [{ signature: SIG, lamports: '3607526', recipients: 18 }],
+    buyback: null,
+    skipped: [{ wallet: HOLDER, reason: '{"Custom":1}' }],
+    failed: [refused, lost],
+    error: refused.error,
+    stopped: 'payout not confirmed',
+  }
+  // the hour's claim refused at preflight, its failure spread over the run
+  const claimRun = {
+    ran: true,
+    payouts: [],
+    buyback: null,
+    stopped: 'claim failed',
+    error: `failed to send transaction: ${LEAK}`,
+    stage: 'preflight',
+    rpcMessage: `failed to send transaction: ${LEAK}`,
+    logs: [],
+    simErr: null,
+    signature: null,
+    code: 'https://rpc.invalid',
+  }
+  let reports
+  const logged = await quietly(async () => {
+    reports = [unverified, failedRun, claimRun].map(engineReport)
+  })
+  assert.deepEqual(reports, [
+    { ran: false, reason: 'unverified', detail: 'RPC or dependency error' },
+    {
+      ...failedRun,
+      failed: [
+        { ...refused, error: 'RPC or dependency error', rpcMessage: 'RPC or dependency error' },
+        lost,
+      ],
+      error: 'RPC or dependency error',
+      code: null,
+    },
+    {
+      ...claimRun,
+      error: 'RPC or dependency error',
+      rpcMessage: 'RPC or dependency error',
+      code: null,
+    },
+  ])
+  assert.ok(!JSON.stringify(reports).includes('api-key'))
+  // each run logged whole, once
+  assert.deepEqual(logged, [
+    ['[tick] engine', unverified],
+    ['[tick] engine', failedRun],
+    ['[tick] engine', claimRun],
+  ])
+  // a run with nothing to hide is reported as it is, and not logged
+  const fine = { ran: true, payouts: [{ signature: SIG }], buyback: null, note: 'x' }
+  assert.deepEqual(await quietly(async () => assert.deepEqual(engineReport(fine), fine)), [])
+  for (const run of [null, undefined]) assert.equal(engineReport(run), run)
+})
+
 /** Resolves once `ready()` holds (checked every 10 ms, for at most 2 s). */
 async function until(ready) {
   for (let i = 0; i < 200 && !ready(); i++) await new Promise((r) => setTimeout(r, 10))
@@ -567,7 +655,7 @@ test('the keeper tick: an engine run that failed part way, its alert sent once a
       engine: body.engine,
       keeper: [FOREIGN],
     })
-    assert.ok(logged.some(([label, e]) => label === '[tick] engine' && /api-key/.test(e.message)))
+    assert.ok(logged.some(([label, run]) => label === '[tick] engine' && /api-key/.test(run.error)))
 
     // one line for every reason, with neither the webhook's URL nor any other setting
     const [post] = hook.posts
@@ -625,6 +713,19 @@ test('the keeper tick: an engine run that failed part way, its alert sent once a
     engine.tick = async () => ({ ran: true, payouts: [], buyback: null, stopped: 'time limit' })
     await quietly(tick)
     assert.equal(hook.posts.length, 4)
+    // a run that could not check the chain says why in no provider's words
+    engine.tick = async () => ({
+      ran: false,
+      reason: 'unverified',
+      detail: `fetch failed: ${LEAK}`,
+    })
+    await quietly(async () =>
+      assert.deepEqual((await tick()).engine, {
+        ran: false,
+        reason: 'unverified',
+        detail: 'RPC or dependency error',
+      }),
+    )
   } finally {
     delete process.env.CRON_SECRET
     delete process.env.QUANTP_ALERT_WEBHOOK

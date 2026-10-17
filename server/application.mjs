@@ -213,28 +213,66 @@ const ENGINE_MESSAGES = [
 // What a URL, or a key in a query string, looks like: never kept, whatever else matches.
 const URL_LIKE = /:\/\/|[?&][\w-]+=/
 
+// A message from a keeper tick step as the tick may show it: one of the engine's own
+// (ENGINE_MESSAGES) with nothing like a URL in it, else 'RPC or dependency error'.
+function safeMessage(text) {
+  const message = String(text ?? '')
+  return ENGINE_MESSAGES.some((pattern) => pattern.test(message)) && !URL_LIKE.test(message)
+    ? message
+    : 'RPC or dependency error'
+}
+
+// An error's code as the tick may show it: a number or a short word, else null.
+const safeCode = (code) =>
+  Number.isInteger(code) || (typeof code === 'string' && /^[\w.:-]{1,64}$/.test(code)) ? code : null
+
 /**
  * A keeper tick step's error as the tick reports it: its response reaches public run logs (the
  * GitHub backup prints it), and RPC, storage and fetch errors can carry provider bodies, URLs or
  * keys. { error, code, signature }: the message only when written for users (`expose`) or one of
- * the engine's own (ENGINE_MESSAGES), else 'RPC or dependency error'; the error's code (or its
+ * the engine's own (safeMessage), else 'RPC or dependency error'; the error's code (or its
  * cause's), or null; the transaction it concerns, when it names one. The whole error is logged.
  */
 export function tickError(step, e) {
   console.error(`[tick] ${step}`, e)
   const message = String(e?.message ?? e ?? '')
-  const shown =
-    e?.expose === true ||
-    (ENGINE_MESSAGES.some((pattern) => pattern.test(message)) && !URL_LIKE.test(message))
-  const code = e?.code ?? e?.cause?.code
   return {
-    error: shown ? message : 'RPC or dependency error',
-    code:
-      Number.isInteger(code) || (typeof code === 'string' && /^[\w.:-]{1,64}$/.test(code))
-        ? code
-        : null,
+    error: e?.expose === true ? message : safeMessage(message),
+    code: safeCode(e?.code ?? e?.cause?.code),
     ...(e?.signature !== undefined ? { signature: e.signature } : {}),
   }
+}
+
+// The fields of a payout engine run that hold an RPC's or another dependency's words, at any depth:
+// its error, why it could not check the chain (`detail`), and a failed transaction's error and the
+// node's message (`rpcMessage`).
+const MESSAGE_FIELDS = new Set(['error', 'detail', 'rpcMessage', 'message'])
+
+/**
+ * A payout engine run (what its tick resolved to) as the keeper tick reports it: every message in
+ * it (MESSAGE_FIELDS, the run's own and each failed transaction's) through safeMessage, and the
+ * run's error code as tickError gives it. The rest is kept: what it sent, the signatures, and a
+ * refused transaction's logs and simulation error, which are on-chain facts. A run with an error,
+ * or a message replaced, is logged whole.
+ */
+export function engineReport(run) {
+  if (!run || typeof run !== 'object') return run
+  let replaced = false
+  const clean = (value) => {
+    if (Array.isArray(value)) return value.map(clean)
+    if (!value || typeof value !== 'object') return value
+    return Object.fromEntries(
+      Object.entries(value).map(([field, v]) => {
+        if (!MESSAGE_FIELDS.has(field) || typeof v !== 'string') return [field, clean(v)]
+        const shown = safeMessage(v)
+        if (shown !== v) replaced = true
+        return [field, shown]
+      }),
+    )
+  }
+  const report = clean(run)
+  if (run.error || replaced) console.error('[tick] engine', run)
+  return run.error ? { ...report, code: safeCode(run.code) } : report
 }
 
 // Vercel Cron runs the payout engine. Other callers of the tick (the GitHub backup, every 5 min
@@ -1359,7 +1397,7 @@ export async function createApplication(options = {}) {
 
   // The keeper tick's payout engine step: its run, when its hour is up, within `deadline`. In the
   // first quarter of each UTC hour only Vercel Cron runs it (BACKUP_WINDOW_MINUTES). A run that
-  // fails part way reports its error (through tickError) beside what it sent.
+  // fails part way reports its errors (through engineReport) beside what it sent.
   async function engineStep(req, deadline) {
     if (!fromVercelCron(req) && new Date(clock()).getUTCMinutes() < BACKUP_WINDOW_MINUTES)
       return { ran: false, reason: 'backup-window' }
@@ -1369,9 +1407,7 @@ export async function createApplication(options = {}) {
     } catch (e) {
       return { ran: false, ...tickError('engine', e) }
     }
-    if (!run?.error) return run
-    const { error: message, code, signature } = run
-    return { ...run, ...tickError('engine', { message, code, signature }) }
+    return engineReport(run)
   }
 
   // The keeper tick's alerts to QUANTP_ALERT_WEBHOOK (a Discord, Slack or Telegram webhook URL):
