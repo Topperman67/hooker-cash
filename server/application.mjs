@@ -276,8 +276,10 @@ export function engineReport(run) {
 }
 
 // Vercel Cron runs the payout engine. Other callers of the tick (the GitHub backup, every 5 min
-// from minute 2) leave it the first quarter of each hour, so they run it only in hours Vercel
-// missed, never racing its run.
+// from minute 2) leave it alone in the first quarter of each UTC hour, so a Vercel run early in
+// the hour goes first. On Hobby, Vercel starts each hourly cron anywhere within its hour, so the
+// backup may still reach the engine first, or at the same time: the engine's own once-an-hour
+// guard, not this window, keeps the second run from paying again.
 const BACKUP_WINDOW_MINUTES = 15
 const fromVercelCron = (req) =>
   String(req.headers['user-agent'] || '')
