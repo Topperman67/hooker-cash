@@ -9,6 +9,7 @@ import { Spinner } from './components/UI.jsx'
 import { lazyPage } from './components/recovery.js'
 import { useGlobalGlint } from './lib/glint.js'
 import { QUANTP } from '../shared/network.mjs'
+import { ENGINE_PATH } from './components/quantpPayouts.js'
 
 // Launch and coin pages pull in the Meteora SDKs and charting; load them on demand. lazyPage lets
 // the ErrorBoundary retry a chunk that failed to load instead of caching the failure.
@@ -36,9 +37,9 @@ export default function App() {
               <Route path="/" element={<HomePage />} />
               <Route path="/launch" element={<LaunchPage />} />
               <Route path="/market" element={<MarketPage />} />
-              <Route path="/engine" element={<EnginePage />} />
               {/* $QUANTP has its own page, which works without the store: its coin page goes there. */}
               <Route path={QUANTP.path} element={<QuantpPage />} />
+              <Route path={ENGINE_PATH} element={<EnginePage />} />
               <Route
                 path={`/coin/${QUANTP.mint}`}
                 element={<Navigate to={QUANTP.path} replace />}

@@ -13,27 +13,18 @@ import { useWallet } from '../context/WalletContext.jsx'
 import { usePlatform } from '../context/PlatformContext.jsx'
 import { Address } from './UI.jsx'
 import { changeClass, QuantpPrice, useQuantpFigures } from './QuantpShowcase.jsx'
+import { ENGINE_PATH } from './quantpPayouts.js'
 import { pct, short, sol, toSol, usd } from '../lib/format.js'
 import { DOCS_URL } from '../lib/links.js'
 import { explorer, QUANTP } from '../../shared/network.mjs'
 
-// The Engine link carries a lit dot: the $QUANTP payout engine runs every hour.
 const LINKS = [
   ['/launch', 'Launch'],
   ['/market', 'Market'],
-  ['/engine', 'Engine', true],
   ['/hooks', 'Quantum Hooks'],
+  [ENGINE_PATH, 'Payout Engine'],
   ['/portfolio', 'Portfolio'],
 ]
-
-function NavLinks() {
-  return LINKS.map(([to, label, live]) => (
-    <NavLink key={to} to={to}>
-      {live && <span className="nav-live" aria-hidden="true" />}
-      {label}
-    </NavLink>
-  ))
-}
 
 // The docs live on GitBook. In the header the link shimmers blue every 3 s (shell.css).
 function DocsLink({ onClick }) {
@@ -63,20 +54,6 @@ function WalletButton() {
         {balance == null ? short(address) : sol(toSol(balance), { digits: 3 })}
       </span>
     </button>
-  )
-}
-
-// $QUANTP, Quant Pad's own token, in the bar: its price. Desktop only (showcase.css); the tape
-// under the header carries it, with its 24h change, at every width.
-function QuantpPill() {
-  const { q, f } = useQuantpFigures()
-  return (
-    <Link to={q.path} className="qp-pill" title={`${q.name}: Quant Pad’s own token`}>
-      <strong>${q.symbol}</strong>
-      <span className="num">
-        <QuantpPrice f={f} />
-      </span>
-    </Link>
   )
 }
 
@@ -124,7 +101,8 @@ function QuantpFooter() {
         </span>
       </div>
       <p className="footer-token-note">
-        Quant Pad’s own token. The team pays out its fee split; nothing on-chain enforces it.
+        Quant Pad’s own token. Its fee split is paid out every hour by Quant Pad’s payout engine
+        from a wallet the team funds; nothing on-chain enforces it.
       </p>
     </div>
   )
@@ -173,12 +151,15 @@ export default function Shell({ children }) {
                 <MeteoraMark size={16} /> <span>Built on Meteora</span>
               </a>
               <nav className="nav" aria-label="Main">
-                <NavLinks />
+                {LINKS.map(([to, label]) => (
+                  <NavLink key={to} to={to}>
+                    {label}
+                  </NavLink>
+                ))}
                 <DocsLink />
               </nav>
               <SearchBox />
               <div className="topbar-actions">
-                <QuantpPill />
                 <ThemeToggle />
                 <WalletButton />
                 <button
@@ -196,7 +177,11 @@ export default function Shell({ children }) {
             <nav id="mobile-nav" className="mobile-nav" hidden={!menu} aria-label="Main">
               <SearchBox onDone={() => setMenu(false)} />
               <QuantpMenuRow />
-              <NavLinks />
+              {LINKS.map(([to, label]) => (
+                <NavLink key={to} to={to}>
+                  {label}
+                </NavLink>
+              ))}
               <DocsLink onClick={() => setMenu(false)} />
             </nav>
           </Glass>
@@ -218,7 +203,7 @@ export default function Shell({ children }) {
           </div>
           <div className="footer-links">
             <Link to={QUANTP.path}>${QUANTP.symbol}</Link>
-            <Link to="/engine">Fees engine</Link>
+            <Link to={ENGINE_PATH}>Payout Engine</Link>
             <Link to="/hooks">Quantum Hooks</Link>
             <a href={DOCS_URL} target="_blank" rel="noreferrer">
               Docs

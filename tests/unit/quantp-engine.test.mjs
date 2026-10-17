@@ -414,7 +414,59 @@ test('a live run: once an hour, every eligible holder paid by balance in signed 
   assert.equal(connection.sent.length, 4)
 })
 
-test('a run stops at the first transaction that fails, and is not repeated for an hour', async () => {
+// 1_800_000_000_000 is on the hour (UTC); this is half an hour after it.
+const HALF_PAST = 1_800_001_800_000
+
+test('it runs once in each clock hour, wherever in the hour the tick comes', async () => {
+  // Vercel Cron on Hobby starts each hour's cron anywhere within that hour
+  const clock = { t: 1_800_000_000_000 + 59 * 60_000 } // 0:59
+  const store = memoryStore()
+  const connection = stubChain({ holders: MANY })
+  const engine = createQuantpEngine({
+    connection,
+    store,
+    feed,
+    secret: SECRET,
+    policy: PAYOUTS_ONLY,
+    now: () => clock.t,
+    log: { error() {} },
+  })
+  assert.equal((await engine.tick()).ran, true)
+  clock.t += 2 * 60_000 // 1:01, the next hour: due
+  assert.equal((await engine.tick()).ran, true)
+  clock.t += 58 * 60_000 // 1:59, the same hour: not due until 2:00
+  const early = await engine.tick()
+  assert.deepEqual([early.ran, early.reason], [false, 'not-due'])
+  assert.equal(early.nextAt, 1_800_000_000_000 + 2 * 3_600_000)
+  clock.t += 100 * 60_000 // 3:39, after an hour with no tick: one run, not two
+  assert.equal((await engine.tick()).ran, true)
+  assert.equal((await engine.tick()).reason, 'not-due')
+  assert.equal(connection.sent.length, 3 * 2)
+})
+
+test('with the store down, a second tick while one runs in the same instance waits', async () => {
+  const clock = { t: HALF_PAST }
+  const store = memoryStore()
+  store.down = true // no lock, and no record of the run until its transactions land
+  const connection = stubChain({ holders: MANY })
+  const engine = createQuantpEngine({
+    connection,
+    store,
+    feed,
+    secret: SECRET,
+    policy: PAYOUTS_ONLY,
+    now: () => clock.t,
+    log: { error() {} },
+  })
+  const [first, second] = await Promise.all([engine.tick(), engine.tick()])
+  assert.equal(first.ran, true)
+  assert.deepEqual([second.ran, second.reason], [false, 'locked'])
+  assert.equal(connection.sent.length, 2, 'one run went out')
+  // it is free again afterwards (and this instance remembers its run)
+  assert.equal((await engine.tick()).reason, 'not-due')
+})
+
+test('a run stops at the first transaction that fails, and is not repeated that hour', async () => {
   const clock = { t: 1_800_000_000_000 }
   const store = memoryStore()
   const connection = stubChain({ holders: MANY, failAt: 2 })
@@ -441,7 +493,7 @@ test('a run stops at the first transaction that fails, and is not repeated for a
 })
 
 test('with the store down, the wallet’s newest transaction says when it last ran', async () => {
-  const clock = { t: 1_800_000_000_000 }
+  const clock = { t: HALF_PAST }
   const store = memoryStore()
   store.down = true
   const recent = stubChain({ holders: MANY, newest: { blockTime: clock.t / 1000 - 600 } })
@@ -538,7 +590,7 @@ test('the keeper tick runs the engine first, and GET /api/quantp/engine shows it
 })
 
 test('with the store down, dust sent to the wallet does not hold off a run: its last payout counts', async () => {
-  const clock = { t: 1_800_000_000_000 }
+  const clock = { t: HALF_PAST }
   const store = memoryStore()
   store.down = true
   // what the ledger read: the engine wallet's last payout `paidSecsAgo` ago (or never)

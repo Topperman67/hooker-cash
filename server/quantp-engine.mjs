@@ -221,7 +221,7 @@ export function engineBlocker({ keypair, pinned, paused, badKey = false }) {
  * feed (server/quantp.mjs createQuantpFeed) for the market cap and supply, `store` the app's store
  * for the hourly record and run lock, and `ledger` the payouts and burns reader (createQuantpLedger):
  * with the store down, the wallet's last payout or burn there says when it last ran.
- *   tick({ deadline }) runs when an hour has passed since the last run, and says what it did.
+ *   tick({ deadline }) runs once in each clock hour (UTC), and says what it did.
  *   status() is what the site shows: the wallet, whether it is live, the tier and what the next
  *   run would release, the eligible holders, and when it last ran.
  */
@@ -439,18 +439,34 @@ export function createQuantpEngine({
     return null
   }
 
+  // One run in each period (everySecs: each UTC clock hour), wherever in it the tick comes. A
+  // scheduler that starts anywhere within the hour, as Vercel Cron does on Hobby, still runs it
+  // every hour, and a day never has more runs than the 24 a release is sized for.
+  const period = (t) => Math.floor(t / (policy.everySecs * 1000))
+  let running = false // this instance's run: with the store down, the store's lock is no guard
+
   async function tick({ deadline = now() + 25_000 } = {}) {
     if (blocker) return { ran: false, reason: blocker }
+    if (running) return { ran: false, reason: 'locked' }
+    running = true
+    try {
+      return await run(deadline)
+    } finally {
+      running = false
+    }
+  }
+
+  async function run(deadline) {
     const startedAt = now()
     const last = await lastRunAt()
-    if (last && startedAt - last < (policy.everySecs - 300) * 1000)
-      return { ran: false, reason: 'not-due', nextAt: last + policy.everySecs * 1000 }
+    if (last && period(startedAt) <= period(last))
+      return { ran: false, reason: 'not-due', nextAt: (period(last) + 1) * policy.everySecs * 1000 }
     const owner = `${startedAt}:${Math.random()}`
     const locked = await store.set(LOCK, owner, { nx: true, ttl: 900_000 }).catch(() => null)
     if (locked === false) return { ran: false, reason: 'locked' }
     try {
       const state = await read()
-      // Recorded before anything is sent: a run that dies part way is not repeated for an hour.
+      // Recorded before anything is sent: a run that dies part way is not repeated that hour.
       lastLocal = startedAt
       await store.set(LAST_RUN, startedAt).catch(() => {})
       const summary = {

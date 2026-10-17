@@ -1,13 +1,12 @@
-// The fees engine page's figures (src/components/engineData.js): the running totals its charts
-// draw from /api/quantp/ledger, the mixed payouts-and-burns feed, the engine's state, the
-// countdown, the release tier and the axis ticks.
+// The Payout Engine page's figures (src/components/engineData.js): the running totals its charts
+// draw from /api/quantp/ledger, the mixed payouts-and-burns feed, the countdown, the release tier
+// and the axis ticks.
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
   activityOf,
   burnSeries,
   clock,
-  engineState,
   nextRun,
   niceTicks,
   paidSeries,
@@ -70,28 +69,24 @@ test('activity mixes payouts and burns, newest first', () => {
   assert.deepEqual(activityOf(null), [])
 })
 
-test('the engine’s state: live, paused, set up but not sending, not set up, unreadable', () => {
-  assert.equal(engineState(null), 'loading')
-  assert.equal(engineState(null, 'down'), 'down')
-  assert.equal(engineState({ configured: false }), 'off')
-  assert.equal(engineState({ configured: true, live: true }), 'live')
-  assert.equal(engineState({ configured: true, live: false, reason: 'paused' }), 'paused')
-  assert.equal(engineState({ configured: true, live: false, reason: 'no-key' }), 'idle')
-})
-
-test('the countdown: an hour from the last run, due once it has passed, none while not running', () => {
-  const engine = { live: true, everySecs: 3600, lastRunAt: 10_000 }
-  const run = nextRun(engine, 10_000 + 1200)
-  assert.deepEqual([run.at, run.left], [13_600, 2400])
-  assert.ok(Math.abs(run.progress - 1 / 3) < 1e-12)
-  assert.deepEqual(nextRun(engine, 20_000), { at: 13_600, left: 0, progress: 1 })
+test('the countdown: the next run comes in the clock hour after the last, the first one now', () => {
+  const HOUR = 1_792_224_000 // on the hour (UTC)
+  // it ran at 0:11, so the next comes in the next hour, from 1:00
+  const engine = { live: true, everySecs: 3600, lastRunAt: HOUR + 660 }
+  const run = nextRun(engine, HOUR + 1800)
+  assert.deepEqual([run.at, run.left], [HOUR + 3600, 1800])
+  assert.ok(Math.abs(run.progress - 0.5) < 1e-12)
+  // past the top of the hour it is due, until it runs (anywhere in that hour)
+  assert.deepEqual(nextRun(engine, HOUR + 3700), { at: HOUR + 3600, left: 0, progress: 1 })
+  // a run at 0:59 still makes 1:00 the next
+  assert.equal(nextRun({ ...engine, lastRunAt: HOUR + 3540 }, HOUR + 3550).at, HOUR + 3600)
   assert.deepEqual(nextRun({ live: true, everySecs: 3600, lastRunAt: null }, 5), {
     at: 5,
     left: 0,
     progress: 1,
   })
-  assert.equal(nextRun({ ...engine, live: false }, 11_000), null)
-  assert.equal(nextRun(null, 11_000), null)
+  assert.equal(nextRun({ ...engine, live: false }, HOUR), null)
+  assert.equal(nextRun(null, HOUR), null)
   assert.equal(clock(2400), '40:00')
   assert.equal(clock(61.9), '01:01')
   assert.equal(clock(3725), '1:02:05')

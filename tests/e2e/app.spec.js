@@ -609,10 +609,10 @@ test('the header keeps its links on one line until it collapses into the menu', 
   await enter(page)
   await page.goto('/market')
   const nav = page.getByRole('navigation', { name: 'Main' }).first()
-  // just above the menu breakpoint, just below and above where the $QUANTP pill joins, and wide
-  for (const width of [1261, 1319, 1320, 1440]) {
+  // just above the menu breakpoint, either side of where the lockup steps back up, and wide
+  for (const width of [1280, 1365, 1366, 1440]) {
     await page.setViewportSize({ width, height: 800 })
-    await expect(nav.getByRole('link', { name: 'Engine' })).toBeVisible()
+    await expect(nav.getByRole('link', { name: 'Payout Engine' })).toBeVisible()
     for (const height of await nav
       .getByRole('link')
       .evaluateAll((links) => links.map((a) => a.getBoundingClientRect().height)))
@@ -625,7 +625,7 @@ test('the header keeps its links on one line until it collapses into the menu', 
     )
     expect(wallet, `at ${width}px`).toBeLessThanOrEqual(bar + 0.5)
   }
-  await page.setViewportSize({ width: 1260, height: 800 })
+  await page.setViewportSize({ width: 1279, height: 800 })
   await expect(page.getByRole('button', { name: 'Open menu' })).toBeVisible()
 })
 

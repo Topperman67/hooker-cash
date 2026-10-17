@@ -1,6 +1,7 @@
 // The engine page's figures from /api/quantp/ledger and /api/quantp/engine (server/quantp.mjs
 // quantpLedger, server/quantp-engine.mjs status): the running totals its charts draw, the mixed
-// payouts-and-burns feed, the engine's state and the clean axis ticks. Pure, so tests can run them.
+// payouts-and-burns feed, the countdown to the next run and the clean axis ticks. Pure, so tests
+// can run them. The engine's state comes from quantpPayouts.js engineState.
 import { QUANTP } from '../../shared/network.mjs'
 
 const big = (v) => BigInt(v ?? 0)
@@ -66,35 +67,17 @@ export function activityOf(ledger) {
 }
 
 /**
- * The engine's state for its status chip: 'live' (running hourly), 'paused', 'idle' (set up but
- * not sending), 'off' (no wallet pinned), 'down' (its status could not be read) or 'loading'.
- */
-export function engineState(engine, error) {
-  if (!engine) return error ? 'down' : 'loading'
-  if (!engine.configured) return 'off'
-  if (engine.live) return 'live'
-  return engine.reason === 'paused' ? 'paused' : 'idle'
-}
-
-export const STATE_LABEL = {
-  live: 'Running hourly',
-  paused: 'Paused',
-  idle: 'Not running yet',
-  off: 'Not set up',
-  down: 'Status unavailable',
-  loading: 'Reading the engine…',
-}
-
-/**
- * When the next run is due (unix seconds) and how far through its hour the engine is (0..1), or
- * null when it is not running. The keeper's cron fires every 5 minutes and the engine runs once
- * an hour has passed since its last run, so this is approximate.
+ * When the next run comes (unix seconds), the time left until then and how far through the wait
+ * the engine is (0..1), or null when it is not live. It runs once in each UTC clock hour
+ * (server/quantp-engine.mjs), so after a run the next comes in the following hour; Vercel Cron on
+ * Hobby starts each hour's run anywhere within it, so `at` is the earliest. With no run yet, the
+ * first is due now.
  */
 export function nextRun(engine, nowSecs) {
   if (!engine?.live) return null
   const every = engine.everySecs || QUANTP.engine.everySecs
   if (!engine.lastRunAt) return { at: nowSecs, left: 0, progress: 1 }
-  const at = engine.lastRunAt + every
+  const at = (Math.floor(engine.lastRunAt / every) + 1) * every
   const left = Math.max(0, at - nowSecs)
   return { at, left, progress: Math.min(1, Math.max(0, 1 - left / every)) }
 }

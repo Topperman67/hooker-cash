@@ -390,7 +390,8 @@ test('segmented labels and nav links never wrap mid-word', () => {
 })
 
 test('the header collapses into the menu before the search box gets squeezed', () => {
-  const collapse = '@media (max-width: 1260px)'
+  // six links (with the Payout Engine) and the search's whole placeholder need about 1280px
+  const collapse = '@media (max-width: 1279px)'
   assert.equal(decl(shell, '.nav', 'display', collapse), 'none')
   assert.equal(decl(shell, '.topbar-search', 'display', collapse), 'none')
   assert.equal(decl(shell, '.topbar .menu-toggle', 'display', collapse), 'inline-flex')

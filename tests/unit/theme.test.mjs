@@ -288,14 +288,10 @@ test('$QUANTP surfaces use instrument text colours that keep 4.5:1 on smoke, day
     '#fff',
     LINK_TINT,
   ]
-  // the header pill sits on the header's pearl glass, so it uses the page's text tokens
-  const onBar = ['var(--ink)', 'var(--ink-2)']
   for (const rule of showcase)
     if ('color' in rule.decls) {
-      const bar = rule.selectors.every((s) => /\.qp-pill/.test(s))
-      const allowed = bar ? onBar : onSmoke
       assert.ok(
-        allowed.includes(rule.decls.color),
+        onSmoke.includes(rule.decls.color),
         `${rule.selectors.join(', ')}: ${rule.decls.color}`,
       )
     }

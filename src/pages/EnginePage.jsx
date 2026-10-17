@@ -1,21 +1,20 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { ArrowUpRight, ChevronDown, Coins, Flame, Search } from 'lucide-react'
 import EngineChart, { useSize } from '../components/EngineChart.jsx'
 import {
-  STATE_LABEL,
   activityOf,
   burnSeries,
   clock,
-  engineState,
   nextRun,
   paidSeries,
   tierIndex,
 } from '../components/engineData.js'
-import { ENGINE_NOTE } from '../components/quantpPayouts.js'
+import { ENGINE_STATE_LABEL, engineState } from '../components/quantpPayouts.js'
 import { Address } from '../components/UI.jsx'
 import { useQuantp } from '../context/QuantpContext.jsx'
 import { useResource } from '../lib/api.js'
-import { ago, bps, compact, formatUnits, short, sol, toSol, usd } from '../lib/format.js'
+import { ago, bps, compact, countdown, formatUnits, short, sol, toSol, usd } from '../lib/format.js'
 import { QUANTP, explorer } from '../../shared/network.mjs'
 
 const FEED_ROWS = 8
@@ -38,6 +37,24 @@ const when = (seconds) =>
     : '—'
 const count = (n, one, many) => `${n.toLocaleString('en-US')} ${n === 1 ? one : many}`
 const usdBound = (v) => usd(v).replace('.00', '')
+
+// The chip's words when the engine is in none of its four states (quantpPayouts.js engineState).
+const OTHER_STATE = {
+  off: 'Not set up',
+  down: 'Status unavailable',
+  loading: 'Reading the engine…',
+}
+
+/** What the hero says about the engine's runs, by its state. */
+function runLine(engine, state, run, error) {
+  if (!engine)
+    return error ? 'The engine’s state is unavailable right now. Retrying shortly.' : null
+  if (state === 'paused') return 'Paused: no payouts or buybacks run until it is switched back on.'
+  if (state === 'pending') return 'Switched on, and waiting for its first automatic run.'
+  if (state === 'late')
+    return `Last run ${ago(engine.lastRunAt)} ago: it is behind its hourly schedule.`
+  return `Last run ${ago(engine.lastRunAt)} ago · next ${run?.left > 60 ? `in about ${countdown(run.left)}` : 'this hour'}`
+}
 
 /** Now in unix seconds, ticking every `ms`. */
 function useNow(ms = 1000) {
@@ -79,12 +96,12 @@ function More({ total, shown, step, onMore, onLess }) {
 }
 
 /** The countdown ring: how far through its hour the engine is, and the time left. */
-function RunClock({ state, run, release }) {
+function RunClock({ run, release, label }) {
   const r = 54
   const length = 2 * Math.PI * r
   const progress = run?.progress ?? 0
   return (
-    <div className={`eng-clock is-${state}`}>
+    <div className={`eng-clock ${run ? 'is-on' : 'is-off'}`}>
       <svg viewBox="0 0 128 128" aria-hidden="true">
         <defs>
           <linearGradient id="eng-clock-arc" x1="0" y1="0" x2="1" y2="1">
@@ -118,14 +135,14 @@ function RunClock({ state, run, release }) {
         {run ? (
           <>
             <span className="eng-clock-label">{run.left > 0 ? 'Next run in' : 'Next run'}</span>
-            <strong className="num">{run.left > 0 ? clock(run.left) : 'Due now'}</strong>
+            <strong className="num">{run.left > 0 ? clock(run.left) : 'This hour'}</strong>
             <span className="eng-clock-sub num">≈ {solText(release)}</span>
           </>
         ) : (
           <>
             <span className="eng-clock-label">Next run</span>
             <strong className="eng-clock-off">—</strong>
-            <span className="eng-clock-sub">{STATE_LABEL[state]}</span>
+            <span className="eng-clock-sub">{label}</span>
           </>
         )}
       </div>
@@ -233,7 +250,7 @@ function ChartPanel({ tone, icon: Icon, title, total, sub, empty, children }) {
 }
 
 /** The plan for the next run, the release tiers and the split. */
-function Plan({ engine, state, marketCapUsd, holdersPct, minHold, symbol }) {
+function Plan({ engine, stateKey, stateLabel, marketCapUsd, holdersPct, minHold, symbol }) {
   const tiers = engine?.tiers || QUANTP.engine.tiers
   const current = tierIndex(engine?.marketCapUsd ?? marketCapUsd, tiers)
   const next = engine?.next
@@ -243,9 +260,9 @@ function Plan({ engine, state, marketCapUsd, holdersPct, minHold, symbol }) {
         <h2 id="eng-plan-title" className="h3">
           Next run
         </h2>
-        <span className={`chip eng-state is-${state}`}>
+        <span className={`chip eng-state is-${stateKey}`}>
           <i className="eng-pulse" aria-hidden="true" />
-          {STATE_LABEL[state]}
+          {stateLabel}
         </span>
       </div>
       <dl className="kv eng-plan-kv">
@@ -310,11 +327,77 @@ function Plan({ engine, state, marketCapUsd, holdersPct, minHold, symbol }) {
         </span>
       </div>
       <p className="faint eng-fine">
-        Every wallet holding at least {QUANTP.engine.minHoldBps / 100}% of the supply gets its share
-        by balance. A share under {sol(toSol(QUANTP.engine.minTransferLamports), { digits: 5 })}{' '}
-        waits for a later run, and so does a buyback under{' '}
-        {sol(toSol(QUANTP.engine.minBuybackLamports), { digits: 3 })}.
+        Every wallet holding at least {QUANTP.engine.minHoldBps / 100}% of the supply when a run
+        starts gets its share by balance; liquidity pools and the team’s wallets are never paid. A
+        share under {sol(toSol(QUANTP.engine.minTransferLamports), { digits: 5 })} waits for a later
+        run, and so does a buyback under{' '}
+        {sol(toSol(QUANTP.engine.minBuybackLamports), { digits: 3 })}. Each run releases at most{' '}
+        {sol(toSol(QUANTP.engine.maxRunLamports), { digits: 0 })} and keeps{' '}
+        {sol(toSol(QUANTP.engine.reserveLamports), { digits: 2 })} in the wallet for fees.
       </p>
+    </section>
+  )
+}
+
+/** How the engine works, in five steps. */
+function HowItWorks({ symbol, feeBps, dailyBps, holdersPct, minHold }) {
+  const ticker = `$${symbol}`
+  const steps = [
+    [
+      'Fees fill the payout wallet',
+      `Every ${ticker} buy and sell pays a ${bps(feeBps)} fee in its Meteora DAMM v2 pool. The team sends the creator’s share of it to the payout wallet.`,
+    ],
+    [
+      'A slice is released every hour',
+      `The engine releases ${bps(dailyBps)} of the wallet a day at today’s market cap, a 24th of it each hour: small now, more as the market cap grows.`,
+    ],
+    [
+      `${holdersPct}% goes to holders`,
+      `In SOL, to every wallet holding at least ${QUANTP.engine.minHoldBps / 100}% of the supply (${compact(minHold)} ${ticker}), by balance: hold more, get more.`,
+    ],
+    [
+      `${100 - holdersPct}% is bought back and burned`,
+      `It buys ${ticker} in its DAMM v2 pool and burns it in the same transaction, so the supply only goes down.`,
+    ],
+    [
+      'Every transaction is listed',
+      'Each payout and burn is read from the chain and listed on this page, with its link to Solscan.',
+    ],
+  ]
+  return (
+    <section className="panel eng-how" aria-labelledby="eng-how-title">
+      <h2 id="eng-how-title" className="h3">
+        How it works
+      </h2>
+      <ol className="eng-steps">
+        {steps.map(([title, text]) => (
+          <li key={title}>
+            <strong>{title}</strong>
+            <p className="muted">{text}</p>
+          </li>
+        ))}
+      </ol>
+    </section>
+  )
+}
+
+function Disclose({ symbol }) {
+  return (
+    <section className="panel eng-disclose" aria-labelledby="eng-disclose-title">
+      <h2 id="eng-disclose-title" className="h3">
+        Before you buy
+      </h2>
+      <ul>
+        <li>
+          The engine is the team’s policy, not on-chain code: it runs on Quant Pad’s server and pays
+          only what the team puts in the payout wallet. Nothing on-chain enforces it.
+        </li>
+        <li>Payouts are small while the market cap is small.</li>
+        <li>
+          ${symbol} is Quant Pad’s own token. Memecoins are extremely risky and can lose all their
+          value. Nothing here is financial advice.
+        </li>
+      </ul>
     </section>
   )
 }
@@ -687,7 +770,7 @@ function Rounds({ payouts }) {
   )
 }
 
-// The fees engine: $QUANTP's payout engine (server/quantp-engine.mjs) as a dashboard. Everything
+// The Payout Engine: $QUANTP's payout engine (server/quantp-engine.mjs) as a dashboard. Everything
 // it has paid and burned comes from /api/quantp/ledger, read from the team's wallets on-chain; its
 // state and next run from /api/quantp/engine; the market cap, fee and supply from /api/quantp.
 // None of it touches the store.
@@ -699,9 +782,12 @@ export default function EnginePage() {
   const now = useNow()
   const d = ledger.data
   const t = d?.totals
-  const engine = status.data
-  const state = engineState(engine, status.error)
+  const engine = status.data?.configured ? status.data : null
+  const state = engineState(engine, now)
+  const stateKey = state ?? (status.data ? 'off' : status.error ? 'down' : 'loading')
+  const stateLabel = state ? ENGINE_STATE_LABEL[state] : OTHER_STATE[stateKey]
   const run = nextRun(engine, now)
+  const line = runLine(engine, state, run, status.error)
   const decimals = q.decimals
   const holdersPct = (engine?.holdersShareBps ?? q.holdersShareBps) / 100
   const paid = useMemo(() => paidSeries(d?.payouts), [d?.payouts])
@@ -728,7 +814,8 @@ export default function EnginePage() {
         <div className="eng-hero-top">
           <div className="eng-hero-id">
             <p className="eng-eyebrow">
-              <span className={`eng-pulse is-${state}`} aria-hidden="true" />${q.symbol} fees engine
+              <span className={`eng-pulse is-${stateKey}`} aria-hidden="true" />${q.symbol} payout
+              engine
             </p>
             <h1 id="eng-title" className="eng-title">
               <span className="silver-text">Fees</span> engine
@@ -739,18 +826,26 @@ export default function EnginePage() {
               Every payout and burn below is read from the chain.
             </p>
             <div className="eng-hero-meta">
-              <span className={`chip eng-state is-${state}`}>
+              <span className={`chip eng-state is-${stateKey}`}>
                 <i className="eng-pulse" aria-hidden="true" />
-                {STATE_LABEL[state]}
+                {stateLabel}
               </span>
               <span className="eng-wallet-pill">
                 <span className="faint">Engine wallet</span>
                 <Address value={wallet} href={explorer.account(wallet)} />
               </span>
+              <Link to={QUANTP.path} className="btn btn-sm">
+                ${q.symbol} page
+              </Link>
             </div>
+            {line && (
+              <p className="eng-runline" aria-live="polite">
+                {line}
+              </p>
+            )}
           </div>
           <div className="eng-hero-side">
-            <RunClock state={state} run={run} release={engine?.next?.release} />
+            <RunClock run={run} release={engine?.next?.release} label={stateLabel} />
             <div className="eng-hero-figure">
               <span className="eng-label">Paid to holders</span>
               <strong className="eng-big num">{t ? solText(t.paidLamports, 3) : '—'}</strong>
@@ -769,7 +864,7 @@ export default function EnginePage() {
           holdersPct={holdersPct}
           eligible={engine?.configured ? engine.eligible : null}
           next={engine?.next}
-          live={state === 'live'}
+          live={!!engine?.live}
         />
       </section>
 
@@ -892,15 +987,24 @@ export default function EnginePage() {
               <p className="muted">{loadingText}</p>
             </section>
           )}
+          <Disclose symbol={q.symbol} />
         </div>
         <aside className="eng-side">
           <Plan
             engine={engine}
-            state={state}
+            stateKey={stateKey}
+            stateLabel={stateLabel}
             marketCapUsd={marketCapUsd}
             holdersPct={holdersPct}
             minHold={minHold}
             symbol={q.symbol}
+          />
+          <HowItWorks
+            symbol={q.symbol}
+            feeBps={snap?.postGradFeeBps ?? q.postGradFeeBps}
+            dailyBps={dailyBps}
+            holdersPct={holdersPct}
+            minHold={minHold}
           />
           <Activity items={activity} symbol={q.symbol} decimals={decimals} />
         </aside>
@@ -908,7 +1012,7 @@ export default function EnginePage() {
 
       <footer className="eng-notes">
         <p className="faint">
-          {ENGINE_NOTE} Every figure on this page is read from the chain: the engine wallet{' '}
+          Every figure on this page is read from the chain: the engine wallet{' '}
           <Address value={wallet} href={explorer.account(wallet)} /> and the creator wallet{' '}
           <Address value={QUANTP.creator} href={explorer.account(QUANTP.creator)} />.
         </p>
@@ -923,10 +1027,6 @@ export default function EnginePage() {
             Updated {ago(d.updatedAt)} ago: the chain could not be read just now.
           </p>
         )}
-        <p className="faint">
-          ${q.symbol} is Quant Pad’s own token. Memecoins are extremely risky. Nothing here is
-          financial advice.
-        </p>
       </footer>
     </div>
   )

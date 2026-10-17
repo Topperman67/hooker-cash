@@ -20,6 +20,27 @@ export const PAID_NOTE = `What the payout wallet has actually paid holders, spen
 /** The one-line disclosure for $QUANTP cards. */
 export const QUANTP_DISCLOSURE = `Quant Pad’s own token. Its ${HOLDERS_PCT}/${BUYBACK_PCT} fee split is paid out every hour by Quant Pad’s payout engine from a wallet the team funds; nothing on-chain enforces it. Memecoins are extremely risky. Not financial advice.`
 
+/** The payout engine's own page (pages/EnginePage.jsx). */
+export const ENGINE_PATH = '/engine'
+
+/**
+ * Where the engine stands, from /api/quantp/engine: 'running' (it ran within the last two hours),
+ * 'late' (its last run is older than that), 'pending' (switched on, not run yet) or 'paused' (not
+ * live). Null while unknown or not set up.
+ */
+export function engineState(engine, nowSecs = Date.now() / 1000) {
+  if (!engine?.configured) return null
+  if (!engine.live) return 'paused'
+  if (!engine.lastRunAt) return 'pending'
+  return nowSecs - engine.lastRunAt > 2 * engine.everySecs ? 'late' : 'running'
+}
+export const ENGINE_STATE_LABEL = {
+  running: 'Running hourly',
+  late: 'Running late',
+  pending: 'Waiting for its first run',
+  paused: 'Paused',
+}
+
 const finite = (v) => (v != null && Number.isFinite(Number(v)) ? Number(v) : null)
 
 /** The real figures, as numbers (SOL and whole tokens), each null when unknown. */

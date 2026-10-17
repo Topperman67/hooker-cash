@@ -1,5 +1,6 @@
-// The fees engine page (/engine): $QUANTP's payout engine as a dashboard, from /api/quantp/ledger
-// (what was paid and burned, read from the team's wallets) and /api/quantp/engine (its state).
+// The Payout Engine page (/engine): $QUANTP's payout engine as a dashboard, from /api/quantp/ledger
+// (what was paid and burned, read from the team's wallets) and /api/quantp/engine (where it stands
+// and what its next run pays), with its tiers, rules, how it works and what to know before buying.
 import { test, expect } from '@playwright/test'
 import { QUANTP } from '../../shared/network.mjs'
 import { enter, quantpEngine, quantpLedger, stubApi, stubQuantp } from './fixtures.js'
@@ -33,7 +34,7 @@ const burst = (ago, lamports, recipients, signature) => ({
 })
 const SIG = (c) => c.repeat(88)
 
-test('the header’s Engine link opens the fees engine: what it paid, its state, its next run', async ({
+test('the header’s Payout Engine link opens the engine: what it paid, its state, its next run', async ({
   page,
 }) => {
   await stubApi(page)
@@ -43,7 +44,11 @@ test('the header’s Engine link opens the fees engine: what it paid, its state,
   })
   await enter(page)
   await page.goto('/')
-  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Engine' }).click()
+  await page
+    .getByRole('navigation', { name: 'Main' })
+    .first()
+    .getByRole('link', { name: 'Payout Engine' })
+    .click()
   await expect(page).toHaveURL(/\/engine$/)
   await expect(page.getByRole('heading', { level: 1 })).toHaveText('Fees engine')
 
@@ -51,10 +56,16 @@ test('the header’s Engine link opens the fees engine: what it paid, its state,
   await expect(hero.locator('.eng-hero-figure')).toContainText('Paid to holders0.55 SOL')
   await expect(hero.locator('.eng-hero-figure')).toContainText('to 51 wallets in 1 round')
   await expect(hero.locator('.eng-state')).toHaveText('Running hourly')
-  // the last run was 20 minutes ago: the next is due in about 40
-  await expect(hero.locator('.eng-clock')).toContainText('Next run in')
-  await expect(hero.locator('.eng-clock strong')).toHaveText(/^(39|40):\d\d$/)
+  // the last run was 20 minutes ago; the next comes in the clock hour after it
+  await expect(hero.locator('.eng-clock strong')).toHaveText(/^(\d\d:\d\d|This hour)$/)
   await expect(hero.locator('.eng-clock')).toContainText('≈ 0.0083 SOL')
+  await expect(hero.locator('.eng-runline')).toHaveText(
+    /^Last run 20m ago · next (in about \d+ min|this hour)$/,
+  )
+  await expect(hero.getByRole('link', { name: '$QUANTP page' })).toHaveAttribute(
+    'href',
+    QUANTP.path,
+  )
   await expect(hero.getByRole('link', { name: 'GLAn…FAvn' })).toHaveAttribute(
     'href',
     `https://solscan.io/account/${QUANTP.engine.wallet}`,
@@ -83,6 +94,18 @@ test('the header’s Engine link opens the fees engine: what it paid, its state,
   await expect(plan.locator('.eng-plan-kv')).toContainText('Minimum to hold1.5M QUANTP')
   await expect(plan.locator('.eng-tiers li.is-now')).toContainText('Under $100KNow')
   await expect(plan.locator('.eng-tiers li.is-now')).toContainText('20% a day')
+  // the rules
+  await expect(plan).toContainText('liquidity pools and the team’s wallets are never paid')
+  await expect(plan).toContainText('Each run releases at most 1 SOL and keeps 0.02 SOL')
+
+  const how = page.getByRole('region', { name: 'How it works' })
+  await expect(how.locator('li')).toHaveCount(5)
+  await expect(how).toContainText('60% goes to holders')
+  await expect(how).toContainText('at least 0.15% of the supply (1.5M $QUANTP), by balance')
+  await expect(how).toContainText('pays a 5% fee in its Meteora DAMM v2 pool')
+  await expect(page.getByRole('region', { name: 'Before you buy' })).toContainText(
+    'Nothing on-chain enforces it.',
+  )
 })
 
 test('every wallet paid is listed, most paid first, and can be found by its address', async ({
@@ -241,7 +264,7 @@ test('the paid chart reads out each round under the pointer and with the arrow k
   await expect(tip).toContainText('0.56 SOL in all')
 })
 
-test('an engine that is not sending yet: no countdown, and the page still lists what was paid', async ({
+test('an engine that is not sending: paused, no countdown, and the page still lists what was paid', async ({
   page,
 }) => {
   await stubApi(page)
@@ -249,9 +272,88 @@ test('an engine that is not sending yet: no countdown, and the page still lists 
   await enter(page)
   await page.goto('/engine')
   const hero = page.getByRole('region', { name: 'Fees engine' })
-  await expect(hero.locator('.eng-state')).toHaveText('Not running yet')
+  await expect(hero.locator('.eng-state')).toHaveText('Paused')
+  await expect(hero.locator('.eng-runline')).toHaveText(
+    'Paused: no payouts or buybacks run until it is switched back on.',
+  )
   await expect(hero.locator('.eng-clock strong')).toHaveText('—')
   await expect(hero.locator('.eng-hero-figure')).toContainText('0.55 SOL')
+})
+
+test('an engine switched on but not run yet says so here and on the $QUANTP page', async ({
+  page,
+}) => {
+  await stubApi(page)
+  await stubQuantp(page, { engine: quantpEngine({ lastRunAt: null }) })
+  await enter(page)
+  await page.goto('/engine')
+  const hero = page.getByRole('region', { name: 'Fees engine' })
+  await expect(hero.locator('.eng-state')).toHaveText('Waiting for its first run')
+  await expect(hero.locator('.eng-runline')).toHaveText(
+    'Switched on, and waiting for its first automatic run.',
+  )
+  await expect(hero.locator('.eng-clock strong')).toHaveText('This hour')
+  await page.goto(QUANTP.path)
+  const block = page.locator('.qp-engine')
+  await expect(block).toContainText('Waiting for its first run')
+  await block.getByRole('link', { name: 'How it works' }).click()
+  await expect(page).toHaveURL(/\/engine$/)
+})
+
+test('an engine behind its schedule runs late', async ({ page }) => {
+  await stubApi(page)
+  await stubQuantp(page, { engine: quantpEngine({ lastRunAt: now() - 3 * 3600 }) })
+  await enter(page)
+  await page.goto('/engine')
+  const hero = page.getByRole('region', { name: 'Fees engine' })
+  await expect(hero.locator('.eng-state')).toHaveText('Running late')
+  await expect(hero.locator('.eng-runline')).toHaveText(
+    'Last run 3h ago: it is behind its hourly schedule.',
+  )
+})
+
+test('the header, the phone menu and the footer link to the engine page', async ({ page }) => {
+  await stubApi(page)
+  await stubQuantp(page, { engine: quantpEngine() })
+  await enter(page)
+  await page.goto('/')
+  await page
+    .getByRole('navigation', { name: 'Main' })
+    .first()
+    .getByRole('link', { name: 'Payout Engine' })
+    .click()
+  await expect(page).toHaveURL(/\/engine$/)
+  await expect(page.getByRole('link', { name: 'Payout Engine' }).first()).toHaveClass(/active/)
+  await expect(
+    page.locator('.footer-links').getByRole('link', { name: 'Payout Engine' }),
+  ).toHaveAttribute('href', '/engine')
+
+  await page.setViewportSize({ width: 390, height: 800 })
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open menu' }).click()
+  await page.locator('#mobile-nav').getByRole('link', { name: 'Payout Engine' }).click()
+  await expect(page).toHaveURL(/\/engine$/)
+})
+
+test('the engine page headings never skip a level', async ({ page }) => {
+  await stubApi(page)
+  await stubQuantp(page, {
+    engine: quantpEngine(),
+    ledger: quantpLedger({ paidWallets: paidWallets() }),
+  })
+  await enter(page)
+  await page.goto('/engine')
+  await expect(page.getByRole('region', { name: 'Wallets paid' }).locator('tbody tr')).toHaveCount(
+    25,
+  )
+  const levels = await page.evaluate(() =>
+    [...document.querySelectorAll('main h1, main h2, main h3, main h4, main h5, main h6')]
+      .filter((h) => h.getClientRects().length)
+      .map((h) => Number(h.tagName[1])),
+  )
+  expect(levels[0]).toBe(1)
+  for (let i = 1; i < levels.length; i++)
+    expect(levels[i] - levels[i - 1], levels.join(' ')).toBeLessThanOrEqual(1)
 })
 
 test('while the ledger cannot be read, the page says so and the engine still shows', async ({
