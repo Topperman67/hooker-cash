@@ -17,7 +17,6 @@ export default function HomePage() {
   const stats = useResource('/api/stats', 30000)
   const { solUsd, quantum } = usePlatform()
   const s = stats.data
-  const newest = latest.data?.items?.[0]
 
   return (
     <>
@@ -70,7 +69,8 @@ export default function HomePage() {
               </Glass>
             )}
           </div>
-          <Refractor symbol={newest?.symbol} />
+          {/* Always Quant Pad's own coin, not whichever coin launched last. */}
+          <Refractor symbol="QUANTP" />
         </div>
       </section>
 
