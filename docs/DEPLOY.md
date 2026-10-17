@@ -15,23 +15,26 @@ This runbook takes Quant Pad from an empty Vercel project to live Quantum launch
 
 ## 2. Lookup table (**wallet**, about 0.01 SOL)
 
-A pump.fun create + dev buy is about 1 590 bytes, but Solana allows 1 232. The lookup table holds the
-~45 accounts every launch shares:
+A launch transaction (the DBC create, the creator hand-off to the well, `sync` and the dev buy)
+references about 30 accounts, which at 32 bytes each is well over Solana's limit of 1 232 bytes. The
+lookup table holds the accounts every launch shares (Meteora's DBC accounts, Quant Pad's DBC launch
+configs, the token programs and sysvars, and Quantum Hooks' config), so each costs one byte:
 
 ```bash
-node scripts/create-lookup-table.mjs --keypair path/to/operator.json --rpc "$QUANTPAD_RPC_URL"
+node scripts/create-lookup-table.mjs --keypair path/to/operator.json --rpc "$QUANTPAD_RPC_URL" \
+  --config <DBC config>,<DBC config>,...
 ```
 
-Set the printed `QUANTPAD_LOOKUP_TABLE` and redeploy. Rerun with `--table <address>` after pump.fun upgrades to add new static accounts. `QUANTPAD_LOOKUP_TABLE` is required for any launch with a dev buy, standard or Quantum: `create_v2` and the dev buy always go in one transaction, which only fits with the table, and the launch page refuses a dev buy when no table is configured. Launches without a dev buy still work without it.
+`--config` takes the launch configs, comma-separated: the `config` of each tier in `launchTiers` (`shared/network.mjs`). Without it the script uses `QUANTPAD_DBC_CONFIG`. Set the printed `QUANTPAD_LOOKUP_TABLE` and redeploy. Rerun with `--table <address>` to add a new launch config or other new static accounts; it adds only the addresses the table lacks. `QUANTPAD_LOOKUP_TABLE` is required for any launch with a dev buy, standard or Quantum: the DBC create and the dev buy always go in one transaction, which only fits with the table, and the launch page refuses a dev buy when no table is configured. Launches without a dev buy still work without it.
 
 ## 3. Quantum Hooks program (**wallet**)
 
-1. Build and test: `npm run program:test`. The tests run against pump.fun's real programs dumped from mainnet onto a local validator. They do not need the program keypair.
+1. Build and test: `npm run program:test`. The tests run against Meteora's DBC and DAMM v2 programs dumped from mainnet onto a local validator. They do not need the program keypair.
 2. Restore the program keypair. `programs/quantum-hooks/target/deploy/quantum_hooks-keypair.json` is gitignored and determines the program address baked into `declare_id!`, `Anchor.toml` and `shared/idl/quantum_hooks.json`. Keep a backup offline. Before `npm run program:build` or a deploy, restore the backed-up file to that path: `build` and `keys` stop with an error when it is missing or does not match `declare_id!`, and never generate a new id on their own. `QUANTPAD_NEW_PROGRAM_ID=1` deliberately creates a new program id (it rewrites `declare_id!`, `Anchor.toml` and the IDL). Never set it for the production program.
 3. Build with `npm run program:build`, then deploy with the Anchor image and your deployer keypair (rent for the program data is roughly 3–5 SOL):
    `anchor deploy --provider.cluster mainnet --provider.wallet <deployer.json>` (see `programs/quantum-hooks/README.md`).
 
-   **Deploy the program and the web app together.** The program, `shared/idl/quantum_hooks.json` and `shared/quantum.mjs` must match: `pulse` now takes a `rent_payer` signer and `fusion` takes `lp_token_program`, so an older web app or keeper fails against the upgraded program, and the other way round. When you upgrade a deployed program, redeploy the web app (which also runs the keeper) from the same commit straight after the program upgrade lands.
+   **Deploy the program and the web app together.** The program, `shared/idl/quantum_hooks.json` and `shared/quantum.mjs` must match: the client builds each instruction's accounts and arguments from that IDL (the Meteora version added `harvest` and `sync`, and changed `pulse`, `quantum_burn` and `fusion`), so an older web app or keeper fails against the upgraded program, and the other way round. When you upgrade a deployed program, redeploy the web app (which also runs the keeper) from the same commit straight after the program upgrade lands.
 
 4. Initialize the config once with `scripts/init-config.mjs`, signed by the program's upgrade authority (the program accepts no other signer). Without `--yes` it is a dry run: it makes read-only RPC calls, checks the upgrade authority, the authority's balance and whether the config already exists, and prints what it would send. It refuses a mainnet-beta RPC (by URL or genesis hash) unless you also pass `--mainnet`.
 
@@ -74,7 +77,7 @@ From code, the builders in `shared/quantum.mjs` named below do the same.
 
 - **Claim delay.** Every Entanglement epoch opens for claims at `claim_start`, which is `claim_delay` seconds after it was posted. Until then the coin page shows "Claims open in …" and the keeper offers no claims. Pick a delay longer than the time you need to notice a wrong epoch and cancel it. A longer delay also holds back every holder's payout by that much. The program accepts at most one epoch per coin every 20 hours. The keeper posts about once a day, splitting the holder reserve by each wallet's average balance since the previous epoch (see [Holder sampling](#holder-sampling)).
 - **`cancel_epoch`** (`buildCancelEpochInstruction({ connection, authority, mint, index, programId })`) works only before the epoch's `claim_start`. It returns the epoch's SOL to the coin's holder reserve, closes the epoch account, sends its rent to the configured keeper and emits `EpochCancelled`. Use it for an epoch your keeper did not post, or one with wrong weights or a wrong total. The keeper flags the first kind for you (see [Keeper alerts](#keeper-alerts)); `program-ops.mjs --epochs <mint>` lists a coin's epochs with their `claim_start`, and `GET /api/quantum/<mint>` lists the ones your keeper recorded. An index the keeper has no record of, or whose root differs from its record, was not posted by your keeper.
-- **`set_paused`** (`buildSetPausedInstruction({ connection, authority, paused, programId })`) pauses or resumes the program. A pause stops everything that calls into pump.fun: new Quantum registrations, Quantum burns and Fusion. Pulses, claims, epoch closes, epoch cancels and token releases keep working, so nobody's funds are frozen (see `docs/QUANTUM_HOOKS_SPEC.md`). `/api/status` reports `quantum.available: false` with reason `paused`. `update_config` no longer changes the pause flag.
+- **`set_paused`** (`buildSetPausedInstruction({ connection, authority, paused, programId })`) pauses or resumes the program. A pause stops new Quantum registrations and everything that spends a well's SOL on Meteora: Quantum burns and Fusion. Harvests, pulses, claims, epoch closes, epoch cancels and token releases keep working, so nobody's funds are frozen (see `docs/QUANTUM_HOOKS_SPEC.md`). `/api/status` reports `quantum.available: false` with reason `paused`. `update_config` no longer changes the pause flag.
 - **`update_config`** (`buildUpdateConfigInstruction({ ..., expectedVersion })`) changes the treasury, keeper, protocol share, burn cap, intervals, grace period, claim delay or authority. Every config change, including a pause, increments the config's `version`, and an update built against an older version fails with `ConfigChanged`. So an update prepared before a pause cannot undo it: re-read the config and rebuild the update after any other change. When `expectedVersion` is left out, the builder reads the current version when it builds the instruction.
 
 ## 4. Keeper
@@ -83,10 +86,10 @@ The keeper is a hot wallet. Its secret sits in the server's environment, and on 
 
 1. Create a fresh keypair for the keeper. Never reuse the authority, the treasury or a personal wallet. Set `QUANTPAD_KEEPER_SECRET` to it, and pass its public key to `init-config.mjs --keeper`. On Vercel, add the secret to the **Production** environment only, never Preview or Development, because preview deployments run any branch's code.
 2. Set `CRON_SECRET` to a random string of at least 16 characters, in Vercel's **Production** environment and as the `CRON_SECRET` repository secret on GitHub (Settings → Secrets and variables → Actions). Two schedulers call `GET /api/keeper/tick` with `Authorization: Bearer <CRON_SECRET>`:
-   - **Vercel Cron**, from `crons` in `vercel.json`: one daily cron for each hour of the day. Vercel sends the header itself, and calls the production deployment only. Hobby runs each cron at most once a day (an hourly expression such as `0 * * * *` fails the deploy) and starts it anywhere within its hour; Pro starts it within its minute. On Pro you can replace the 24 entries with one `*/5 * * * *` for the keeper's 5-minute pace. Vercel does not retry a failed call. The project's **Cron Jobs** settings list the crons and link to their logs.
-   - **GitHub Actions** (`.github/workflows/keeper-cron.yml`), every 5 minutes, as the backup and for the keeper's 5-minute pace. GitHub starts scheduled runs late or drops them, and on this repository they came hours apart. It also turns a schedule off after 60 days without repository activity, so it is not enough alone. Each run's summary shows the tick's HTTP status, any step that failed, and what the payout engine did.
+   - **Vercel Cron**, from `crons` in `vercel.json`: one daily cron for each hour of the day. Vercel sends the header itself, and calls the production deployment only. Hobby runs each cron at most once a day (an hourly expression such as `0 * * * *` fails the deploy) and starts it anywhere within its hour; Pro starts it within its minute. On Pro you can replace the 24 entries with one `*/5 * * * *` for the keeper's 5-minute pace. Vercel does not retry a failed call, and its log of a call shows only the HTTP status, which is 200 even when a step failed. The project's **Cron Jobs** settings list the crons and link to their logs.
+   - **GitHub Actions** (`.github/workflows/keeper-cron.yml`), scheduled every 5 minutes, as the backup and for the keeper's pace. GitHub starts scheduled runs late or drops them: on this repository it has started this one only every 2 to 5 hours. It also turns a schedule off after 60 days without repository activity, so it is not enough alone. The repository is public, so a run prints only a summary of the response: the tick's HTTP status, each step's outcome and the payout engine's transactions. A step that failed is a warning on the run's summary page. The run fails, and GitHub emails whoever last changed the schedule in that file, when the payout engine could not send a transaction or the keeper raises a `foreign-epoch` alert. It never retries a call: a call that timed out may still have sent payouts, and the next run is the retry.
 
-   Any other scheduler works too, with the same header, every 5 to 15 minutes. Point it at a URL that answers without a redirect (a bare domain often redirects to `www`): a redirect drops the header. Extra calls are harmless. The app also runs a throttled keeper pass during normal traffic.
+   Any other scheduler works too, with the same header, every 5 to 15 minutes. Point it at a URL that answers without a redirect (a bare domain often redirects to `www`): a redirect drops the header. Extra calls are harmless: the payout engine claims each hour on-chain before it pays anything, so with the store down too the chain decides whether an hour has run (see [$QUANTP payout engine](#quantp-payout-engine)), and the keeper's on-chain actions have their own minimum intervals. A call that does not come from Vercel Cron runs the payout engine only from minute 15 of the hour, so it covers an hour whose Vercel cron did not run instead of racing it. The app also runs a throttled keeper pass during normal traffic.
 
 3. Fund it as described below, top it up regularly, and watch its balance. A keeper that runs dry stops pulses, burns, Fusion and epochs until it is refilled.
 
@@ -100,7 +103,7 @@ Each keeper run logs what needs you, and `GET /api/keeper/tick` also returns it 
 - `low-balance`: the keeper wallet holds less than 0.01 SOL per Quantum coin it serves (about a mid-sized epoch's rent plus a day of fees each). Top it up.
 - `holdtime-stalled`: `holdtime <mint>: no holder sample since <time>; Entanglement cannot post without them` (or `no holder sample yet`). An Entanglement coin with a reserve to pay has had no holder sample for 3 hours, or has never had one because its scans keep timing out, so its next epoch cannot be built (see [Holder sampling](#holder-sampling)). The log lines before it name the failing scan; check your RPC provider's `getProgramAccounts` limits.
 
-The keeper works through its coins a few per run, in rotation, so these appear only while the cron (or traffic) keeps it running. Forward the function's logs to something that notifies you (for example a Vercel log drain with an alert on `was not posted by this keeper`), and check them more often than the claim delay.
+The keeper works through its coins a few per run, in rotation, so these appear only while the cron (or traffic) keeps it running. Log drains, which could forward these lines to an alert (for example on `was not posted by this keeper`), need a paid Vercel plan, and Hobby keeps function logs only briefly. On Hobby, a `foreign-epoch` alert reaches you in two ways: the GitHub workflow fails its run (and GitHub emails you) when its tick returns one, and `QUANTP_ALERT_WEBHOOK`, when set, posts it to a channel from any tick, Vercel Cron's included (see [Monitoring and alerts](#monitoring-and-alerts)). GitHub runs the workflow only every few hours, so set the webhook, pick a claim delay longer than that gap, and look at the channel more often than the claim delay. `low-balance` and `holdtime-stalled` appear only in the function logs and as warnings on the workflow's runs.
 
 ### Holder sampling
 
@@ -116,21 +119,11 @@ Samples are taken only while the keeper runs, so keep the 5-minute cron going: a
 
 **Fees.** Each pulse, burn, Fusion deposit, epoch post and epoch close is one transaction: 5 000 lamports per signature plus a priority fee.
 
-**One-time rent per coin, never refunded.** The first action of each kind creates accounts at the keeper's expense:
-
-| First …                   | Rent (lamports)                                                                                            |
-| ------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| burn on the bonding curve | 3,918,480: the well's token account (2,074,080) and pump.fun's volume accumulator for the well (1,844,400) |
-| burn on PumpSwap          | 1,844,400: PumpSwap's volume accumulator for the well                                                      |
-| Fusion deposit            | 2,074,080: the well's LP token account                                                                     |
-
-That is about 0.008 SOL over the life of each Quantum coin that burns before and after graduation and uses Fusion.
+**One-time rent per coin, never refunded.** The first harvest, burn or Fusion deposit of a coin, whichever comes first, creates the well's token account for the coin at the keeper's expense: 2,039,280 lamports, about 0.002 SOL over the life of each Quantum coin. The well's WSOL account costs the keeper nothing: `harvest` creates it to receive the fees and refunds its rent to the caller when it closes it in the same instruction, and burns and Fusion wrap the well's own SOL in it, so the well pays and recovers that rent. Fusion adds to the position the well already owns, so it creates no LP account.
 
 **Epoch rent held for the claim window.** Each Entanglement epoch is an account that costs about 0.002 SOL for a coin with a few holders and up to about 0.016 SOL at 16,384 holders (one bit per holder). Its rent comes back to the keeper that posted it only when the epoch is closed, after the 30-day claim window (a cancelled epoch refunds at once). With one epoch per coin a day, each coin with active Entanglement holds about 30 epochs at a time: roughly 0.06 SOL for a small coin and up to 0.5 SOL for one with 16,384 holders. Nothing is refunded during the first 30 days, so the need grows over the first month and then levels off.
 
-**Sizing.** For example, 10 Quantum coins, 5 of them with Entanglement epochs of about 1,000 holders (about 0.003 SOL each): 10 × 0.008 + 5 × 30 × 0.003 ≈ 0.53 SOL over the first month, plus fees. Add 0.01 SOL for each new Quantum coin and 0.003 to 0.016 SOL a day for each coin that starts Entanglement. Top the wallet up every few days with what the next week needs rather than depositing the whole month at once: the wallet balance is what a leaked key loses at once, while rent already spent sits in the epoch accounts.
-
-Post-graduation pulses no longer cost the keeper the 0.00204 SOL (2,039,280 lamports) rent of the well's WSOL account: PumpSwap's fee collection creates that account at the keeper's expense, and `pulse` refunds the rent to its `rent_payer` (the keeper) when it closes the account.
+**Sizing.** For example, 10 Quantum coins, 5 of them with Entanglement epochs of about 1,000 holders (about 0.003 SOL each): 10 × 0.002 + 5 × 30 × 0.003 ≈ 0.47 SOL over the first month, plus fees. Add 0.002 SOL for each new Quantum coin and 0.003 to 0.016 SOL a day for each coin that starts Entanglement. Top the wallet up every few days with what the next week needs rather than depositing the whole month at once: the wallet balance is what a leaked key loses at once, while rent already spent sits in the epoch accounts.
 
 ### What a leaked keeper key can do
 
@@ -140,7 +133,7 @@ The keeper key cannot change the config, pause the program, cancel epochs, or wi
 - post an Entanglement epoch for any Quantum coin whose merkle root pays themselves, up to that coin's whole holder reserve, at most once per coin every 20 hours. Nobody can claim it before its `claim_start`, so cancel it with `cancel_epoch` within the claim delay and the SOL goes back to the reserve. That only helps if someone acts: the keeper flags such epochs (see [Keeper alerts](#keeper-alerts)), so check for epochs your keeper did not post more often than the claim delay, and pick a claim delay you can keep up with;
 - run burns and Fusion deposits without waiting for the grace period and without the limits that apply to everyone else, including wrapping them in their own trades (a sandwich), up to `max_burn_lamports` of a well's SOL per coin every `min_action_interval`. A modest `max_burn_lamports` limits this.
 
-For comparison, anyone else may run a burn or Fusion only after `keeper_grace` without a keeper run (for Fusion, counted from the later of the last Fusion and the coin's graduation), at most `max_burn_lamports / 10` per action. Such a transaction must call the program at the top level and may contain only compute-budget, System, token, associated-token and Quantum Hooks instructions, plus pump.fun's or PumpSwap's volume-accumulator setup. See the trust model in `docs/QUANTUM_HOOKS_SPEC.md`.
+For comparison, anyone else may run a burn or Fusion only after `keeper_grace` without a keeper run (for Fusion, counted from the later of the last Fusion and the coin's migration to DAMM v2), at most `max_burn_lamports / 10` per action. Such a transaction must call the program at the top level and may contain only compute-budget, System, SPL Token, Token-2022, associated-token and Quantum Hooks instructions: no Meteora instruction at all, so nothing in it can trade. See the trust model in `docs/QUANTUM_HOOKS_SPEC.md`.
 
 ### Rotating the keeper key
 
@@ -154,26 +147,50 @@ Rotate at once if the key may have leaked, and otherwise from time to time:
 
 ### $QUANTP payout engine
 
-`server/quantp-engine.mjs` pays $QUANTP holders and buys back and burns $QUANTP automatically, from the keeper tick, once in each clock hour (UTC). Its rules live in `QUANTP.engine` in `shared/network.mjs`:
+`server/quantp-engine.mjs` pays $QUANTP holders and buys back and burns $QUANTP automatically, from the keeper tick, once in each clock hour (UTC). It pays out whatever SOL the team puts in its wallet; nothing on-chain makes the team fund it. Its rules live in `QUANTP.engine` in `shared/network.mjs`:
 
-- Each run releases the market cap tier's share of the engine wallet's SOL per day, divided by the day's 24 runs: 20% a day below $100k, 50% up to $1M, 100% above (`tiers`). The SOL trickles out, faster as the market cap grows. It keeps `reserveLamports` (0.02 SOL) for fees and releases at most `maxRunLamports` (1 SOL) in one run.
-- 60% of a release (`QUANTP.holdersShareBps`) goes to every wallet holding at least `minHoldBps` (0.15%) of the current supply at that moment, in proportion to its balance, in SOL transfers of 18 per transaction. Pools, program accounts, the team's wallets and the incinerator are never paid. A share under `minTransferLamports`, or too small for an empty wallet's rent, stays in the wallet for a later run.
-- The other 40% buys $QUANTP in its DAMM v2 pool and burns it in the same transaction (`slippageBps` 3%), together with any $QUANTP the wallet already holds. **The first run therefore burns everything the wallet holds**, such as the payout wallet's earlier buybacks.
-- Every transaction is public on-chain, the site's Payouts & burns panel lists them, and `GET /api/quantp/engine` shows the engine's state: whether it is live, its tier, how many wallets are eligible, and what the next run would release.
+- Each run releases a 24th of the market cap tier's daily rate of what the engine wallet holds at that moment: 20% a day below $100k, 50% up to $1M, 100% above (`tiers`). Each run takes its slice of what the last one left, so a balance nobody tops up pays out about 18%, 40% or 64% of itself over a day, not the whole rate. The SOL trickles out, faster as the market cap grows. It keeps `reserveLamports` (0.02 SOL) for fees and releases at most `maxRunLamports` (1 SOL) in one run.
+- 60% of a release (`QUANTP.holdersShareBps`) goes to the wallets holding at least `minHoldBps` (0.15%) of the current supply at that moment, in proportion to their balances, in SOL transfers of up to 18 per transaction. Only wallets are paid: an owner on the ed25519 curve whose account is missing or a plain system account (no data, not a program). Pool vaults (owned by program addresses), Solana's reserved addresses (the System Program, sysvars and builtin programs), the team's wallets and the incinerator are never paid. A share under `minTransferLamports` (0.00002 SOL), or too small for an empty wallet's rent, is skipped that run: its SOL stays in the engine wallet for later runs, and the holder is not owed it.
+- The other 40% buys $QUANTP in its DAMM v2 pool and burns it in the same transaction (`slippageBps` 3%), together with any $QUANTP the wallet already holds. **The first run therefore burns everything the wallet holds**, such as the payout wallet's earlier buybacks. A buyback under `minBuybackLamports` (0.002 SOL) is skipped that run, and its SOL stays in the wallet.
+- Every transaction is public on-chain and ends with a memo that starts `qp-engine:v1 h=<hour>` (the hour, counted in hours since 1 January 1970 UTC). The site's Payouts & burns panel lists them, and `GET /api/quantp/engine` shows the engine's state: whether it is live, its tier, how many wallets are eligible, and what the next run would release.
 
 To turn it on:
 
 1. Pick the wallet. `QUANTP.engine.wallet` pins its public address in the code: the engine refuses any other key. It is the payout wallet now. Keep nothing in it that the engine should not pay out or burn.
-2. Set `QUANTP_ENGINE_SECRET` to that wallet's secret key (base58, or a JSON byte array as Solana CLI keypair files hold it) in Vercel's **Production** environment only, never Preview or Development. Like the keeper's, the key sits in the public function: treat it as exposed, and keep only what the engine should pay out in the wallet. Never paste the key anywhere else, including chat.
-3. Make sure the keeper tick runs (`CRON_SECRET` and the schedulers in step 2 of [Keeper](#4-keeper)), and redeploy. The engine runs at the first tick in each clock hour (UTC) and skips the rest of that hour, so the hourly Vercel crons run it every hour on any plan, even though Hobby starts each one anywhere within its hour. On Hobby two runs can therefore be a minute or almost two hours apart, but a day still has 24. An hour whose cron Vercel fails to deliver is covered only if GitHub's backup runs in it. Extra calls are harmless: the engine never runs twice in one hour.
+2. Set `QUANTP_ENGINE_SECRET` to that wallet's secret key (base58, or a JSON byte array as Solana CLI keypair files hold it) in Vercel's **Production** environment only, never Preview or Development. Like the keeper's, the key sits in the public function: treat it as exposed, and keep only what the engine should pay out in the wallet. Never commit it or paste it anywhere else, including chat. Set `QUANTP_ALERT_WEBHOOK` too (see [Monitoring and alerts](#monitoring-and-alerts)).
+3. Make sure the keeper tick runs (`CRON_SECRET` and the schedulers in step 2 of [Keeper](#4-keeper)), and redeploy. The engine runs at the first tick in each clock hour (UTC) that finds the hour unclaimed, and skips the rest of that hour, so the hourly Vercel crons run it every hour on any plan, even though Hobby starts each one anywhere within its hour. On Hobby two runs can therefore be a minute or almost two hours apart, and a day has at most 24. A tick that does not come from Vercel Cron (GitHub's backup, another scheduler, a call by hand) runs the engine only from minute 15 of the hour (before that the engine reports `backup-window`), so it covers an hour whose Vercel cron did not come or failed before sending anything. An hour that no tick covers is skipped: nothing is paid for it, and its SOL stays in the wallet for later runs. Extra calls are harmless: each hour is claimed on-chain before any payout (below).
 4. Fund the wallet with the SOL to pay out, for example the creator fees you claim. The engine splits whatever it holds.
-5. Check `GET /api/quantp/engine`: `live: true`, the eligible count and the next release. After the next tick, `GET /api/keeper/tick` (with the cron secret) returns the run's transactions under `engine`.
+5. Check `GET /api/quantp/engine`: `live: true`, the eligible count and the next release. After the next run, check that its transactions landed (see [Monitoring and alerts](#monitoring-and-alerts)).
 
 `reason` in `/api/quantp/engine` says why it is not live: `unpinned` (no wallet in the code), `no-key`, `bad-key` (the secret could not be read), `key-mismatch` (the key is not the pinned wallet's) or `paused`.
 
-To stop it, set `QUANTP_ENGINE_PAUSED=1` (or remove `QUANTP_ENGINE_SECRET`) and redeploy, or simply move the SOL out of the wallet. If the key may have leaked, move the wallet's SOL and tokens to a new wallet at once, pin the new address, and set its key.
+#### One run per hour
 
-The engine records each run's start in the store (`quantp:engine:last`) before it sends anything, so a run that fails part way is not repeated that hour, and it stops at the first transaction that fails. A lock in the store (`quantp:engine:lock`) keeps two instances from running at once. With the store down it goes by the wallet's last payout or burn (or its newest transaction) instead, which can delay a run but never repeat one whose transactions have landed. Without the store's lock, an instance still never starts a second run while its own is in progress, but two instances ticked within the same few seconds could both run.
+The engine never runs twice in one hour, whether or not the store answers:
+
+1. It first checks the store's record of the last run (`quantp:engine:last`) and its own instance's memory. Either one in this hour ends the tick (`not-due`) at no cost.
+2. Otherwise it reads the engine wallet's 25 newest transactions from the chain, without any cache. One in this hour that the engine wallet paid the fee for means the hour has run, unless its memo names an earlier hour (a run that started just before the hour turned). A stranger's dust, which the wallet does not sign, never counts. When that read fails, it does not run (`unverified`) and the next tick tries again; when the hour has more transactions than it reads, the claim below decides.
+3. The store's lock (`quantp:engine:lock`) keeps two instances from planning at once, and the engine reads the record again after taking it.
+4. Before its first payout, the run claims the hour on-chain: one transaction creates an empty marker account at an address only the engine key can derive from the hour, with the memo `qp-engine:v1 h=<hour> claim`. Only one transaction can create that account, so another run in the same hour, on any instance, fails to create it and stops (`locked`) before paying anything. A claim that fails for any other reason skips the hour (`stopped: claim failed`) rather than risk a repeat. The claim costs a transaction fee and holds the account's rent (about 0.0009 SOL) until a later run reclaims it into the wallet.
+
+A claimed hour is never run again, even if its run failed part way: what it did not send stays in the wallet for later hours. Within a run, a payout batch refused because of one recipient is resent once without it (`skipped`), any other failed batch is recorded (`failed`) while the rest still go out, and the buyback is tried whatever happened to the payouts, within the run's 25-second budget (`stopped: time limit before buyback` when it runs out). The site's ledger plays no part in this decision.
+
+#### Monitoring and alerts
+
+Vercel Cron starts most runs, and nothing reads its responses, so watch the engine from outside:
+
+- `GET /api/quantp/engine/health` answers 200 `{ ok: true, lastPaidAt, lastBurnAt }` while the engine is paying, and 503 `{ ok: false, reason }` otherwise: `not-live` (paused, or no usable key), `late` (it has holders to pay, but its newest payout on-chain is more than 2 h 15 min old), `buyback-failing` (it has a buyback to make, but its newest burn is more than 3 h old) or `unknown` (its state could not be read, or the history that would tell is still loading). It reads on-chain history, not the store, and answers are cached for a minute. Point a free uptime monitor (UptimeRobot, Better Stack and the like) at it and have it email or text you on any status but 200.
+- `QUANTP_ALERT_WEBHOOK` (Production, optional): an incoming-webhook URL, for example a Discord channel's webhook. Every tick that ends with an engine error, a run that stopped early, or a `foreign-epoch` keeper alert posts one line to it. Each reason is posted at most once an hour from each server instance, so an outage does not post every tick. Anyone with the URL can post to the channel: keep it out of the repository.
+- The GitHub workflow fails its run (GitHub then emails whoever last changed the schedule in `.github/workflows/keeper-cron.yml`) when the engine could not send a transaction or the keeper raised a `foreign-epoch` alert. It sees only its own ticks, every few hours.
+- Logs: the function logs a `[tick]` line with every step's error whenever a tick has a failed step or the engine stopped early, and `[quantp-engine]` lines with full send errors, which the public responses leave out. Hobby keeps function logs only briefly, and log drains need a paid plan.
+
+To see what a run did, use `GET /api/quantp/ledger` (or the site's Payouts & burns panel), a GitHub run's "Payout engine" notice, or the health check above. Calling `GET /api/keeper/tick` by hand is not a status check: from minute 15 on, it runs the engine if this hour has not run yet, and it runs the index pass and the keeper too.
+
+#### When something goes wrong
+
+1. **Stop it.** Set `QUANTP_ENGINE_PAUSED=1` in Vercel's Production environment and redeploy (an environment change reaches only new deployments). `/api/quantp/engine` then reports `reason: paused`, and the health check answers 503 `not-live`. Removing `QUANTP_ENGINE_SECRET`, or moving the SOL out of the wallet, also stops it. If the key may have leaked, move the wallet's SOL and tokens to a new wallet at once, pin the new address in `QUANTP.engine.wallet`, and set its key.
+2. **Find what happened.** The **Runs** tab of the site's Payouts & burns panel shows each hour with its payouts, buyback and burn. An hour marked `repeated` has two or more payout bursts, which the hour claim should make impossible: compare their memos (`h=<hour>`) and fee payers on Solscan, and keep the engine paused until you know why. The run's reason is in the alert channel, the GitHub notice or the health check, and the full error in the function's `[quantp-engine]` log lines.
+3. **Start it again.** Remove `QUANTP_ENGINE_PAUSED` (or set it to anything but `1`) and redeploy. The engine runs at the next tick in an unclaimed hour. Hours missed while it was stopped are not made up: their SOL stays in the wallet and goes out in later runs.
 
 ## 5. Platform fee (optional)
 
@@ -276,7 +293,7 @@ Settings:
   answer 429 (`launch_cap`). Each metadata URI this server issues registers one coin, the first launch
   made with it, so one upload cannot fill the list. Quantum coins are never evicted (the keeper finds
   the coins it serves in this list); each costs its launcher an on-chain registration plus the
-  pump.fun create, so filling the cap with them costs tens of SOL. Raise the cap if that ever happens.
+  DBC pool's creation, so filling the cap with them costs tens of SOL. Raise the cap if that ever happens.
 - `QUANTPAD_LAUNCHES_PER_WALLET` (default 10, `0` turns it off): native launches one launcher wallet
   may register per UTC day. Over it, `/api/launches` answers 429 (`launch_cap`) and the launcher can
   register the coin the next day. Wallets are free, so this only slows a script that lists junk from
@@ -347,7 +364,7 @@ TLS proxy for anything public.
 
 ## Smoke test before announcing
 
-1. Do a standard launch with a 0.01 SOL dev buy. It should appear in the market within seconds and on pump.fun.
+1. Do a standard launch with a 0.01 SOL dev buy. It should appear in the market within seconds, and its DBC pool on Meteora.
 2. Buy and sell from a second wallet. Confirm the trades, chart and platform fee transfer.
 3. Do a Quantum launch with all four modules and a lock. Trade until at least 0.001 SOL of creator fees is waiting (the button stays off below that, since the program would refuse the pulse), then press **Pulse fees now**. Confirm the reserves and creator payout on Solscan.
 4. Wait for the keeper to run a burn and an Entanglement epoch. The coin page shows when claims open (after the claim delay, 6 hours by default); then claim from a holder wallet.
