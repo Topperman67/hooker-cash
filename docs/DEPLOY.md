@@ -82,7 +82,12 @@ From code, the builders in `shared/quantum.mjs` named below do the same.
 The keeper is a hot wallet. Its secret sits in the server's environment, and on Vercel in the same function that answers every anonymous request and loads the whole SDK dependency tree. Treat the key as exposed: give it only the SOL it needs soon and know how to replace it.
 
 1. Create a fresh keypair for the keeper. Never reuse the authority, the treasury or a personal wallet. Set `QUANTPAD_KEEPER_SECRET` to it, and pass its public key to `init-config.mjs --keeper`. On Vercel, add the secret to the **Production** environment only, never Preview or Development, because preview deployments run any branch's code.
-2. Set `CRON_SECRET`. On Vercel Pro, add a cron for `/api/keeper/tick` every 5 minutes. On Hobby, point any external scheduler (e.g. GitHub Actions) at `GET /api/keeper/tick` with `Authorization: Bearer $CRON_SECRET`. The app also runs a throttled keeper pass during normal traffic.
+2. Set `CRON_SECRET` to a random string of at least 16 characters, in Vercel's **Production** environment and as the `CRON_SECRET` repository secret on GitHub (Settings → Secrets and variables → Actions). Two schedulers call `GET /api/keeper/tick` with `Authorization: Bearer <CRON_SECRET>`:
+   - **Vercel Cron**, from `crons` in `vercel.json`: one daily cron for each hour of the day. Vercel sends the header itself, and calls the production deployment only. Hobby runs each cron at most once a day (an hourly expression such as `0 * * * *` fails the deploy) and starts it anywhere within its hour; Pro starts it within its minute. On Pro you can replace the 24 entries with one `*/5 * * * *` for the keeper's 5-minute pace. Vercel does not retry a failed call. The project's **Cron Jobs** settings list the crons and link to their logs.
+   - **GitHub Actions** (`.github/workflows/keeper-cron.yml`), every 5 minutes, as the backup and for the keeper's 5-minute pace. GitHub starts scheduled runs late or drops them, and on this repository they came hours apart. It also turns a schedule off after 60 days without repository activity, so it is not enough alone. Each run's summary shows the tick's HTTP status, any step that failed, and what the payout engine did.
+
+   Any other scheduler works too, with the same header, every 5 to 15 minutes. Point it at a URL that answers without a redirect (a bare domain often redirects to `www`): a redirect drops the header. Extra calls are harmless. The app also runs a throttled keeper pass during normal traffic.
+
 3. Fund it as described below, top it up regularly, and watch its balance. A keeper that runs dry stops pulses, burns, Fusion and epochs until it is refilled.
 
 Optionally, keep the key out of the public function altogether: leave `QUANTPAD_KEEPER_SECRET` unset on Vercel and run the keeper as a private `npm start` process (bound to `127.0.0.1`, not reachable from the internet) with the same Redis database and `QUANTPAD_STORAGE_PREFIX`. The public deployment still serves epochs and claims from the shared storage.
@@ -149,7 +154,7 @@ Rotate at once if the key may have leaked, and otherwise from time to time:
 
 ### $QUANTP payout engine
 
-`server/quantp-engine.mjs` pays $QUANTP holders and buys back and burns $QUANTP automatically, from the keeper tick, at most once an hour. Its rules live in `QUANTP.engine` in `shared/network.mjs`:
+`server/quantp-engine.mjs` pays $QUANTP holders and buys back and burns $QUANTP automatically, from the keeper tick, once in each clock hour (UTC). Its rules live in `QUANTP.engine` in `shared/network.mjs`:
 
 - Each run releases the market cap tier's share of the engine wallet's SOL per day, divided by the day's 24 runs: 20% a day below $100k, 50% up to $1M, 100% above (`tiers`). The SOL trickles out, faster as the market cap grows. It keeps `reserveLamports` (0.02 SOL) for fees and releases at most `maxRunLamports` (1 SOL) in one run.
 - 60% of a release (`QUANTP.holdersShareBps`) goes to every wallet holding at least `minHoldBps` (0.15%) of the current supply at that moment, in proportion to its balance, in SOL transfers of 18 per transaction. Pools, program accounts, the team's wallets and the incinerator are never paid. A share under `minTransferLamports`, or too small for an empty wallet's rent, stays in the wallet for a later run.
@@ -160,7 +165,7 @@ To turn it on:
 
 1. Pick the wallet. `QUANTP.engine.wallet` pins its public address in the code: the engine refuses any other key. It is the payout wallet now. Keep nothing in it that the engine should not pay out or burn.
 2. Set `QUANTP_ENGINE_SECRET` to that wallet's secret key (base58, or a JSON byte array as Solana CLI keypair files hold it) in Vercel's **Production** environment only, never Preview or Development. Like the keeper's, the key sits in the public function: treat it as exposed, and keep only what the engine should pay out in the wallet. Never paste the key anywhere else, including chat.
-3. Make sure the keeper tick runs (`CRON_SECRET` and the GitHub Actions schedule above), and redeploy. GitHub may run its 5-minute schedule only every few hours on a quiet repository, so for hourly payouts also point a dependable scheduler (Vercel Cron on Pro, or any external cron service) at `GET /api/keeper/tick` with `Authorization: Bearer <CRON_SECRET>`, every 5 to 15 minutes. Extra calls are harmless: the engine runs at most once an hour. Each workflow run's summary shows the tick's HTTP status, any step that failed, and what the engine did.
+3. Make sure the keeper tick runs (`CRON_SECRET` and the schedulers in step 2 of [Keeper](#4-keeper)), and redeploy. The engine runs at the first tick in each clock hour (UTC) and skips the rest of that hour, so the hourly Vercel crons run it every hour on any plan, even though Hobby starts each one anywhere within its hour. On Hobby two runs can therefore be a minute or almost two hours apart, but a day still has 24. An hour whose cron Vercel fails to deliver is covered only if GitHub's backup runs in it. Extra calls are harmless: the engine never runs twice in one hour.
 4. Fund the wallet with the SOL to pay out, for example the creator fees you claim. The engine splits whatever it holds.
 5. Check `GET /api/quantp/engine`: `live: true`, the eligible count and the next release. After the next tick, `GET /api/keeper/tick` (with the cron secret) returns the run's transactions under `engine`.
 
@@ -168,7 +173,7 @@ To turn it on:
 
 To stop it, set `QUANTP_ENGINE_PAUSED=1` (or remove `QUANTP_ENGINE_SECRET`) and redeploy, or simply move the SOL out of the wallet. If the key may have leaked, move the wallet's SOL and tokens to a new wallet at once, pin the new address, and set its key.
 
-The engine records each run's start in the store (`quantp:engine:last`) before it sends anything, so a run that fails part way is not repeated for an hour, and it stops at the first transaction that fails. With the store down it goes by the wallet's newest transaction instead, which can delay a run but never repeat one.
+The engine records each run's start in the store (`quantp:engine:last`) before it sends anything, so a run that fails part way is not repeated that hour, and it stops at the first transaction that fails. A lock in the store (`quantp:engine:lock`) keeps two instances from running at once. With the store down it goes by the wallet's last payout or burn (or its newest transaction) instead, which can delay a run but never repeat one whose transactions have landed. Without the store's lock, an instance still never starts a second run while its own is in progress, but two instances ticked within the same few seconds could both run.
 
 ## 5. Platform fee (optional)
 
