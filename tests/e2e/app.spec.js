@@ -572,6 +572,80 @@ test('mobile menu opens and navigates', async ({ page }) => {
   )
 })
 
+// 390: a landscape phone. 340: about what Safari leaves of it under its toolbars, where the menu
+// is taller than the room under the sticky bar.
+for (const height of [390, 340])
+  test(`on an 844x${height} landscape phone every menu link can be reached`, async ({ page }) => {
+    await page.setViewportSize({ width: 844, height })
+    await stubApi(page)
+    await enter(page)
+    await page.goto('/market')
+    await page.getByRole('button', { name: 'Open menu' }).click()
+    const menu = page.locator('#mobile-nav')
+    await expect(menu).toBeVisible()
+    // The open header fits the screen, and the menu scrolls inside it, not the page.
+    const header = await page.locator('.topbar').boundingBox()
+    expect(header.y + header.height).toBeLessThanOrEqual(height)
+    await menu.hover()
+    await page.mouse.wheel(0, 400)
+    await expect
+      .poll(() => menu.evaluate((el) => el.scrollTop + el.clientHeight >= el.scrollHeight - 1))
+      .toBe(true)
+    await expect(menu.getByRole('link', { name: 'Docs' })).toBeInViewport({ ratio: 1 })
+    expect(await page.evaluate(() => window.scrollY)).toBe(0)
+  })
+
+test('the menu marks the current page and closes when it is tapped', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await stubApi(page)
+  await enter(page)
+  await page.goto('/market?q=cats')
+  const toggle = page.getByRole('button', { name: 'Open menu' })
+  await toggle.click()
+  const menu = page.locator('#mobile-nav')
+  const market = menu.getByRole('link', { name: 'Market' })
+  const underline = (link) => link.evaluate((a) => getComputedStyle(a).textDecorationLine)
+  await expect(market).toHaveClass(/\bactive\b/)
+  expect(await underline(market)).toBe('underline')
+  expect(await underline(menu.getByRole('link', { name: 'Launch' }))).toBe('none')
+  // The current page's link only drops the search, but the menu still closes, and focus goes to
+  // the page rather than the hidden link.
+  await market.click()
+  await expect(page).toHaveURL(/\/market$/)
+  await expect(menu).toBeHidden()
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false')
+  await expect(page.locator('main#main')).toBeFocused()
+  // The $QUANTP row closes it too.
+  await toggle.click()
+  await menu.locator('a.qp-menu').click()
+  await expect(page).toHaveURL(/\/quantp$/)
+  await expect(menu).toBeHidden()
+})
+
+test('the menu’s Docs halo sits on the word, with or without motion', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await stubApi(page)
+  await enter(page)
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open menu' }).click()
+  const docs = page.locator('#mobile-nav a.nav-docs')
+  await expect(docs).toBeVisible()
+  // The halo is absolutely placed: without a positioned link it would fill the whole header.
+  // A phone's one column, then a small laptop's two.
+  for (const width of [390, 1200]) {
+    await page.setViewportSize({ width, height: 844 })
+    const box = await docs.evaluate((a) => ({
+      position: getComputedStyle(a).position,
+      width: a.getBoundingClientRect().width,
+      halo: parseFloat(getComputedStyle(a, '::before').width),
+    }))
+    expect(box.position, `${width}px`).toBe('relative')
+    expect(box.width, `${width}px`).toBeLessThan(120)
+    expect(box.halo, `${width}px`).toBeLessThan(120)
+  }
+})
+
 test('Docs links open the GitBook site in a new tab, and the header one shimmers', async ({
   page,
 }) => {

@@ -165,6 +165,9 @@
   background: #6f86ff;
   box-shadow: 0 0 10px rgba(111, 134, 255, 0.8);
 }
+:where(:root[data-theme='dark']) .mobile-nav a.active {
+  text-decoration-color: #6f86ff;
+}
 :where(:root[data-theme='dark']) .built-on-top {
   border-color: rgba(255, 255, 255, 0.16);
 }

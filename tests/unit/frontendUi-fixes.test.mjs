@@ -391,11 +391,34 @@ test('segmented labels and nav links never wrap mid-word', () => {
 
 test('the header collapses into the menu before the search box gets squeezed', () => {
   // six links (with the Payout Engine) and the search's whole placeholder need about 1280px
-  const collapse = '@media (max-width: 1279px)'
+  const collapse = '@media (max-width: 1279.98px)'
   assert.equal(decl(shell, '.nav', 'display', collapse), 'none')
   assert.equal(decl(shell, '.topbar-search', 'display', collapse), 'none')
   assert.equal(decl(shell, '.topbar .menu-toggle', 'display', collapse), 'inline-flex')
   assert.equal(decl(shell, '.topbar-search', 'min-width'), '180px')
+  // .98 meets the desktop's min-width: 1280px with no gap: at 1279.5px (zoom, display scaling) a
+  // max-width of 1279px and a min-width of 1280px would both miss, showing the full bar clipped.
+  const queries = new Set(shell.map((r) => r.media).filter(Boolean))
+  assert.ok(queries.has('@media (min-width: 1280px)'))
+  for (const query of queries) assert.doesNotMatch(query, /max-width: 1279px/, query)
+})
+
+test('the open menu fits the screen: it scrolls inside, under the sticky header', () => {
+  const collapse = '@media (max-width: 1279.98px)'
+  const open = '.mobile-nav:not([hidden])'
+  assert.equal(decl(shell, open, 'max-height', collapse), 'calc(100dvh - 84px)')
+  assert.equal(decl(shell, open, 'overflow-y', collapse), 'auto')
+  assert.equal(decl(shell, open, 'overscroll-behavior', collapse), 'contain')
+  // with a vh fallback first, for browsers without dvh
+  const source = readFileSync(new URL('../../src/styles/shell.css', import.meta.url), 'utf8')
+  assert.match(source, /max-height: calc\(100vh - 84px\);\s*max-height: calc\(100dvh - 84px\);/)
+  // short (landscape) and tablet-wide screens put the links in two columns
+  const twoColumns =
+    '@media (max-width: 1279.98px) and (max-height: 560px), (min-width: 768px) and (max-width: 1279.98px)'
+  assert.equal(decl(shell, open, 'display', twoColumns), 'grid')
+  assert.equal(decl(shell, open, 'grid-template-columns', twoColumns), 'repeat(2, minmax(0, 1fr))')
+  assert.equal(decl(shell, '.mobile-nav a.qp-menu', 'grid-column', twoColumns), '1 / -1')
+  assert.equal(decl(shell, '.mobile-nav .topbar-search', 'grid-column', twoColumns), '1 / -1')
 })
 
 test('the fee flow stacks with downward arrows once it stops fitting on one row', () => {

@@ -27,9 +27,9 @@ const LINKS = [
 ]
 
 // The docs live on GitBook. In the header the link shimmers blue every 3 s (shell.css).
-function DocsLink({ onClick }) {
+function DocsLink() {
   return (
-    <a href={DOCS_URL} target="_blank" rel="noreferrer" className="nav-docs" onClick={onClick}>
+    <a href={DOCS_URL} target="_blank" rel="noreferrer" className="nav-docs">
       Docs
     </a>
   )
@@ -128,6 +128,12 @@ export default function Shell({ children }) {
     shown.current = location.pathname
     main.current?.focus({ preventScroll: true })
   }, [location.pathname])
+  // Any link in the menu closes it, the current page's too (which does not navigate), and hands
+  // focus to the page: the link it was on is hidden now.
+  const leaveMenu = () => {
+    setMenu(false)
+    main.current?.focus({ preventScroll: true })
+  }
   // Escape closes the open menu and puts focus back on its toggle. An open dialog handles Escape
   // first (it marks the event as handled).
   useEffect(() => {
@@ -196,15 +202,23 @@ export default function Shell({ children }) {
                 </button>
               </div>
             </div>
-            <nav id="mobile-nav" className="mobile-nav" hidden={!menu} aria-label="Main">
-              <SearchBox onDone={() => setMenu(false)} />
+            <nav
+              id="mobile-nav"
+              className="mobile-nav"
+              hidden={!menu}
+              aria-label="Main"
+              onClick={(e) => {
+                if (e.target.closest('a')) leaveMenu()
+              }}
+            >
+              <SearchBox onDone={leaveMenu} />
               <QuantpMenuRow />
               {LINKS.map(([to, label]) => (
                 <NavLink key={to} to={to}>
                   {label}
                 </NavLink>
               ))}
-              <DocsLink onClick={() => setMenu(false)} />
+              <DocsLink />
             </nav>
           </Glass>
         </div>

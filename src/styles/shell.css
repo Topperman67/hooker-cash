@@ -95,6 +95,8 @@
    it is easy to find (header and menu). A faint blue halo sits behind it all the time and turns
    green for about a second every 9 s. Reduced motion stops the sweep and the green (base.css). */
 .topbar a.nav-docs {
+  /* the halo's box: the link itself, in the header and in the menu */
+  position: relative;
   isolation: isolate;
   color: transparent;
   background: linear-gradient(
@@ -378,8 +380,10 @@
 }
 
 /* The six links, a search box wide enough for its whole placeholder and the wallet button need
-   about 1280px; below that the header collapses into the menu (which carries the search too). */
-@media (max-width: 1279px) {
+   about 1280px; below that the header collapses into the menu (which carries the search too).
+   1279.98, not 1279: a fractional width (zoom, display scaling) between the two would match
+   neither query. Not .99, which trips a Safari rounding bug. */
+@media (max-width: 1279.98px) {
   .nav,
   .topbar-search {
     display: none;
@@ -398,6 +402,15 @@
   .mobile-nav[hidden] {
     display: none;
   }
+  /* The header is sticky, so a menu taller than the screen would keep its last links out of
+     reach: it scrolls inside instead (84px: the bar, its top gap and a little air). vh first for
+     browsers without dvh. */
+  .mobile-nav:not([hidden]) {
+    max-height: calc(100vh - 84px);
+    max-height: calc(100dvh - 84px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
   .mobile-nav a {
     display: block;
     padding: 10px 0;
@@ -405,14 +418,37 @@
     font-weight: 600;
     color: var(--ink-2);
   }
+  /* the current page: an underline in the desktop bar's cobalt */
   .mobile-nav a.active {
     color: var(--ink);
+    text-decoration: underline 2px var(--blue);
+    text-underline-offset: 6px;
+  }
+  /* Docs is as wide as its word, so the halo and the sweep sit on it as in the header; the
+     padding gives the halo room and the margin keeps the word in line with the other links. */
+  .mobile-nav a.nav-docs {
+    width: fit-content;
+    padding-inline: 12px;
+    margin-inline-start: -12px;
   }
   .mobile-nav .topbar-search {
     display: block;
     width: 100%;
     min-width: 0;
     margin: 4px 0 8px;
+  }
+}
+/* Landscape phones and tablets: the links in two columns, so the menu needs less height. */
+@media (max-width: 1279.98px) and (max-height: 560px),
+  (min-width: 768px) and (max-width: 1279.98px) {
+  .mobile-nav:not([hidden]) {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 24px;
+  }
+  .mobile-nav .topbar-search,
+  .mobile-nav a.qp-menu {
+    grid-column: 1 / -1;
   }
 }
 @media (max-width: 960px) {
