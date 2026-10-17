@@ -2,15 +2,23 @@
 # Quantum Hooks keeper (harvest + pulse, burns, Fusion, Entanglement epochs, and migrating full
 # curves to DAMM v2). This is the backup: Vercel Cron (crons in vercel.json) calls the same endpoint
 # once an hour, and Vercel's Hobby plan allows nothing more frequent. GitHub starts scheduled runs
-# late or drops them, worst at the top of the hour (hence minutes 2, 7, 12 …), and on a quiet
-# repository runs can be hours apart; it also turns the schedule off after 60 days without
-# repository activity. Needs the CRON_SECRET repository secret (Settings → Secrets and variables →
-# Actions), equal to CRON_SECRET in Vercel. Set the QUANTPAD_URL repository variable to use another
-# domain; it must answer without a redirect, which would drop the Authorization header.
+# late or drops them, worst at the top of the hour (hence minutes 2, 7, 12 …): on this repository
+# it has started this schedule only every 2 to 5 hours, not every 5 minutes. It also turns the
+# schedule off after 60 days without repository activity. The server runs the payout engine for a
+# call from here only after minute 15 of the hour (before that the engine reports
+# `backup-window`), so this backup covers an hour whose Vercel cron did not run instead of racing
+# it. Needs the CRON_SECRET repository secret (Settings → Secrets and variables → Actions), equal
+# to CRON_SECRET in Vercel. Set the QUANTPAD_URL repository variable to use another domain; it must
+# answer without a redirect, which would drop the Authorization header.
 #
-# Each run prints the HTTP status and the response. A status other than 200 fails the run with an
-# error annotation; a step that failed inside the tick (it still answers 200) is a warning; what the
-# payout engine did is a notice. Annotations show on the run's summary page.
+# The repository is public, so each run prints the HTTP status and a short summary of the response
+# (each step's outcome and the engine's transaction signatures), never the raw body. A status other
+# than 200 fails the run with an error annotation; a step that failed inside the tick (it still
+# answers 200) and a keeper alert are warnings; what the payout engine did is a notice. The run
+# also fails, so GitHub sends its failed-run email (to whoever last changed the schedule here),
+# when the engine could not send a transaction or the keeper found an Entanglement epoch it did not
+# post (`foreign-epoch`: someone else holds the keeper key). A storage outage stays a warning, so
+# it does not fail every run. Annotations show on the run's summary page.
 name: Keeper tick
 
 on:
@@ -38,14 +46,14 @@ jobs:
             echo "::error::Add the CRON_SECRET repository secret (the same value as CRON_SECRET in Vercel)."
             exit 1
           fi
-          code=$(curl -sS --retry 2 --retry-delay 5 --max-time 90 -o body.json -w '%{http_code}' \
+          # Never retried: the tick moves money, and a call that failed or timed out may still have
+          # sent payouts. The next run is the retry; the server decides again whether the hour ran.
+          code=$(curl -sS --max-time 90 -o body.json -w '%{http_code}' \
             -H "Authorization: Bearer $CRON_SECRET" "$URL/api/keeper/tick") || {
             echo "::error::Could not reach $URL/api/keeper/tick"
             exit 1
           }
           echo "HTTP $code from $URL/api/keeper/tick"
-          head -c 6000 body.json
-          echo
           # annotation text: one line, with % and line breaks escaped
           clean='def clean: tostring | gsub("%"; "%25") | gsub("\r"; "%0D") | gsub("\n"; "%0A");'
           if [ "$code" != "200" ]; then
@@ -57,13 +65,47 @@ jobs:
             echo "::error::Keeper tick answered HTTP $code: $error.$hint"
             exit 1
           fi
+          if ! jq -e 'type == "object"' body.json >/dev/null 2>&1; then
+            echo "::error::Keeper tick answered HTTP 200 without a JSON object."
+            exit 1
+          fi
+          jq -c '{ok, engine: (.engine | {ran, reason, stopped, error, note, payouts: ((.payouts // []) | map(.signature)), buyback: .buyback.signature}), index: (.index.error // "ok"), keeper: (.keeper.error // "ok")}' body.json
           jq -r "$clean"'
             to_entries[]
             | select((.value | type) == "object" and .value.error != null)
             | "::warning::\(.key) failed: \(.value.error | clean)"' body.json
+          # foreign-epoch alerts fail the run below
+          jq -r "$clean"'
+            .keeper.alerts // [] | .[]
+            | select(.kind != "foreign-epoch")
+            | "::warning::Keeper alert: \(.kind)\(if .mint then " for \(.mint)" else "" end) (docs/DEPLOY.md, Keeper alerts)" | clean' body.json
           jq -r "$clean"'
             .engine as $e
             | if $e == null then empty
-              elif $e.ran then "::notice::Payout engine ran: \($e.payouts // [] | length) payout transaction(s), buyback \($e.buyback.signature // "none")\(if $e.error then ", stopped: \($e.error | clean)" else "" end)"
-              else "::notice::Payout engine did not run: \($e.reason // $e.error // "unknown" | clean)"
+              else
+                (if $e.ran
+                 then "ran: \($e.payouts // [] | length) payout transaction(s), buyback \($e.buyback.signature // "none")"
+                 else "did not run: \($e.reason // "no reason given")"
+                 end) as $head
+                | [ $head,
+                    (($e.failed // []) | length | select(. > 0) | "\(.) payout batch(es) failed"),
+                    (($e.skipped // []) | length | select(. > 0) | "\(.) wallet(s) skipped"),
+                    ($e.stopped // $e.note // empty),
+                    ($e.error // empty | "error: \(.)") ]
+                | "::notice::Payout engine \(map(clean) | join(", "))"
               end' body.json
+          # Fail the run only for what needs someone now: a payout or buyback the engine could not
+          # send, or an epoch the keeper did not post. A failed index or keeper step (the store
+          # refusing commands, say) stays a warning.
+          failures=$(jq -r "$clean"'
+            (.engine
+              | select(.ran == true and (.error != null or ((.failed // []) | length) > 0))
+              | "The payout engine could not send a transaction (see the notice above).")
+            , (.keeper.alerts // [] | .[]
+              | select(.kind == "foreign-epoch")
+              | "Keeper alert: epoch \(.mint)#\(.index) was not posted by this keeper; cancel it with cancel_epoch\(if .claimStart then " before \(.claimStart | todate)" else "" end), then rotate the keeper key (docs/DEPLOY.md, Keeper alerts).")
+            | "::error::\(clean)"' body.json)
+          if [ -n "$failures" ]; then
+            echo "$failures"
+            exit 1
+          fi
