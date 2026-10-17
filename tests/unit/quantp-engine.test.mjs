@@ -32,6 +32,7 @@ import {
   engineBlocker,
   payoutTransactions,
   planRun,
+  refusedBeforeRunning,
 } from '../../server/quantp-engine.mjs'
 import { createApplication } from '../../server/application.mjs'
 import { DAMM_POOL_AUTHORITY, decodeDammPool } from '../../shared/meteora.mjs'
@@ -263,16 +264,22 @@ function memoryStore() {
   }
 }
 
-/** A chain with `holders` ([owner, raw amount]) that confirms what is sent, or refuses the n-th. */
-function stubChain({ balance = 1_020_000_000, holders, failAt = 0, newest = null }) {
+/**
+ * A chain with `holders` ([owner, raw amount]) that confirms what is sent, or refuses the n-th (a
+ * program failing in preflight, with its logs). Its first `refuse` sends are refused before any
+ * program runs, as a node behind the one that gave the blockhash refuses them (no logs).
+ */
+function stubChain({ balance = 1_020_000_000, holders, failAt = 0, refuse = 0, newest = null }) {
   const holderData = (owner, amount) => {
     const data = Buffer.alloc(40)
     new PublicKey(owner).toBuffer().copy(data, 0)
     data.writeBigUInt64LE(BigInt(amount), 32)
     return data
   }
+  let blockhashes = 0
   return {
     sent: [],
+    refused: [],
     async getBalance() {
       return balance
     },
@@ -291,13 +298,26 @@ function stubChain({ balance = 1_020_000_000, holders, failAt = 0, newest = null
       return []
     },
     async getLatestBlockhash() {
-      return { blockhash: '11111111111111111111111111111111', lastValidBlockHeight: 1_000 }
+      blockhashes++
+      return {
+        blockhash: new PublicKey(new Uint8Array(32).fill(blockhashes)).toBase58(),
+        lastValidBlockHeight: 1_000,
+      }
     },
     async sendRawTransaction(bytes) {
       const tx = VersionedTransaction.deserialize(bytes)
+      if (this.refused.length < refuse) {
+        this.refused.push(tx)
+        throw Object.assign(
+          Error('Simulation failed. \nMessage: Transaction simulation failed. \nLogs: \n[].'),
+          { transactionLogs: [] },
+        )
+      }
       this.sent.push(tx)
       if (this.sent.length === failAt)
-        throw Error('Transaction simulation failed: insufficient funds')
+        throw Object.assign(Error('Transaction simulation failed: insufficient funds'), {
+          transactionLogs: ['Program log: Error: insufficient funds'],
+        })
       return bs58.encode(tx.signatures[0])
     },
     async getSignatureStatuses(signatures) {
@@ -559,4 +579,88 @@ test('with the store down, dust sent to the wallet does not hold off a run: its 
   assert.equal((await engine(ledgerSaying(null)).tick()).ran, true)
   // the ledger has not read everything yet: the newest transaction (the dust) counts, and it waits
   assert.equal((await engine(ledgerSaying(7_200, { unread: 1 })).tick()).reason, 'not-due')
+})
+
+test('a transaction refused before any program ran is sent again with a fresh blockhash', async () => {
+  const clock = { t: 1_800_000_000_000 }
+  const run = async (refuse) => {
+    const connection = stubChain({ holders: MANY, refuse })
+    const engine = createQuantpEngine({
+      connection,
+      store: memoryStore(),
+      feed,
+      secret: SECRET,
+      policy: PAYOUTS_ONLY,
+      now: () => clock.t,
+      log: { error() {} },
+      retryMs: 0,
+    })
+    return { connection, report: await engine.tick() }
+  }
+  // refused twice, through on the third try: the run goes on and pays everyone
+  const twice = await run(2)
+  assert.equal(twice.report.error, undefined)
+  assert.equal(twice.report.payouts.length, 2)
+  assert.equal(twice.connection.sent.length, 2)
+  const hashes = [...twice.connection.refused, twice.connection.sent[0]].map(
+    (tx) => tx.message.recentBlockhash,
+  )
+  assert.equal(new Set(hashes).size, 3, 'each try has its own blockhash')
+  // the same transfers each time
+  assert.deepEqual(transfersIn(twice.connection.refused[0]), transfersIn(twice.connection.sent[0]))
+  // refused three times: it stops there, having sent nothing
+  const always = await run(3)
+  assert.match(always.report.error, /Simulation failed/)
+  assert.deepEqual(always.report.payouts, [])
+  assert.equal(always.connection.sent.length, 0)
+  // a program that failed (with logs) is not sent again
+  assert.equal(
+    refusedBeforeRunning(
+      Object.assign(Error('Simulation failed. Message: Transaction simulation failed.'), {
+        transactionLogs: ['Program log: Error: exceeded slippage'],
+      }),
+    ),
+    false,
+  )
+  assert.equal(refusedBeforeRunning(Error('fetch failed')), false)
+})
+
+test('a store without the run’s record (refused at its plan limit) goes by the ledger', async () => {
+  // half past the hour, and the engine wallet paid ten minutes ago
+  const clock = { t: 1_800_000_000_000 + 1_800_000 }
+  const paidAt = clock.t / 1000 - 600
+  // Upstash at its plan limit: this read answers, empty, and the write is refused
+  const store = {
+    async get() {
+      return null
+    },
+    async set() {
+      throw Error('ERR max requests limit exceeded')
+    },
+    async release() {},
+  }
+  const ledger = {
+    async ledger() {
+      return {
+        unread: 0,
+        payouts: [{ wallet: KEY.publicKey.toBase58(), transactions: [{ timestamp: paidAt }] }],
+        burns: [],
+      }
+    },
+  }
+  const connection = stubChain({ holders: MANY })
+  const engine = createQuantpEngine({
+    connection,
+    store,
+    feed,
+    ledger,
+    secret: SECRET,
+    policy: PAYOUTS_ONLY,
+    now: () => clock.t,
+    log: { error() {} },
+  })
+  assert.equal((await engine.tick()).reason, 'not-due')
+  assert.equal(connection.sent.length, 0)
+  // and the site says when it last ran, not that it never has
+  assert.equal((await engine.status()).lastRunAt, paidAt)
 })

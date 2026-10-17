@@ -37,6 +37,8 @@ const RENT_EXEMPT = 890_880n
 const TRANSFERS_PER_TX = 18
 const LAST_RUN = 'quantp:engine:last'
 const LOCK = 'quantp:engine:lock'
+// A transaction preflight refuses before any program runs is sent again this many times.
+const SEND_RETRIES = 2
 
 const sum = (list, field) => list.reduce((s, x) => s + x[field], 0n)
 const isWallet = (address) => {
@@ -194,6 +196,16 @@ export async function buybackInstructions({
   }
 }
 
+/**
+ * Whether preflight refused a transaction before any program ran (so nothing was sent and it left
+ * no logs): a node behind the one that gave the blockhash, say. The public RPC words every such
+ * refusal the same ("Transaction simulation failed", no logs), and sent again with a fresh
+ * blockhash it usually goes through. A program that failed (it has logs, as a buyback past its
+ * slippage does) is not this.
+ */
+export const refusedBeforeRunning = (e) =>
+  /simulation failed/i.test(e?.message || '') && !(e.transactionLogs?.length || e.logs?.length)
+
 /** Why the engine will not send, or null when it is live. */
 export function engineBlocker({ keypair, pinned, paused, badKey = false }) {
   if (!pinned) return 'unpinned' // QUANTP.engine.wallet is not set yet
@@ -224,6 +236,7 @@ export function createQuantpEngine({
   token = QUANTP,
   policy = token.engine,
   log = console,
+  retryMs = 1500,
 }) {
   let keypair = null
   let badKey = false
@@ -318,12 +331,14 @@ export function createQuantpEngine({
   // When the last run started: the store's record (shared by every instance), else this
   // instance's or the wallet's last payout or burn (the ledger), else the wallet's newest
   // transaction of any kind (so a deposit also counts: it can only delay a run, never repeat one).
+  // A store without the record says nothing either way: at its plan limit Upstash refuses about
+  // half the commands, so the run's record can be refused and a later read come back empty.
   async function lastRunAt() {
     const stored = await store.get(LAST_RUN).then(
       (v) => (v == null ? null : Number(v)),
-      () => undefined,
+      () => null,
     )
-    if (stored !== undefined) return stored ?? lastLocal
+    if (stored != null) return Math.max(stored, lastLocal ?? 0)
     const activity = await lastActivity()
     if (activity !== undefined) return Math.max(lastLocal ?? 0, activity ?? 0) || null
     const [newest] = await connection
@@ -337,22 +352,38 @@ export function createQuantpEngine({
     const fees = await connection.getRecentPrioritizationFees().catch(() => [])
     const sorted = fees.map((f) => f.prioritizationFee).sort((a, b) => a - b)
     const price = Math.min(Math.max(sorted[Math.floor(sorted.length * 0.75)] || 0, 10_000), 500_000)
-    const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed')
-    const tx = new VersionedTransaction(
-      new TransactionMessage({
-        payerKey: keypair.publicKey,
-        recentBlockhash: blockhash,
-        instructions: [
-          ComputeBudgetProgram.setComputeUnitLimit({ units }),
-          ComputeBudgetProgram.setComputeUnitPrice({ microLamports: price }),
-          ...instructions,
-        ],
-      }).compileToV0Message(),
-    )
-    tx.sign([keypair])
-    const signature = bs58.encode(tx.signatures[0])
-    // preflight simulates it: a transaction that would fail is refused before it is sent
-    await connection.sendRawTransaction(tx.serialize(), { maxRetries: 3 })
+    for (let attempt = 0; ; attempt++) {
+      const { blockhash, lastValidBlockHeight } = await connection.getLatestBlockhash('confirmed')
+      const tx = new VersionedTransaction(
+        new TransactionMessage({
+          payerKey: keypair.publicKey,
+          recentBlockhash: blockhash,
+          instructions: [
+            ComputeBudgetProgram.setComputeUnitLimit({ units }),
+            ComputeBudgetProgram.setComputeUnitPrice({ microLamports: price }),
+            ...instructions,
+          ],
+        }).compileToV0Message(),
+      )
+      tx.sign([keypair])
+      const signature = bs58.encode(tx.signatures[0])
+      try {
+        // preflight simulates it: a transaction that would fail is refused before it is sent
+        await connection.sendRawTransaction(tx.serialize(), { maxRetries: 3 })
+      } catch (e) {
+        // refused before it was sent: once more with a fresh blockhash, while there is time
+        if (attempt >= SEND_RETRIES || !refusedBeforeRunning(e) || now() + retryMs > deadline)
+          throw e
+        await new Promise((r) => setTimeout(r, retryMs))
+        continue
+      }
+      return confirmed(signature, lastValidBlockHeight, deadline)
+    }
+  }
+
+  // Resolves to `signature` once it is confirmed; throws when it failed, or when it may still land
+  // after `deadline` or its blockhash expired (`unknown`).
+  async function confirmed(signature, lastValidBlockHeight, deadline) {
     for (;;) {
       const [status] = (await connection.getSignatureStatuses([signature])).value
       if (status?.err) throw Error(`Transaction ${signature} failed: ${JSON.stringify(status.err)}`)
