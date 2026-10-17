@@ -147,6 +147,29 @@ Rotate at once if the key may have leaked, and otherwise from time to time:
 4. Cancel any epoch the old key posted that your keeper did not post, before its `claim_start`: the new keeper's `foreign-epoch` alerts name them (it shares the old keeper's records), and `program-ops.mjs --epochs <mint>` lists a coin's epochs.
 5. If the old key did not leak, move its SOL to the new keeper. It keeps receiving the rent of the epochs it posted as they close over the next 30 days, so sweep it again after that. If it leaked, count that SOL as lost.
 
+### $QUANTP payout engine
+
+`server/quantp-engine.mjs` pays $QUANTP holders and buys back and burns $QUANTP automatically, from the keeper tick, at most once an hour. Its rules live in `QUANTP.engine` in `shared/network.mjs`:
+
+- Each run releases the market cap tier's share of the engine wallet's SOL per day, divided by the day's 24 runs: 20% a day below $100k, 50% up to $1M, 100% above (`tiers`). The SOL trickles out, faster as the market cap grows. It keeps `reserveLamports` (0.02 SOL) for fees and releases at most `maxRunLamports` (1 SOL) in one run.
+- 60% of a release (`QUANTP.holdersShareBps`) goes to every wallet holding at least `minHoldBps` (0.15%) of the current supply at that moment, in proportion to its balance, in SOL transfers of 18 per transaction. Pools, program accounts, the team's wallets and the incinerator are never paid. A share under `minTransferLamports`, or too small for an empty wallet's rent, stays in the wallet for a later run.
+- The other 40% buys $QUANTP in its DAMM v2 pool and burns it in the same transaction (`slippageBps` 3%), together with any $QUANTP the wallet already holds. **The first run therefore burns everything the wallet holds**, such as the payout wallet's earlier buybacks.
+- Every transaction is public on-chain, the site's Payouts & burns panel lists them, and `GET /api/quantp/engine` shows the engine's state: whether it is live, its tier, how many wallets are eligible, and what the next run would release.
+
+To turn it on:
+
+1. Pick the wallet. `QUANTP.engine.wallet` pins its public address in the code: the engine refuses any other key. It is the payout wallet now. Keep nothing in it that the engine should not pay out or burn.
+2. Set `QUANTP_ENGINE_SECRET` to that wallet's secret key (base58, or a JSON byte array as Solana CLI keypair files hold it) in Vercel's **Production** environment only, never Preview or Development. Like the keeper's, the key sits in the public function: treat it as exposed, and keep only what the engine should pay out in the wallet. Never paste the key anywhere else, including chat.
+3. Make sure the keeper tick runs (`CRON_SECRET` and the GitHub Actions schedule above), and redeploy.
+4. Fund the wallet with the SOL to pay out, for example the creator fees you claim. The engine splits whatever it holds.
+5. Check `GET /api/quantp/engine`: `live: true`, the eligible count and the next release. After the next tick, `GET /api/keeper/tick` (with the cron secret) returns the run's transactions under `engine`.
+
+`reason` in `/api/quantp/engine` says why it is not live: `unpinned` (no wallet in the code), `no-key`, `bad-key` (the secret could not be read), `key-mismatch` (the key is not the pinned wallet's) or `paused`.
+
+To stop it, set `QUANTP_ENGINE_PAUSED=1` (or remove `QUANTP_ENGINE_SECRET`) and redeploy, or simply move the SOL out of the wallet. If the key may have leaked, move the wallet's SOL and tokens to a new wallet at once, pin the new address, and set its key.
+
+The engine records each run's start in the store (`quantp:engine:last`) before it sends anything, so a run that fails part way is not repeated for an hour, and it stops at the first transaction that fails. With the store down it goes by the wallet's newest transaction instead, which can delay a run but never repeat one.
+
 ## 5. Platform fee (optional)
 
 Set `QUANTPAD_TREASURY` and `QUANTPAD_FEE_BPS` (default 50 = 0.5%, cap 200). The fee is a separate

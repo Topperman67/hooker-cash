@@ -381,6 +381,26 @@
   flex-wrap: wrap;
   margin-bottom: 0;
 }
+/* the payout engine, once it runs */
+.qp-engine {
+  display: grid;
+  gap: 6px;
+  padding: 12px 14px;
+  border-radius: var(--r-md);
+  border: 1px solid rgba(10, 143, 80, 0.35);
+  background: rgba(24, 212, 122, 0.07);
+}
+.qp-engine-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0;
+}
+.qp-engine-text {
+  margin: 0;
+  font-size: var(--t-xs);
+}
 .qp-ledger-totals {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -593,6 +613,10 @@
 :root[data-theme='dark'] .qp-fee,
 :root[data-theme='dark'] .qp-ledger-totals {
   background: rgba(255, 255, 255, 0.04);
+}
+:root[data-theme='dark'] .qp-engine {
+  border-color: rgba(24, 212, 122, 0.3);
+  background: rgba(24, 212, 122, 0.08);
 }
 :root[data-theme='dark'] .qp-fee.is-now {
   border-color: rgba(143, 164, 255, 0.6);

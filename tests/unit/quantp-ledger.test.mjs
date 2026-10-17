@@ -342,7 +342,8 @@ test('payouts come in bursts: transactions sent together are one, newest first',
   })
   const entries = [REAL.payout3, REAL.funding, later, REAL.payout1].flatMap((t) => ledgerEntries(t))
   const ledger = quantpLedger(entries, { payoutLamports: 1_580_000_000n })
-  assert.deepEqual(ledger.wallets, { payout: PAYOUT, creator: CREATOR })
+  // the payout engine signs with the payout wallet
+  assert.deepEqual(ledger.wallets, { payout: PAYOUT, creator: CREATOR, engine: PAYOUT })
   assert.equal(ledger.payoutLamports, '1580000000')
   assert.equal(ledger.payouts.length, 2)
   // the later one, to a single holder

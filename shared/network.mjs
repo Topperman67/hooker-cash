@@ -51,6 +51,27 @@ export const QUANTP = Object.freeze({
   // share, and the payout wallet it funds, which sent holders round 1 (0.55 SOL to 51 wallets).
   creator: '3B53Qg1mrerKLhYNHuTH57cT4DhPgmaUvhm7Zx3zLvHc',
   payoutWallet: 'GLAn4nGLTcwCmPJsTkLL4LrFaWCADb5dGXKjNCd2FAvn',
+  // The payout engine (server/quantp-engine.mjs): every hour it releases a slice of its wallet's
+  // SOL, pays 60% of it to every wallet holding at least `minHoldBps` of the supply (by balance)
+  // and buys back and burns $QUANTP with the rest. The slice is the market cap tier's share per
+  // day spread over the day's runs, so it trickles out, faster as the market cap grows.
+  engine: Object.freeze({
+    // The engine wallet's public address: the payout wallet, which paid round 1 by hand. Its key
+    // is QUANTP_ENGINE_SECRET on the server, which must match: otherwise the engine only plans.
+    wallet: 'GLAn4nGLTcwCmPJsTkLL4LrFaWCADb5dGXKjNCd2FAvn',
+    minHoldBps: 15, // 0.15% of the supply
+    everySecs: 3600,
+    tiers: Object.freeze([
+      Object.freeze({ belowUsd: 100_000, dailyBps: 2000 }),
+      Object.freeze({ belowUsd: 1_000_000, dailyBps: 5000 }),
+      Object.freeze({ belowUsd: null, dailyBps: 10_000 }),
+    ]),
+    reserveLamports: '20000000', // kept in the wallet for network fees
+    maxRunLamports: '1000000000', // released in one run at most
+    minTransferLamports: '20000', // a holder's share below this waits for a later run
+    minBuybackLamports: '2000000', // a buyback below this waits for a later run
+    slippageBps: 300,
+  }),
   dexscreener: 'https://dexscreener.com/solana/85tswjnucttvgvtqzwzchnbfmor4dv581a3wg7buzgvf',
   path: '/quantp',
 })

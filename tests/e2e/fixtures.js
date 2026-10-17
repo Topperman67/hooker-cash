@@ -501,12 +501,37 @@ export const quantpLedger = ({
   }
 }
 
-/** Answers $QUANTP's routes; `ledger` is the /api/quantp/ledger body, or a status to fail with. */
+// /api/quantp/engine for the payout engine running on the payout wallet: the 20%-a-day tier, 31
+// wallets eligible, last run 20 minutes ago (as planned from mainnet on 2026-10-16).
+export const quantpEngine = (over = {}) => ({
+  configured: true,
+  wallet: QUANTP.payoutWallet,
+  live: true,
+  reason: null,
+  everySecs: 3600,
+  minHoldBps: 15,
+  minHold: '1500000000000',
+  holdersShareBps: 6000,
+  marketCapUsd: 6381,
+  dailyBps: 2000,
+  balance: '1021862000',
+  next: { release: '8349000', holders: '4958000', buyback: '3340000', paying: 28 },
+  eligible: 31,
+  lastRunAt: Math.floor(Date.now() / 1000) - 1200,
+  state: 'ok',
+  ...over,
+})
+
+/**
+ * Answers $QUANTP's routes; `ledger` is the /api/quantp/ledger body, or a status to fail with, and
+ * `engine` the /api/quantp/engine body (not configured by default).
+ */
 export async function stubQuantp(
   page,
-  { snapshot = quantpSnapshot(), ledger = quantpLedger() } = {},
+  { snapshot = quantpSnapshot(), ledger = quantpLedger(), engine = { configured: false } } = {},
 ) {
   await page.route('**/api/quantp', (route) => route.fulfill({ json: snapshot }))
+  await page.route('**/api/quantp/engine', (route) => route.fulfill({ json: engine }))
   await page.route('**/api/quantp/trades*', (route) =>
     route.fulfill({ json: { items: [], total: 0, next: null, source: 'indexer' } }),
   )

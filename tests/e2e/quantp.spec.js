@@ -5,9 +5,45 @@ import { test, expect } from '@playwright/test'
 import { TransactionInstruction, VersionedTransaction } from '@solana/web3.js'
 import { TOKEN_2022_PROGRAM_ID, decodeBurnCheckedInstruction } from '@solana/spl-token'
 import { QUANTP } from '../../shared/network.mjs'
-import { enter, quantpLedger, quantpSnapshot, stubApi, stubQuantp } from './fixtures.js'
+import {
+  enter,
+  quantpEngine,
+  quantpLedger,
+  quantpSnapshot,
+  stubApi,
+  stubQuantp,
+} from './fixtures.js'
 
 const ledgerPanel = (page) => page.getByRole('region', { name: 'Payouts & burns' })
+
+test('the payout engine shows once it runs: the hourly rule at this tier, who it pays, its runs', async ({
+  page,
+}) => {
+  await stubApi(page)
+  await stubQuantp(page, { engine: quantpEngine() })
+  await enter(page)
+  await page.goto(QUANTP.path)
+  const engine = ledgerPanel(page).locator('.qp-engine')
+  await expect(engine).toContainText('Automatic payouts')
+  await expect(engine).toContainText('Running hourly')
+  await expect(engine).toContainText(
+    'releases 20% a day of its SOL (more as the market cap grows): 60% to the 31 wallets holding at least 1.5M $QUANTP (0.15% of the supply), by balance, and 40% to buy back and burn $QUANTP.',
+  )
+  await expect(engine).toContainText('Next run about 0.0083 SOL · last run 20m ago')
+  await expect(engine.getByRole('link', { name: 'GLAn…FAvn' })).toHaveAttribute(
+    'href',
+    `https://solscan.io/account/${QUANTP.payoutWallet}`,
+  )
+})
+
+test('an engine that is set up but not running yet is not shown', async ({ page }) => {
+  await stubApi(page)
+  await stubQuantp(page, { engine: quantpEngine({ live: false, reason: 'no-key' }) })
+  await enter(page)
+  await page.goto(QUANTP.path)
+  await expect(ledgerPanel(page).locator('tbody tr')).toHaveCount(1)
+  await expect(ledgerPanel(page).locator('.qp-engine')).toHaveCount(0)
+})
 
 test('payouts list round 1 as one burst with its totals, and Burns says plainly there are none yet', async ({
   page,

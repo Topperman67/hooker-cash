@@ -16,6 +16,7 @@ import {
 } from './keeper.mjs'
 import { createPriceFeed } from './prices.mjs'
 import { createGeckoFeed, createQuantpFeed, createQuantpLedger } from './quantp.mjs'
+import { createQuantpEngine } from './quantp-engine.mjs'
 import { createRpcProxy, globalRpcLimit, writeRpcResponse } from './rpc-proxy.mjs'
 import { configuredStore, createFileStore } from './storage.mjs'
 import * as requestLimits from './request-limits.mjs'
@@ -97,6 +98,7 @@ const GET_ROUTES = new Set([
   '/api/quantp/candles',
   '/api/quantp/trades',
   '/api/quantp/ledger',
+  '/api/quantp/engine',
 ])
 const COIN_ROUTE = /^\/api\/coins\/([^/]+)(?:\/(trades|candles))?$/
 const QUANTUM_ROUTE = /^\/api\/quantum\/([^/]+)(?:\/(claims))?$/
@@ -505,6 +507,17 @@ export async function createApplication(options = {}) {
   const quantp = options.quantpFeed || createQuantpFeed({ connection, solUsd, ...quantpRequest })
   const gecko = options.geckoFeed || createGeckoFeed(quantpRequest)
   const quantpLedger = options.quantpLedger || createQuantpLedger({ connection })
+  // The $QUANTP payout engine (server/quantp-engine.mjs): it sends only with QUANTP_ENGINE_SECRET
+  // set to the wallet pinned in QUANTP.engine.wallet, from the keeper tick, once an hour.
+  const quantpEngine =
+    options.quantpEngine ||
+    createQuantpEngine({
+      connection,
+      store,
+      feed: quantp,
+      secret: process.env.QUANTP_ENGINE_SECRET,
+      paused: process.env.QUANTP_ENGINE_PAUSED === '1',
+    })
   const mediaLimit =
     options.mediaLimitBytes || Number(process.env.QUANTPAD_MEDIA_LIMIT_MB || 256) * 1024 * 1024
   // One visitor may use only a slice of the shared media quota per day. Every write is charged at
@@ -1362,6 +1375,10 @@ export async function createApplication(options = {}) {
         }
         return json(res, 200, page, QUANTP_MARKET_CACHE)
       }
+      if (req.method === 'GET' && path === '/api/quantp/engine') {
+        await limitRead(req)
+        return json(res, 200, await quantpEngine.status(), QUANTP_LEDGER_CACHE)
+      }
       if (req.method === 'GET' && path === '/api/quantp/ledger') {
         await limitRead(req)
         return json(res, 200, await quantpLedger.ledger(), QUANTP_LEDGER_CACHE)
@@ -1421,11 +1438,16 @@ export async function createApplication(options = {}) {
         if (!secretMatches(supplied, String(process.env.CRON_SECRET || '').trim()))
           return json(res, 401, { error: 'Unauthorized' })
         const started = Date.now()
+        // The payout engine first, when its hour is up (a store read otherwise), within 25 s: the
+        // index pass and the keeper then share what is left of the budget.
+        const payouts = await quantpEngine
+          .tick({ deadline: started + 25_000 })
+          .catch((e) => ({ ran: false, error: e.message }))
         const index = await indexer.sync({ budget: 8, ...INDEX_MS })
         const keep = await keeper.tick({ timeLimitMs: keeperBudget(started) })
         // the keeper just ran: the background pass after this response must not run it again
         await store.set('keeper:throttle', 1, { ttl: 120000 }).catch(() => {})
-        return json(res, 200, { index, keeper: keep })
+        return json(res, 200, { index, keeper: keep, engine: payouts })
       }
 
       // Only the POST routes are left (allowedMethods above).

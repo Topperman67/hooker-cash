@@ -104,6 +104,37 @@ function Burst({ burst }) {
 }
 
 /**
+ * The payout engine (/api/quantp/engine), shown once it runs: what it does every hour at the
+ * current market cap, how many wallets it pays, and its next and last run.
+ */
+function Engine({ engine, symbol, decimals }) {
+  if (!engine?.live) return null
+  const minHold = Number(engine.minHold) / 10 ** decimals
+  const holdersPct = engine.holdersShareBps / 100
+  const ticker = `$${symbol}`
+  return (
+    <div className="qp-engine">
+      <p className="qp-engine-head">
+        <strong>Automatic payouts</strong>
+        <span className="chip chip-grad">Running hourly</span>
+      </p>
+      <p className="qp-engine-text">
+        Every hour the engine wallet{' '}
+        <Address value={engine.wallet} href={explorer.account(engine.wallet)} /> releases{' '}
+        {engine.dailyBps / 100}% a day of its SOL (more as the market cap grows): {holdersPct}% to
+        the {engine.eligible.toLocaleString('en-US')} wallets holding at least {compact(minHold)}{' '}
+        {ticker} ({engine.minHoldBps / 100}% of the supply), by balance, and {100 - holdersPct}% to
+        buy back and burn {ticker}.
+      </p>
+      <p className="faint qp-engine-text">
+        Next run about {sol(toSol(engine.next.release), { digits: 4 })} ·{' '}
+        {engine.lastRunAt ? `last run ${ago(engine.lastRunAt)} ago` : 'no run yet'}
+      </p>
+    </div>
+  )
+}
+
+/**
  * $QUANTP's payouts to holders and its burns, read from the team's wallets by /api/quantp/ledger,
  * so holders can check the stated 60/40 split against what was actually paid and burned. `fees`
  * is /api/quantp's fees earned so far, `burned` the whole tokens gone from the supply.
@@ -111,6 +142,7 @@ function Burst({ burst }) {
 export default function QuantpLedger({ symbol, decimals, fees, burned }) {
   const [tab, setTab] = useState('payouts')
   const ledger = useResource('/api/quantp/ledger', 30_000)
+  const engine = useResource('/api/quantp/engine', 60_000).data
   const d = ledger.data
   const t = d?.totals
   const teamBurned = t ? Number(t.burnedAmount) / 10 ** decimals : null
@@ -126,6 +158,7 @@ export default function QuantpLedger({ symbol, decimals, fees, burned }) {
   else if (tab === 'payouts')
     body = (
       <>
+        <Engine engine={engine} symbol={symbol} decimals={decimals} />
         <dl className="qp-ledger-totals">
           <Stat label="Paid out">
             <span className="num">{sol(toSol(t.paidLamports), { digits: 3 })}</span>

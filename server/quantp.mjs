@@ -493,19 +493,28 @@ const TOKEN_PROGRAMS = new Set([network.tokenProgram, network.token2022Program])
 // web3.js gives keys as PublicKeys, the RPC's JSON as strings.
 const key = (v) => (v == null ? null : String(v.toBase58?.() ?? v))
 
-/** The team wallets the payouts and burns are read from. */
+/**
+ * The team wallets the payouts and burns are read from: the payout wallet the team pays from by
+ * hand, the payout engine's wallet once it is set (server/quantp-engine.mjs), and the creator.
+ * `payers` are the ones whose SOL transfers to holders are payouts.
+ */
 export function teamWallets(token = QUANTP) {
+  const engine = token.engine?.wallet || null
+  const payers = [...new Set([token.payoutWallet, engine].filter(Boolean))]
   return {
     payout: token.payoutWallet,
     creator: token.creator,
-    all: [...new Set([token.payoutWallet, token.creator].filter(Boolean))],
+    engine,
+    payers,
+    all: [...new Set([...payers, token.creator].filter(Boolean))],
   }
 }
 
 /**
  * What one transaction (getParsedTransaction's shape) did for the ledger, as entries:
  *   - payout: a transaction of nothing but SOL transfers (compute budget and memos aside) out of
- *     the payout wallet, as the team's payout page sends them. A transfer to one of the team's own
+ *     a paying wallet (the payout wallet or the engine's), as the team's payout page and the engine
+ *     send them. A transfer to one of the team's own
  *     wallets counts only beside transfers to others (a holder paid in a round), never alone (SOL
  *     moved back);
  *   - burn: what a team wallet burned of the token (Burn, BurnChecked, or a transfer to the
@@ -532,19 +541,19 @@ export function ledgerEntries(tx, { token = QUANTP, wallets = teamWallets(token)
   const isTransfer = (ix) => program(ix) === SYSTEM_PROGRAM && ix.parsed?.type === 'transfer'
   const out = []
 
-  if (top.every((ix) => isTransfer(ix) || PAYOUT_EXTRAS.has(program(ix)))) {
+  const payer = top.find((ix) => isTransfer(ix) && wallets.payers.includes(ix.parsed.info.source))
+    ?.parsed.info.source
+  if (payer && top.every((ix) => isTransfer(ix) || PAYOUT_EXTRAS.has(program(ix)))) {
     const sent = top.filter(
       (ix) =>
-        isTransfer(ix) &&
-        ix.parsed.info.source === wallets.payout &&
-        ix.parsed.info.destination !== wallets.payout,
+        isTransfer(ix) && ix.parsed.info.source === payer && ix.parsed.info.destination !== payer,
     )
     const paid = sent.some((ix) => !team.has(ix.parsed.info.destination)) ? sent : []
     if (paid.length)
       out.push({
         kind: 'payout',
         ...base,
-        wallet: wallets.payout,
+        wallet: payer,
         lamports: paid.reduce((s, ix) => s + big(ix.parsed.info.lamports), 0n),
         recipients: [...new Set(paid.map((ix) => ix.parsed.info.destination))],
       })
@@ -617,7 +626,8 @@ const BURST_GAP = 1800
 
 /**
  * The /api/quantp/ledger lists from every entry read so far (ledgerEntries), newest first.
- *   - payouts: bursts, each the payout transactions sent within BURST_GAP of the one before.
+ *   - payouts: bursts, each the payout transactions one wallet sent within BURST_GAP of the one
+ *     before.
  *   - burns: each with `solSpent`, what the team's wallets paid for the tokens they bought since
  *     the burn before (the buyback, in small buys or in the burn's own transaction), in proportion
  *     to the amount burned; null when nothing was bought for it. Buys in the launch (the creator's
@@ -645,7 +655,9 @@ export function quantpLedger(
       pending.amount += e.amount
     } else if (e.kind === 'payout') {
       const last = bursts.at(-1)
-      if (last && e.timestamp - last.at(-1).timestamp <= BURST_GAP) last.push(e)
+      const prev = last?.at(-1)
+      if (prev && prev.wallet === e.wallet && e.timestamp - prev.timestamp <= BURST_GAP)
+        last.push(e)
       else bursts.push([e])
     } else if (e.kind === 'burn') {
       let solSpent = null
@@ -662,12 +674,13 @@ export function quantpLedger(
   const paid = bursts.flat()
   return {
     mint: token.mint,
-    wallets: { payout: wallets.payout, creator: wallets.creator },
+    wallets: { payout: wallets.payout, creator: wallets.creator, engine: wallets.engine },
     payoutLamports: payoutLamports == null ? null : payoutLamports.toString(),
     payouts: bursts.reverse().map((burst) => {
       const recipients = new Set(burst.flatMap((e) => e.recipients))
       return {
         timestamp: burst[0].timestamp,
+        wallet: burst[0].wallet,
         lamports: sum(burst, 'lamports').toString(),
         recipients: recipients.size,
         recipient: recipients.size === 1 ? [...recipients][0] : null,
