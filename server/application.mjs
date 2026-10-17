@@ -1538,12 +1538,14 @@ export async function createApplication(options = {}) {
         await limitRead(req)
         // With what was really paid and burned: the ledger as cached on this instance, never
         // waited for. Asking starts a refresh when one is due, and asking again once the live
-        // figures are in gets whatever it finished meanwhile. An instance that has read nothing
-        // yet answers `payouts: null`, which the CDN holds only briefly.
+        // figures are in gets whatever it finished meanwhile. An instance still reading them for
+        // the first time answers `payouts: null`, which the CDN holds only briefly; one whose read
+        // failed (retried only after a while) answers null, held as long as the live figures.
         quantpLedger.peek()
         const snapshot = await quantp.snapshot()
         const payouts = ledgerSummary(quantpLedger.peek())
-        return json(res, 200, { ...snapshot, payouts }, payouts ? QUANTP_CACHE : QUANTP_COLD_CACHE)
+        const cache = payouts || !quantpLedger.loading?.() ? QUANTP_CACHE : QUANTP_COLD_CACHE
+        return json(res, 200, { ...snapshot, payouts }, cache)
       }
       if (req.method === 'GET' && path === '/api/quantp/candles') {
         await limitRead(req)

@@ -82,11 +82,15 @@ const engineStatus = (over = {}) => ({
   ...over,
 })
 
-/** The app with stub $QUANTP sources: change `ledger.value`, `engine.value` (an Error throws). */
+/**
+ * The app with stub $QUANTP sources: change `ledger.value`, `engine.value` (an Error throws), and
+ * what the ledger's peek() and loading() say (`ledger.peeked`, `ledger.reading`).
+ */
 async function boot({ now = () => NOW * 1000 } = {}) {
   const ledger = {
     value: ledgerValue(),
     peeked: undefined,
+    reading: false,
     asked: [],
     async ledger() {
       if (this.value instanceof Error) throw this.value
@@ -94,6 +98,9 @@ async function boot({ now = () => NOW * 1000 } = {}) {
     },
     peek() {
       return this.peeked === undefined ? this.value : this.peeked
+    },
+    loading() {
+      return this.reading
     },
     async forWallet(wallet, options) {
       this.asked.push([wallet, options])
@@ -255,13 +262,19 @@ test('GET /api/quantp/holder: 400 for anything but a wallet address, else what i
 test('GET /api/quantp: the ledger as cached, never waited for; none yet is cached briefly', async () => {
   const { ledger, get, close } = await boot()
   try {
-    // nothing read yet on this instance
+    // nothing read yet on this instance, and the first read under way
     ledger.peeked = null
+    ledger.reading = true
     const cold = await get('/api/quantp')
     assert.equal(cold.status, 200)
     assert.equal(cold.body.payouts, null)
     assert.equal(cold.cache, QUANTP_COLD_CACHE)
     assert.equal(QUANTP_COLD_CACHE, 'public, max-age=0, s-maxage=2, stale-while-revalidate=5')
+    // a read that failed is tried again only after a while: null, cached as long as the rest
+    ledger.reading = false
+    const failed = await get('/api/quantp')
+    assert.equal(failed.body.payouts, null)
+    assert.equal(failed.cache, QUANTP_CACHE)
     // read: the summary, cached as long as the live figures
     ledger.peeked = ledgerValue({ unread: 4 })
     const warm = await get('/api/quantp')

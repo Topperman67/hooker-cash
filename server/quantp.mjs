@@ -59,6 +59,7 @@ function settleWithin(promise, ms) {
  * without the value counting as stale before `ttl`.
  * Resolves to { value, at, state: 'ok' | 'stale' | 'down' }. read.peek() gives the same at once,
  * never waiting: it starts a refresh when one is due and leaves it to finish in the background.
+ * read.loading() says whether a refresh is under way.
  */
 export function cachedSource(load, { ttl, retry = ttl, wait = 6000, now = Date.now, due }) {
   let last = null
@@ -93,6 +94,7 @@ export function cachedSource(load, { ttl, retry = ttl, wait = 6000, now = Date.n
     if (refreshDue(now())) refresh()
     return cached()
   }
+  read.loading = () => pending !== null
   return read
 }
 
@@ -809,7 +811,8 @@ export function quantpLedger(
  * lists may then be missing transactions, older ones first) and `since` (the oldest transaction
  * read). `state` is 'partial' while incomplete. It throws a 503 when the histories have never been
  * listed on this instance. peek() is the same, or null, at once: it never waits for a refresh.
- * forWallet(address) resolves to what the payouts read so far sent that wallet.
+ * loading() says whether a refresh is under way. forWallet(address) resolves to what the payouts
+ * read so far sent that wallet.
  */
 export function createQuantpLedger({
   connection,
@@ -947,6 +950,7 @@ export function createQuantpLedger({
       const r = source.peek()
       return r.state === 'down' ? null : shown(r)
     },
+    loading: source.loading,
     // The payouts that paid `address` (newest first, at most `limit` listed), with the lists'
     // `complete` and `since`.
     async forWallet(address, { limit = 50 } = {}) {

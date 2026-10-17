@@ -1135,7 +1135,9 @@ test('peek() answers at once with what is cached, and refreshes behind it', asyn
   const tick = () => new Promise((r) => setImmediate(r))
   const ledger = createQuantpLedger({ connection, now: () => clock.t, ttl: 60_000 })
   // nothing yet: null, at once, and the first load has started
+  assert.equal(ledger.loading(), false)
   assert.equal(ledger.peek(), null)
+  assert.equal(ledger.loading(), true)
   await tick()
   assert.equal(asked, 2) // both wallets, waiting at the gate
   // asked again while it loads: still null, and no second load
@@ -1149,6 +1151,7 @@ test('peek() answers at once with what is cached, and refreshes behind it', asyn
   assert.equal(value.state, 'ok')
   assert.equal(value.totals.payoutTxs, 2)
   assert.equal(asked, 2)
+  assert.equal(ledger.loading(), false)
   // past its lifetime: the old lists at once, marked stale, while a refresh runs
   clock.t += 61_000
   const old = ledger.peek()
