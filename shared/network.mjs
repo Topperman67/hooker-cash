@@ -28,10 +28,10 @@ export const brand = Object.freeze({
 // $QUANTP, Quant Pad's own token. It launched through Midas (not Quant Pad's launch flow) on a
 // Meteora DBC transfer-hook pool: a Token-2022 mint whose transfers run Midas's hook program, under
 // Midas's own DBC config. Its pool charges a flat 2% per trade in SOL until the curve graduates to
-// a DAMM v2 pool that charges 5%; nothing on-chain charges more. The team says the creator's share
-// of those fees goes 60% to holders in SOL and 40% to buying back and burning $QUANTP, paid out
-// off-chain. Never add `config` to QUANTPAD_DBC_CONFIG: that would
-// point new launches at Midas's config.
+// a DAMM v2 pool that charges 5%; nothing on-chain charges more. The team says it funds the payout
+// wallet from the creator's fee claims, and that the creator's share of those fees goes 60% to
+// holders in SOL and 40% to buying back and burning $QUANTP, paid out off-chain. Never add `config`
+// to QUANTPAD_DBC_CONFIG: that would point new launches at Midas's config.
 export const QUANTP = Object.freeze({
   mint: '7cAJWZyyG7VqFJ4HzAxKNG8Xch6mJY4CfwPbfP6cJKiy',
   pool: '85TSwjnucTtvgvtqzWzChNBfmoR4Dv581A3WG7Buzgvf',
@@ -51,6 +51,9 @@ export const QUANTP = Object.freeze({
   // share, and the payout wallet it funds, which sent holders round 1 (0.55 SOL to 51 wallets).
   creator: '3B53Qg1mrerKLhYNHuTH57cT4DhPgmaUvhm7Zx3zLvHc',
   payoutWallet: 'GLAn4nGLTcwCmPJsTkLL4LrFaWCADb5dGXKjNCd2FAvn',
+  // The team's other addresses (its ops wallets or exchange deposit addresses), which the ledger
+  // treats as team wallets.
+  otherWallets: Object.freeze([]),
   // The payout engine (server/quantp-engine.mjs): every hour it releases a slice of its wallet's
   // SOL, pays 60% of it to every wallet holding at least `minHoldBps` of the supply (by balance)
   // and buys back and burns $QUANTP with the rest. The slice is the market cap tier's share per
@@ -68,8 +71,10 @@ export const QUANTP = Object.freeze({
     ]),
     reserveLamports: '20000000', // kept in the wallet for network fees
     maxRunLamports: '1000000000', // released in one run at most
-    minTransferLamports: '20000', // a holder's share below this waits for a later run
-    minBuybackLamports: '2000000', // a buyback below this waits for a later run
+    // A holder's share below this is skipped that run and stays in the wallet, as does a buyback
+    // below its minimum: both are released again, split 60/40, in later runs.
+    minTransferLamports: '20000',
+    minBuybackLamports: '2000000',
     slippageBps: 300,
   }),
   dexscreener: 'https://dexscreener.com/solana/85tswjnucttvgvtqzwzchnbfmor4dv581a3wg7buzgvf',
