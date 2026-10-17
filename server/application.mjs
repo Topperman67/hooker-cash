@@ -173,7 +173,7 @@ const BUYBACK_LATE_SECS = 10_800
  * and burn, in seconds, or null), or { ok: false, reason }. Reasons: 'not-live' (switched off or
  * not set up), 'late' (holders are due a payout and none went out for LATE_SECS),
  * 'buyback-failing' (a buyback is due and nothing was burned for BUYBACK_LATE_SECS) and 'unknown'
- * (no status or ledger, or the ledger has newer transactions still to read).
+ * (no status or ledger, or the ledger has a newer transaction still to read).
  */
 export function engineHealth(status, ledger, nowSecs) {
   if (!status || !ledger) return { ok: false, reason: 'unknown' }
@@ -190,8 +190,12 @@ export function engineHealth(status, ledger, nowSecs) {
   } catch {}
   const late = Number(status.next?.paying) > 0 && !(lastPaidAt > nowSecs - LATE_SECS)
   const failing = buyback > 0n && !(lastBurnAt > nowSecs - BUYBACK_LATE_SECS)
-  // the ledger reads newest first: unread transactions may be the run that is missing
-  if ((late || failing) && ledger.unread > 0) return { ok: false, reason: 'unknown' }
+  // The ledger reads newest first: a transaction newer than the last payout (or burn) that it has
+  // not read yet may be the run that is missing. One it gave up reading (`unreadable`: dust anyone
+  // can send, in a version the node cannot return) is left out, so it cannot hide a late run.
+  const unreadAfter = (t) => ledger.newestUnreadAt > (t ?? 0)
+  if ((late && unreadAfter(lastPaidAt)) || (failing && unreadAfter(lastBurnAt)))
+    return { ok: false, reason: 'unknown' }
   if (late) return { ok: false, reason: 'late' }
   if (failing) return { ok: false, reason: 'buyback-failing' }
   return { ok: true, lastPaidAt, lastBurnAt }

@@ -794,9 +794,16 @@ export function quantpLedger(
   }
 }
 
+// Reads of one transaction that may fail before the ledger stops hurrying for it. It is still
+// asked for on every refresh, after the rest, but no longer refreshes the lists every partialTtl
+// or holds up the engine's health check: anyone can send the team's wallets dust in a transaction
+// version the node cannot return.
+const READ_TRIES = 3
+
 /**
  * $QUANTP's payouts and burns from the team wallets' histories, read a part at a time. Each refresh
- * (every `ttl` per instance, every `partialTtl` while the lists are incomplete):
+ * (every `ttl` per instance, every `partialTtl` while there is more to list, or to read that has
+ * not failed READ_TRIES times):
  *   - lists every wallet's signatures newer than the newest one listed (the wallets at once), at
  *     most `maxPages` pages of `pageLimit`. A listing cut off there leaves a cursor on what it did
  *     not reach: the older history on a first listing, or the gap down to the newest signature
@@ -807,12 +814,14 @@ export function quantpLedger(
  *     once. On the public RPC, which rate-limits hard, it pauses between batches;
  *   - reads the payout wallet's balance (one call).
  * ledger() resolves to quantpLedger's lists with `updatedAt`, `state`, `unread` (transactions
- * listed but not read yet), `complete` (false while a cursor is open or anything is unread: the
- * lists may then be missing transactions, older ones first) and `since` (the oldest transaction
- * read). `state` is 'partial' while incomplete. It throws a 503 when the histories have never been
- * listed on this instance. peek() is the same, or null, at once: it never waits for a refresh.
- * loading() says whether a refresh is under way. forWallet(address) resolves to what the payouts
- * read so far sent that wallet.
+ * listed but not read yet), `unreadable` (how many of those failed READ_TRIES reads),
+ * `newestUnreadAt` (the block time of the newest unread one, unreadable ones aside, or null),
+ * `complete` (false while a cursor is open or anything is unread: the lists may then be missing
+ * transactions, older ones first) and `since` (the oldest transaction read). `state` is 'partial'
+ * while incomplete. It throws a 503 when the histories have never been listed on this instance.
+ * peek() is the same, or null, at once: it never waits for a refresh. loading() says whether a
+ * refresh is under way. forWallet(address) resolves to what the payouts read so far sent that
+ * wallet.
  */
 export function createQuantpLedger({
   connection,
@@ -833,6 +842,7 @@ export function createQuantpLedger({
   const failed = new Map() // signature -> reads that came back empty or were refused
   const newest = new Map() // wallet -> the newest signature listed
   const cursors = new Map() // wallet -> [{ before, until }]: ranges of its history not listed yet
+  let hurry = false // the last load left more to list, or to read that may yet be read
   const publicRpc = String(connection?.rpcEndpoint ?? '').includes('api.mainnet-beta.solana.com')
 
   // Up to `pages` pages of `wallet`'s signatures, newest first, older than `before` and newer than
@@ -908,16 +918,26 @@ export function createQuantpLedger({
           .then(() => connection.getBalance(new PublicKey(wallets.payout), 'confirmed'))
           .then(BigInt, () => null)
       : null
+    // The oldest transaction read; of those left to read, how many failed READ_TRIES times, and
+    // the newest of the rest (one listed without a block time counts as now).
     let since = null
-    for (const s of read.keys()) {
-      const t = listed.get(s)?.blockTime
-      if (t != null && (since == null || t < since)) since = t
+    let unreadable = 0
+    let newestUnreadAt = null
+    for (const [s, { blockTime }] of listed) {
+      if (read.has(s)) {
+        if (blockTime != null && (since == null || blockTime < since)) since = blockTime
+      } else if ((failed.get(s) ?? 0) >= READ_TRIES) unreadable++
+      else newestUnreadAt = Math.max(newestUnreadAt ?? 0, blockTime ?? Math.floor(now() / 1000))
     }
     const unread = listed.size - read.size
+    const listing = [...cursors.values()].some((open) => open.length > 0)
+    hurry = listing || unread > unreadable
     return {
       ...quantpLedger([...read.values()].flat(), { token, wallets, payoutLamports }),
       unread,
-      complete: unread === 0 && [...cursors.values()].every((open) => !open.length),
+      unreadable,
+      newestUnreadAt,
+      complete: unread === 0 && !listing,
       since,
     }
   }
@@ -927,7 +947,7 @@ export function createQuantpLedger({
     retry: 30_000,
     wait: 8_000,
     now,
-    due: (value) => (value.complete ? ttl : partialTtl),
+    due: () => (hurry ? partialTtl : ttl),
   })
   const shown = (r) => ({
     ...r.value,

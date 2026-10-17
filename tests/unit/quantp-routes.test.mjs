@@ -23,13 +23,19 @@ const HOLDER = '57uMvKGYH1xcrwPSXHjtQFbzApmDGhQi1RVa6pzvXb2u'
 const OTHER = '3rkwX6jPuVs5iCBJMEUJu2Ch7qKE7Gm8B5U5qYW8TBK6'
 const NOW = 1_792_224_000 // 2026-10-17 08:00 UTC
 
-/** A ledger() value: `payouts` hourly payouts and `burns` hourly burns by the engine's wallet. */
+/**
+ * A ledger() value: `payouts` hourly payouts and `burns` hourly burns by the engine's wallet, and
+ * `unread` transactions not read yet, `unreadable` of them given up on, the newest of the rest
+ * from `unreadAt`.
+ */
 function ledgerValue({
   payouts = 3,
   burns = 2,
   paidAt = NOW - 600,
   burnedAt = NOW - 590,
   unread = 0,
+  unreadable = 0,
+  unreadAt = unread > unreadable ? NOW - 60 : null,
 } = {}) {
   return {
     mint: QUANTP.mint,
@@ -63,6 +69,8 @@ function ledgerValue({
       unburnedByWallet: {},
     },
     unread,
+    unreadable,
+    newestUnreadAt: unreadAt,
     complete: unread === 0,
     since: 1792126586,
     updatedAt: NOW,
@@ -353,7 +361,7 @@ test('GET /api/quantp/engine/health: 200 while it pays and buys back on time, el
     assert.deepEqual(await health(), [503, { ok: false, reason: 'buyback-failing' }])
     engine.value = engineStatus({ next: { release: '1', holders: '1', buyback: '0', paying: 30 } })
     assert.equal((await health())[0], 200)
-    // what cannot be told: no status, no ledger, or newer transactions still unread
+    // what cannot be told: no status, no ledger, or a newer transaction still unread
     engine.value = Error('fetch failed')
     assert.deepEqual(await health(), [503, { ok: false, reason: 'unknown' }])
     engine.value = engineStatus()
@@ -361,6 +369,19 @@ test('GET /api/quantp/engine/health: 200 while it pays and buys back on time, el
     assert.deepEqual(await health(), [503, { ok: false, reason: 'unknown' }])
     ledger.value = ledgerValue({ paidAt: NOW - 9_000, unread: 3 })
     assert.deepEqual(await health(), [503, { ok: false, reason: 'unknown' }])
+    ledger.value = ledgerValue({ burnedAt: NOW - 11_000, unread: 1, unreadAt: NOW - 10_000 })
+    assert.deepEqual(await health(), [503, { ok: false, reason: 'unknown' }])
+    // only older ones unread (history still being read), or one given up on (dust in a version
+    // the node cannot return): late is late
+    ledger.value = ledgerValue({ paidAt: NOW - 9_000, unread: 40, unreadAt: NOW - 90_000 })
+    assert.deepEqual(await health(), [503, { ok: false, reason: 'late' }])
+    ledger.value = ledgerValue({ paidAt: NOW - 9_000, unread: 1, unreadable: 1 })
+    assert.deepEqual(await health(), [503, { ok: false, reason: 'late' }])
+    ledger.value = ledgerValue({ burnedAt: NOW - 11_000, unread: 1, unreadable: 1 })
+    assert.deepEqual(await health(), [503, { ok: false, reason: 'buyback-failing' }])
+    // a newer one unread while all is on time: healthy
+    ledger.value = ledgerValue({ unread: 2 })
+    assert.equal((await health())[0], 200)
     // another wallet's payouts are not the engine's
     ledger.value = ledgerValue()
     for (const p of ledger.value.payouts) p.wallet = QUANTP.creator

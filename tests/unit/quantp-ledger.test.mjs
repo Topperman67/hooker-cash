@@ -1103,6 +1103,54 @@ test('a transaction that failed to read waits behind the others', async () => {
   assert.equal((await ledger.ledger()).unread, 0)
 })
 
+test('one that fails 3 reads is still asked for, but no longer every 10 s, and the lists stay partial', async () => {
+  const clock = { t: 37_000_000 }
+  const three = payoutHistory(3)
+  const connection = historyConnection({ [PAYOUT]: three.list, [CREATOR]: [] }, three.byId)
+  const newest = three.list[0].signature
+  const kept = three.byId[newest]
+  three.byId[newest] = Error('Transaction version (2) is not supported by the requesting client.')
+  const reads = () => connection.calls.transactions.filter((s) => s === newest).length
+  const ledger = createQuantpLedger({ connection, now: () => clock.t, ttl: 120_000 })
+  const first = await ledger.ledger()
+  assert.deepEqual(
+    [first.unread, first.unreadable, first.newestUnreadAt],
+    [1, 0, three.list[0].blockTime],
+  )
+  // tried again soon, twice more
+  clock.t += 10_000
+  await ledger.ledger()
+  clock.t += 10_000
+  const given = await ledger.ledger()
+  assert.equal(reads(), 3)
+  // given up: still unread, so the lists are not complete, but it no longer says a newer
+  // transaction is waiting
+  assert.deepEqual(
+    [given.unread, given.unreadable, given.newestUnreadAt, given.complete, given.state],
+    [1, 1, null, false, 'partial'],
+  )
+  assert.equal(given.totals.payoutTxs, 2)
+  // not refreshed again before ttl
+  clock.t += 10_000
+  await ledger.ledger()
+  clock.t += 100_000
+  await ledger.ledger()
+  assert.equal(reads(), 3)
+  // then asked for once more, on each refresh
+  clock.t += 10_000
+  await ledger.ledger()
+  assert.equal(reads(), 4)
+  // and read once the node returns it
+  three.byId[newest] = kept
+  clock.t += 120_000
+  const done = await ledger.ledger()
+  assert.deepEqual(
+    [done.unread, done.unreadable, done.newestUnreadAt, done.complete, done.state],
+    [0, 0, null, true, 'ok'],
+  )
+  assert.equal(done.totals.payoutTxs, 3)
+})
+
 test('on the public RPC, reads pause between batches', async () => {
   const four = payoutHistory(4)
   const connection = historyConnection({ [PAYOUT]: four.list, [CREATOR]: [] }, four.byId)
