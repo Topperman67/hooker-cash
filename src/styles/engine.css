@@ -63,7 +63,7 @@
   gap: 8px;
 }
 /* where the engine stands, as a status light */
-.eg-state {
+.eg-hero .eg-state {
   --c: #8a93a3;
   display: inline-flex;
   align-items: center;
@@ -84,8 +84,15 @@
 .eg-state[data-state='pending'] {
   --c: var(--yellow);
 }
-.eg-state[data-state='late'] {
+.eg-state[data-state='late'],
+.eg-state[data-state='failing'] {
   --c: var(--pink);
+}
+.eg-state[data-state='idle'] {
+  --c: var(--blue-tint);
+}
+.eg-state[data-state='stale'] {
+  --c: var(--yellow-tint);
 }
 .eg-state-dot {
   flex: none;
@@ -146,7 +153,7 @@
   color: transparent;
 }
 .eg-lede {
-  max-width: 26ch;
+  max-width: 31ch;
   font-family: var(--font-ui);
   font-size: var(--t-lg);
   font-weight: 600;
@@ -688,7 +695,7 @@
 }
 .eg-next-split li {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 8px;
 }
 .eg-next-split .num {
@@ -700,18 +707,15 @@
   align-items: center;
   gap: 12px;
   min-width: 0;
-  max-width: 320px;
+  max-width: 360px;
   font-size: var(--t-sm);
   line-height: 1.4;
   color: var(--on-graphite-2);
 }
-.eg-when-text {
-  display: grid;
-  gap: 2px;
-}
-.eg-when-text span:last-child:not(:first-child) {
-  color: #fff;
-  font-weight: 650;
+.eg-when-text.qp-updated {
+  margin: 0;
+  font-size: var(--t-sm);
+  color: var(--on-graphite-2);
 }
 .eg-clock {
   flex: none;
@@ -740,8 +744,15 @@
 .eg-when[data-state='pending'] {
   --c: var(--yellow);
 }
-.eg-when[data-state='late'] {
+.eg-when[data-state='late'],
+.eg-when[data-state='failing'] {
   --c: var(--pink);
+}
+.eg-when[data-state='idle'] {
+  --c: var(--blue-tint);
+}
+.eg-when[data-state='stale'] {
+  --c: var(--yellow-tint);
 }
 .eg-clock-track,
 .eg-clock-left {
@@ -825,22 +836,34 @@
   margin: 0;
   min-width: 0;
 }
+.eg-stat-value {
+  white-space: nowrap;
+}
 .eg-stat .num {
   font-size: clamp(1.1rem, 1.45vw, 1.35rem);
   font-weight: 600;
   letter-spacing: -0.04em;
   line-height: 1.15;
   color: var(--ink);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 .eg-stat small {
   font-size: var(--t-xs);
+  line-height: 1.35;
   color: var(--steel);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+}
+/* a stat's unit, smaller than its figure so the figure always fits a phone's column */
+.eg-unit {
+  font-family: var(--font-ui);
+  font-size: var(--t-xs);
+  font-weight: 650;
+  color: var(--steel);
+}
+
+/* how fresh the figures are, and the last payout, burn and run, under the hero */
+.eg-fresh {
+  margin: 0;
+  padding: 0 4px;
+  font-size: var(--t-xs);
 }
 
 /* ---------- panels ---------- */
@@ -861,12 +884,50 @@
 .eg-side > * {
   min-width: 0;
 }
+.eg-wallet,
 .eg-how,
+.eg-holders,
 .eg-tiers,
 .eg-rules,
 .eg-disclose {
   display: grid;
   gap: 14px;
+}
+
+/* a holder's own wallet: an address to look up, then its figures */
+.eg-wallet-form {
+  display: flex;
+  gap: 8px;
+}
+.eg-wallet-form .input {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--t-sm);
+}
+.eg-wallet-form .btn {
+  flex: none;
+  height: auto;
+}
+.eg-wallet-note,
+.eg-holders-rate {
+  margin: 0;
+  font-size: var(--t-sm);
+}
+
+/* every wallet eligible for the next run; the skipped ones are greyed */
+.eg-holders .table th:first-child,
+.eg-holders .table td:first-child {
+  padding-left: 0;
+}
+.eg-holders .table th:last-child,
+.eg-holders .table td:last-child {
+  padding-right: 0;
+}
+.eg-holders .eg-skipped td {
+  color: var(--steel);
+}
+.eg-holders-more {
+  justify-self: start;
 }
 
 /* how it works: five steps down a rail, each in its light line's colour */
@@ -1111,7 +1172,8 @@
   }
 }
 /* One column: the hero stacks its copy over the drawing, and the panels leave their columns for
-   how it works and its tiers first, then every payout, then the rules and the fine print. */
+   the holder's wallet, how it works and its tiers first, then who the next run pays, the fine print
+   before any payout is listed, then every payout and the rules. */
 @media (max-width: 960px) {
   .eg-hero {
     grid-template-columns: minmax(0, 1fr);
@@ -1136,20 +1198,26 @@
   .eg-side {
     display: contents;
   }
-  .eg-how {
+  .eg-wallet {
     order: 1;
   }
-  .eg-tiers {
+  .eg-how {
     order: 2;
   }
-  .eg-ledger {
+  .eg-tiers {
     order: 3;
   }
-  .eg-rules {
+  .eg-holders {
     order: 4;
   }
   .eg-disclose {
     order: 5;
+  }
+  .eg-ledger {
+    order: 6;
+  }
+  .eg-rules {
+    order: 7;
   }
 }
 @media (max-width: 640px) {
@@ -1182,6 +1250,26 @@
   }
   .eg-stat {
     padding: 14px 14px 13px;
+  }
+  .eg-stat .num {
+    font-size: 1rem;
+  }
+  /* the eligible wallets keep what each is paid and why in a phone's width: the share is left out,
+     and the headings and statuses may wrap */
+  .eg-holders .eg-share {
+    display: none;
+  }
+  .eg-holders .table {
+    font-size: var(--t-xs);
+  }
+  .eg-holders .table th,
+  .eg-holders .table td {
+    padding-left: 6px;
+    padding-right: 6px;
+  }
+  .eg-holders .table th,
+  .eg-holders .table td:last-child {
+    white-space: normal;
   }
 }
 @media (max-width: 420px) {

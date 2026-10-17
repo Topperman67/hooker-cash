@@ -48,6 +48,10 @@ export async function api(path, body, signal) {
   }
 }
 
+const hidden = () => typeof document !== 'undefined' && document.visibilityState === 'hidden'
+
+// Loads `path` and reloads it every `interval` ms while the tab is visible. A reload that comes due
+// while the tab is hidden waits, and runs once when the tab is shown again.
 export function useResource(path, interval = 15000) {
   const [state, setState] = useState({ data: null, error: '', loading: !!path, status: null })
   const [version, setVersion] = useState(0)
@@ -65,6 +69,17 @@ export function useResource(path, interval = 15000) {
     if (!path) return
     const controller = new AbortController()
     let timer
+    let due = false
+    const scheduled = () => {
+      if (hidden()) due = true
+      else load()
+    }
+    const shown = () => {
+      if (!due || hidden()) return
+      due = false
+      load()
+    }
+    if (interval) document.addEventListener('visibilitychange', shown)
     async function load() {
       try {
         const data = await api(path, undefined, controller.signal)
@@ -79,13 +94,14 @@ export function useResource(path, interval = 15000) {
             code: e.code,
           }))
       } finally {
-        if (!controller.signal.aborted && interval) timer = setTimeout(load, interval)
+        if (!controller.signal.aborted && interval) timer = setTimeout(scheduled, interval)
       }
     }
     load()
     return () => {
       controller.abort()
       clearTimeout(timer)
+      if (interval) document.removeEventListener('visibilitychange', shown)
     }
   }, [path, interval, version])
   return { ...state, refresh }

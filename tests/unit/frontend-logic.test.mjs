@@ -8,7 +8,6 @@ import {
   priceFromSqrtPrice,
   isAddress,
 } from '../../shared/network.mjs'
-import { engineState, nextRunAt, utcTime } from '../../src/components/quantpPayouts.js'
 
 test('hook allocation always sums to exactly 100% and keeps the edited value', () => {
   let hooks = { creatorBps: 3000, burnBps: 3000, entangleBps: 2000, fusionBps: 2000 }
@@ -46,6 +45,20 @@ test('tiny token prices keep significant digits', () => {
   assert.equal(sol(0.00001234), '0.0000123 SOL')
 })
 
+test('a SOL amount never rounds to zero, or to minus zero', () => {
+  // below half the last shown decimal, three significant digits instead
+  assert.equal(sol(0.000265899, { digits: 3 }), '0.000266 SOL')
+  assert.equal(sol(0.003, { digits: 2 }), '0.003 SOL')
+  assert.equal(sol(0.0005, { digits: 3 }), '0.001 SOL')
+  assert.equal(sol(0.00049, { digits: 3 }), '0.00049 SOL')
+  assert.equal(sol(0), '0 SOL')
+  assert.equal(sol(-0), '0 SOL')
+  assert.notEqual(sol(-0.0002), '-0 SOL')
+  assert.equal(sol(-0.0002, { digits: 3 }), '-0.0002 SOL')
+  assert.equal(sol(1.23456, { digits: 3 }), '1.235 SOL')
+  assert.equal(sol(0.000265899, { digits: 3, unit: false }), '0.000266')
+})
+
 test('curve maths match Meteora pools', () => {
   // Raw quote per raw base is (sqrtPrice / 2^64)^2: a Q64.64 sqrt price of 2^64 / 10^4 is
   // 1e-8 lamports per raw token, i.e. 1e-8 * 1e6 / 1e9 = 1e-11 SOL per whole token.
@@ -64,24 +77,4 @@ test('curve maths match Meteora pools', () => {
   assert.equal(curveProgress('1000', null), 0, 'unknown threshold')
   assert.equal(isAddress('dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN'), true)
   assert.equal(isAddress('0x8366a39CC670B4001A1121B8F6A443A643e40951'), false)
-})
-
-test('the payout engine page dates the next run to the top of the next UTC hour', () => {
-  const at = (iso) => Date.parse(iso) / 1000
-  const engine = { everySecs: 3600, lastRunAt: at('2026-10-17T17:20:00Z') }
-  // ran this hour: the next run is at the top of the next one
-  assert.equal(nextRunAt(engine, at('2026-10-17T17:40:00Z')), at('2026-10-17T18:00:00Z'))
-  assert.equal(utcTime(nextRunAt(engine, at('2026-10-17T17:59:59Z'))), '18:00')
-  // last ran in an earlier hour: this hour's run is due now
-  assert.equal(nextRunAt(engine, at('2026-10-17T18:05:00Z')), null)
-  // never ran, or nothing known
-  assert.equal(nextRunAt({ everySecs: 3600, lastRunAt: null }, at('2026-10-17T18:05:00Z')), null)
-  assert.equal(nextRunAt(null), null)
-  assert.equal(utcTime(at('2026-10-17T00:07:00Z')), '00:07')
-  // two hours without a run is late, whatever the clock hour
-  const status = { configured: true, live: true, everySecs: 3600 }
-  assert.equal(engineState({ ...status, lastRunAt: null }), 'pending')
-  assert.equal(engineState({ ...engine, ...status }, at('2026-10-17T18:05:00Z')), 'running')
-  assert.equal(engineState({ ...engine, ...status }, at('2026-10-17T19:30:00Z')), 'late')
-  assert.equal(engineState({ ...status, live: false }), 'paused')
 })

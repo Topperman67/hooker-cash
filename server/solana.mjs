@@ -44,8 +44,26 @@ const PAYER = {
   [DAMM]: { swap: 8, swap2: 8 },
 }
 
-export function createConnection(rpcUrl = process.env.QUANTPAD_RPC_URL || network.publicRpcUrl) {
-  return new Connection(rpcUrl, { commitment: 'confirmed', disableRetryOnRateLimit: false })
+// A Connection to `rpcUrl`. With `timeoutMs`, each RPC request is aborted after that long (web3.js
+// sets no timeout of its own), and `disableRetryOnRateLimit` makes a 429 fail at once instead of
+// being retried with backoff for up to 7.5 s: for callers working to a deadline of their own.
+export function createConnection(
+  rpcUrl = process.env.QUANTPAD_RPC_URL || network.publicRpcUrl,
+  { timeoutMs = 0, disableRetryOnRateLimit = false } = {},
+) {
+  const timed =
+    timeoutMs > 0
+      ? (url, init = {}) => {
+          const timeout = AbortSignal.timeout(timeoutMs)
+          const signal = init.signal ? AbortSignal.any([init.signal, timeout]) : timeout
+          return fetch(url, { ...init, signal })
+        }
+      : null
+  return new Connection(rpcUrl, {
+    commitment: 'confirmed',
+    disableRetryOnRateLimit,
+    ...(timed ? { fetch: timed } : {}),
+  })
 }
 
 function decode(program, bytes) {

@@ -2,6 +2,7 @@ import { Link } from 'react-router-dom'
 import { usePlatform } from '../context/PlatformContext.jsx'
 import { Address } from '../components/UI.jsx'
 import { useQuantp } from '../context/QuantpContext.jsx'
+import { BUYBACK_RULE, ENGINE_NOTE, GRADUATED, HOLDERS_RULE } from '../components/quantpPayouts.js'
 import { bps } from '../lib/format.js'
 import { explorer, QUANTP } from '../../shared/network.mjs'
 
@@ -16,9 +17,9 @@ const SECTIONS = [
 
 export default function DocsPage() {
   const { platform, quantum } = usePlatform()
-  // $QUANTP's curve state, so the hook and fee lines read right before and after graduation (and
-  // stay conditional while /api/quantp is down)
-  const migrated = !!useQuantp()?.data?.migrated
+  // $QUANTP's curve state, so the hook and fee lines read right before and after graduation. It has
+  // graduated for good (GRADUATED), so they read right while /api/quantp is down too.
+  const migrated = GRADUATED || !!useQuantp()?.data?.migrated
   return (
     <div className="wrap docs">
       <nav className="docs-nav" aria-label="Documentation sections">
@@ -118,9 +119,9 @@ export default function DocsPage() {
         <h2 id="quantp">$QUANTP</h2>
         <p>
           $QUANTP is Quant Pad’s own token. It launched on Meteora’s Dynamic Bonding Curve and has
-          graduated to a Meteora DAMM v2 pool. Its fee split is paid out every hour by Quant Pad’s
-          payout engine from a wallet the team funds, not enforced on-chain.{' '}
-          <Link to={QUANTP.path}>Open $QUANTP</Link>.
+          graduated to a Meteora DAMM v2 pool. Its fee split is paid out about once an hour by Quant
+          Pad’s payout engine from a wallet the team funds, at the team’s discretion; nothing
+          on-chain enforces it. <Link to={QUANTP.path}>Open $QUANTP</Link>.
         </p>
         <ul>
           <li>
@@ -151,14 +152,9 @@ export default function DocsPage() {
               : 'Graduation happens on its own when the curve fills.'}
           </li>
           <li>
-            The team sends the creator’s share to its payout wallet, and Quant Pad’s payout engine
-            pays it out from there every hour: 60% in SOL to each wallet holding at least 0.15% of
-            the supply, by balance, and 40% to buying back and burning $QUANTP. Each hour it
-            releases a slice of the wallet, a bigger one as the market cap grows. The engine runs on
-            Quant Pad’s server, not in an on-chain program, so it depends on the team funding the
-            wallet. The figures Quant Pad shows are what has actually been paid, bought back and
-            burned, and every transaction is listed on the{' '}
-            <Link to={QUANTP.path}>$QUANTP page</Link>.
+            {ENGINE_NOTE} Holders: {HOLDERS_RULE} Buyback and burn: {BUYBACK_RULE} The figures Quant
+            Pad shows are what has actually been paid, bought back and burned, and every transaction
+            is listed on the <Link to={QUANTP.path}>$QUANTP page</Link>.
           </li>
           <li>
             Any Quant Pad platform fee on trades made here is shown before you sign, as a separate
@@ -192,6 +188,10 @@ export default function DocsPage() {
           <li>
             Holder payouts and buybacks depend on the team funding the payout wallet and on Quant
             Pad’s server running the engine. No on-chain program enforces them.
+          </li>
+          <li>
+            Payouts and buybacks are the team’s discretionary policy: they can change, pause or stop
+            at any time, and a run can pay nothing. Holding $QUANTP gives no right to any payment.
           </li>
           {!migrated && (
             <li>

@@ -5,6 +5,7 @@
 import { PublicKey } from '@solana/web3.js'
 import { TOKEN_2022_PROGRAM_ID, createBurnCheckedInstruction } from '@solana/spl-token'
 import { QUANTP, explorer } from '../../shared/network.mjs'
+import { formatUnits, sol, toSol } from './format.js'
 
 /**
  * Which of `accounts` ({ address, amount } with raw amounts) to burn `amount` raw units from: the
@@ -27,6 +28,27 @@ export function burnPlan(accounts, amount) {
   return plan
 }
 
+/**
+ * What the team's wallets bought back and have not burned yet, as { lamports, amount } (raw), for
+ * `wallet`: its own entry once the ledger keeps them per wallet (`totals.unburnedByWallet`), none
+ * when it has no entry there, and the pooled `totals.unburned` from a ledger that does not.
+ */
+export function pendingFor(totals, wallet) {
+  const none = { lamports: '0', amount: '0' }
+  if (!totals) return null
+  const byWallet = totals.unburnedByWallet
+  if (byWallet && typeof byWallet === 'object') return byWallet[wallet] ?? none
+  return totals.unburned ?? none
+}
+
+/**
+ * The amount to start the field at: what was bought back and not burned yet (`bought`), or all
+ * the wallet holds when that is less. Zero when nothing waits, so the field stays empty rather
+ * than filling in the wallet's whole balance; null until the balance is known.
+ */
+export const suggestedBurn = (held, bought) =>
+  held == null ? null : BigInt(bought) < BigInt(held) ? BigInt(bought) : BigInt(held)
+
 /** One BurnChecked per planned account, with `owner` (the connected wallet) as the authority. */
 export function burnInstructions(owner, plan, token = QUANTP) {
   const ownerKey = new PublicKey(owner)
@@ -46,19 +68,23 @@ export function burnInstructions(owner, plan, token = QUANTP) {
 
 /**
  * The post announcing a burn: what was burned, the SOL the burned tokens were bought back with
- * when known (lamports), and the transaction.
+ * when known (lamports), and the transaction. Whole tokens, with the decimals of an amount under
+ * one token, and SOL to significant digits when it is tiny, so it never reads "0".
  */
 export function burnTweet({ amount, lamports, signature, token = QUANTP }) {
-  const whole = (Number(BigInt(amount)) / 10 ** token.decimals).toLocaleString('en-US', {
-    maximumFractionDigits: 0,
-  })
-  const sol = lamports == null ? null : (Number(lamports) / 1e9).toFixed(4).replace(/\.?0+$/, '')
+  const raw = BigInt(amount)
+  const burned = formatUnits(
+    raw,
+    token.decimals,
+    raw < 10n ** BigInt(token.decimals) ? token.decimals : 0,
+  )
+  const spent = lamports == null || BigInt(lamports) <= 0n ? null : sol(toSol(lamports))
   return [
     `$${token.symbol} buyback & burn 🔥`,
     ``,
-    sol
-      ? `${whole} $${token.symbol} burned, bought back with ${sol} SOL of the creator fees.`
-      : `${whole} $${token.symbol} burned.`,
+    spent
+      ? `${burned} $${token.symbol} burned, bought back with ${spent} of the creator fees.`
+      : `${burned} $${token.symbol} burned.`,
     ``,
     `Tx: ${explorer.tx(signature)}`,
     ``,

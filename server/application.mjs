@@ -6,6 +6,7 @@ import { request as httpsRequest } from 'node:https'
 import { BlockList, isIP } from 'node:net'
 import { pipeline } from 'node:stream'
 import { createBrotliDecompress, createGunzip, createInflate } from 'node:zlib'
+import bs58 from 'bs58'
 import { createConnection } from './solana.mjs'
 import { createIndexer, issuedUriClaimKey, issuedUriKey, summarize } from './indexer.mjs'
 import {
@@ -52,11 +53,19 @@ export const MEDIA_CACHE = 'public, max-age=31536000, s-maxage=31536000, immutab
 // $QUANTP's live figures change every few seconds but cost RPC and DexScreener calls: the CDN
 // answers for 10 s and revalidates in the background for 50 more.
 export const QUANTP_CACHE = 'public, max-age=0, s-maxage=10, stale-while-revalidate=50'
+// The same figures from an instance still reading the payouts and burns (`payouts` null): held
+// only briefly, so the next answer, with them, follows within seconds.
+export const QUANTP_COLD_CACHE = 'public, max-age=0, s-maxage=2, stale-while-revalidate=5'
 // Its chart and trades from GeckoTerminal (30 calls a minute per IP) are held a little longer.
 export const QUANTP_MARKET_CACHE = 'public, max-age=0, s-maxage=15, stale-while-revalidate=45'
-// Its payouts and burns change a few times a week and are read from the team wallets' histories:
-// the CDN answers for a minute and revalidates in the background for 5 more.
+// Its payouts and burns (the ledger, read from the team wallets' histories) and the payout
+// engine's status change about every hour, when the engine runs: the CDN answers for a minute and
+// revalidates in the background for 5 more, so a run shows on the site within minutes.
 export const QUANTP_LEDGER_CACHE = 'public, max-age=0, s-maxage=60, stale-while-revalidate=300'
+// The engine's health check, which an uptime monitor polls: a minute, and never served stale.
+export const QUANTP_HEALTH_CACHE = 'public, max-age=0, s-maxage=60'
+// Payout and burn rows /api/quantp/ledger lists unless asked for all (?all=1).
+const LEDGER_ROWS = 50
 
 const { clientKey, createLimiter, createWriteGuard } = requestLimits
 
@@ -98,7 +107,9 @@ const GET_ROUTES = new Set([
   '/api/quantp/candles',
   '/api/quantp/trades',
   '/api/quantp/ledger',
+  '/api/quantp/holder',
   '/api/quantp/engine',
+  '/api/quantp/engine/health',
 ])
 const COIN_ROUTE = /^\/api\/coins\/([^/]+)(?:\/(trades|candles))?$/
 const QUANTUM_ROUTE = /^\/api\/quantum\/([^/]+)(?:\/(claims))?$/
@@ -139,6 +150,148 @@ function within(promise, ms) {
     }),
   ]).finally(() => clearTimeout(timer))
 }
+
+// A wallet address: base58 of exactly 32 bytes.
+function isWallet(value) {
+  if (!isAddress(value)) return false
+  try {
+    return bs58.decode(value).length === 32
+  } catch {
+    return false
+  }
+}
+
+// The payout engine is late when holders are due a payout and its newest one is older than this
+// (two hourly runs missed, and a quarter of an hour), and its buybacks are failing when one is due
+// and its newest burn is older than 3 h (seconds).
+const LATE_SECS = 8_100
+const BUYBACK_LATE_SECS = 10_800
+
+/**
+ * The payout engine's health, for an uptime monitor, from its status and the ledger (each null
+ * when unavailable) at `nowSecs`: { ok: true, lastPaidAt, lastBurnAt } (its wallet's newest payout
+ * and burn, in seconds, or null), or { ok: false, reason }. Reasons: 'not-live' (switched off or
+ * not set up), 'late' (holders are due a payout and none went out for LATE_SECS),
+ * 'buyback-failing' (a buyback is due and nothing was burned for BUYBACK_LATE_SECS) and 'unknown'
+ * (no status or ledger, or the ledger has a newer transaction still to read).
+ */
+export function engineHealth(status, ledger, nowSecs) {
+  if (!status || !ledger) return { ok: false, reason: 'unknown' }
+  if (!status.configured || !status.live) return { ok: false, reason: 'not-live' }
+  const newest = (times) => (times.length ? Math.max(...times) : null)
+  const ours = (rows) => (rows || []).filter((r) => r.wallet === status.wallet)
+  const lastPaidAt = newest(
+    ours(ledger.payouts).map((p) => p.lastTimestamp ?? p.transactions?.at(-1)?.timestamp ?? 0),
+  )
+  const lastBurnAt = newest(ours(ledger.burns).map((b) => b.timestamp ?? 0))
+  let buyback = 0n
+  try {
+    buyback = BigInt(status.next?.buyback ?? 0)
+  } catch {}
+  const late = Number(status.next?.paying) > 0 && !(lastPaidAt > nowSecs - LATE_SECS)
+  const failing = buyback > 0n && !(lastBurnAt > nowSecs - BUYBACK_LATE_SECS)
+  // The ledger reads newest first: a transaction newer than the last payout (or burn) that it has
+  // not read yet may be the run that is missing. One it gave up reading (`unreadable`: dust anyone
+  // can send, in a version the node cannot return) is left out, so it cannot hide a late run.
+  const unreadAfter = (t) => ledger.newestUnreadAt > (t ?? 0)
+  if ((late && unreadAfter(lastPaidAt)) || (failing && unreadAfter(lastBurnAt)))
+    return { ok: false, reason: 'unknown' }
+  if (late) return { ok: false, reason: 'late' }
+  if (failing) return { ok: false, reason: 'buyback-failing' }
+  return { ok: true, lastPaidAt, lastBurnAt }
+}
+
+// The payout engine's own messages, which say what happened on-chain and echo no provider: a
+// transaction that failed (with its on-chain error) or is not confirmed yet, the supply it could
+// not read, and its hourly claim failing.
+const ENGINE_MESSAGES = [
+  /^Transaction [1-9A-HJ-NP-Za-km-z]{32,88} failed\b/,
+  /\bis not confirmed yet\.?$/,
+  /^The \$QUANTP supply could not be read\b/,
+  /\bclaim failed\b/i,
+]
+// What a URL, or a key in a query string, looks like: never kept, whatever else matches.
+const URL_LIKE = /:\/\/|[?&][\w-]+=/
+
+// A message from a keeper tick step as the tick may show it: one of the engine's own
+// (ENGINE_MESSAGES) with nothing like a URL in it, else 'RPC or dependency error'.
+function safeMessage(text) {
+  const message = String(text ?? '')
+  return ENGINE_MESSAGES.some((pattern) => pattern.test(message)) && !URL_LIKE.test(message)
+    ? message
+    : 'RPC or dependency error'
+}
+
+// An error's code as the tick may show it: a number or a short word, else null.
+const safeCode = (code) =>
+  Number.isInteger(code) || (typeof code === 'string' && /^[\w.:-]{1,64}$/.test(code)) ? code : null
+
+/**
+ * A keeper tick step's error as the tick reports it: its response reaches public run logs (the
+ * GitHub backup prints it), and RPC, storage and fetch errors can carry provider bodies, URLs or
+ * keys. { error, code, signature }: the message only when written for users (`expose`) or one of
+ * the engine's own (safeMessage), else 'RPC or dependency error'; the error's code (or its
+ * cause's), or null; the transaction it concerns, when it names one. The whole error is logged.
+ */
+export function tickError(step, e) {
+  console.error(`[tick] ${step}`, e)
+  const message = String(e?.message ?? e ?? '')
+  return {
+    error: e?.expose === true ? message : safeMessage(message),
+    code: safeCode(e?.code ?? e?.cause?.code),
+    ...(e?.signature !== undefined ? { signature: e.signature } : {}),
+  }
+}
+
+// The fields of a payout engine run that hold an RPC's or another dependency's words, at any depth:
+// its error, why it could not check the chain (`detail`), and a failed transaction's error and the
+// node's message (`rpcMessage`).
+const MESSAGE_FIELDS = new Set(['error', 'detail', 'rpcMessage', 'message'])
+
+/**
+ * A payout engine run (what its tick resolved to) as the keeper tick reports it: every message in
+ * it (MESSAGE_FIELDS, the run's own and each failed transaction's) through safeMessage, and the
+ * run's error code as tickError gives it. The rest is kept: what it sent, the signatures, and a
+ * refused transaction's logs and simulation error, which are on-chain facts. A run with an error,
+ * or a message replaced, is logged whole.
+ */
+export function engineReport(run) {
+  if (!run || typeof run !== 'object') return run
+  const { report, replaced } = cleanMessages(run)
+  if (run.error || replaced) console.error('[tick] engine', run)
+  return run.error ? { ...report, code: safeCode(run.code) } : report
+}
+
+/** `value` with every MESSAGE_FIELDS string through safeMessage, at any depth, and whether any changed. */
+function cleanMessages(value) {
+  let replaced = false
+  const clean = (v) => {
+    if (Array.isArray(v)) return v.map(clean)
+    if (!v || typeof v !== 'object') return v
+    return Object.fromEntries(
+      Object.entries(v).map(([field, x]) => {
+        if (!MESSAGE_FIELDS.has(field) || typeof x !== 'string') return [field, clean(x)]
+        const shown = safeMessage(x)
+        if (shown !== x) replaced = true
+        return [field, shown]
+      }),
+    )
+  }
+  return { report: clean(value), replaced }
+}
+
+// Vercel Cron runs the payout engine. Other callers of the tick (the GitHub backup, every 5 min
+// from minute 2) leave it alone in the first quarter of each UTC hour, so a Vercel run early in
+// the hour goes first. On Hobby, Vercel starts each hourly cron anywhere within its hour, so the
+// backup may still reach the engine first, or at the same time: the engine's own once-an-hour
+// guard, not this window, keeps the second run from paying again.
+const BACKUP_WINDOW_MINUTES = 15
+const fromVercelCron = (req) =>
+  String(req.headers['user-agent'] || '')
+    .toLowerCase()
+    .startsWith('vercel-cron')
+// An alert reason is sent at most once in this long per instance (ms).
+const ALERT_COOLDOWN_MS = 3_600_000
 
 // Internal bookkeeping that never leaves the server: signature cursors, backlog anchors (`gaps`
 // holds signatures too), the indexer's sync state and its onNativeLaunch notice state (K5).
@@ -501,6 +654,9 @@ export async function createApplication(options = {}) {
   // /api/stats also counts $QUANTP, Quant Pad's own token (an external coin to the indexer).
   const statsListed = new Set([...listed, ...(hidden.has(QUANTP.mint) ? [] : [QUANTP.mint])])
   const solUsd = options.priceFeed || createPriceFeed()
+  // The clock of the payout engine's routes (its health check, the keeper tick's schedule and its
+  // alerts' cooldown).
+  const clock = options.now || (() => Date.now())
   // $QUANTP's figures, chart and trades read without the store (server/quantp.mjs), so its page
   // keeps working while Redis is down.
   const quantpRequest = options.quantpFetch ? { request: options.quantpFetch } : {}
@@ -508,11 +664,15 @@ export async function createApplication(options = {}) {
   const gecko = options.geckoFeed || createGeckoFeed(quantpRequest)
   const quantpLedger = options.quantpLedger || createQuantpLedger({ connection })
   // The $QUANTP payout engine (server/quantp-engine.mjs): it sends only with QUANTP_ENGINE_SECRET
-  // set to the wallet pinned in QUANTP.engine.wallet, from the keeper tick, once an hour.
+  // set to the wallet pinned in QUANTP.engine.wallet, from the keeper tick, once an hour. It has a
+  // connection of its own: each call is given up after 8 s and a 429 fails at once, so one slow or
+  // rate-limited call cannot use up the run's 32 s deadline.
   const quantpEngine =
     options.quantpEngine ||
     createQuantpEngine({
-      connection,
+      connection: options.connection
+        ? connection
+        : createConnection(rpcUrl, { timeoutMs: 8_000, disableRetryOnRateLimit: true }),
       store,
       feed: quantp,
       ledger: quantpLedger,
@@ -569,6 +729,10 @@ export async function createApplication(options = {}) {
   // that started the work, so an index pass (15 s unless QUANTPAD_SYNC_MS says otherwise) and
   // the keeper share one budget below that.
   const WORK_MS = serverless ? 40_000 : 180_000
+  // The payout engine runs first in a keeper tick, within this: its hour claim, two or three
+  // payout transactions and the buyback, each confirmed. Its worst case, the index pass's 15 s and
+  // the keeper's least (5 s) stay under the 60 s limit.
+  const ENGINE_MS = 32_000
   const INDEX_MS = serverless ? { timeMs: Number(process.env.QUANTPAD_SYNC_MS) || 15_000 } : {}
   const keeperBudget = (started) => Math.max(5_000, WORK_MS - (Date.now() - started))
   // Time left in this invocation's budget, counted from when the request arrived.
@@ -1230,6 +1394,89 @@ export async function createApplication(options = {}) {
     }
   }
 
+  // The payout engine's status, or a 503 the page can show whatever made it unavailable (logged
+  // unless it was written for users). Its last run's messages go through the tick's sanitizer: the
+  // page is public, and a send error can carry an RPC provider's words.
+  const engineStatus = () =>
+    quantpEngine.status().then(
+      (s) => (s?.lastRun ? { ...s, lastRun: cleanMessages(s.lastRun).report } : s),
+      (e) => {
+        if (e?.expose !== true) console.error('[quantp-engine] status', e)
+        throw Object.assign(Error('The payout engine’s state is unavailable right now.'), {
+          status: 503,
+          expose: true,
+          code: 'ENGINE_UNAVAILABLE',
+        })
+      },
+    )
+
+  // The keeper tick's payout engine step: its run, when its hour is up, within `deadline`. In the
+  // first quarter of each UTC hour only Vercel Cron runs it (BACKUP_WINDOW_MINUTES). A run that
+  // fails part way reports its errors (through engineReport) beside what it sent.
+  async function engineStep(req, deadline) {
+    if (!fromVercelCron(req) && new Date(clock()).getUTCMinutes() < BACKUP_WINDOW_MINUTES)
+      return { ran: false, reason: 'backup-window' }
+    let run
+    try {
+      run = await quantpEngine.tick({ deadline })
+    } catch (e) {
+      return { ran: false, ...tickError('engine', e) }
+    }
+    return engineReport(run)
+  }
+
+  // The keeper tick's alerts to QUANTP_ALERT_WEBHOOK (a Discord, Slack or Telegram webhook URL):
+  // one line when the payout engine failed or stopped part way, or the keeper found an epoch it
+  // did not post (cancel it before its claimStart). Each reason is sent at most once an hour per
+  // instance. The line holds only the tick's own report (its errors already sanitized), never
+  // the environment; a webhook that fails is logged by the error's name alone, since fetch puts
+  // the URL in its messages.
+  const alertedAt = new Map() // reason -> when it was last sent (ms)
+  async function alert({ engine, keeper: keep }) {
+    const webhook = String(process.env.QUANTP_ALERT_WEBHOOK || '').trim()
+    if (!webhook) return
+    const foreign = (Array.isArray(keep?.alerts) ? keep.alerts : []).filter(
+      (a) => a?.kind === 'foreign-epoch',
+    )
+    const before = (secs) => {
+      const at = new Date(Number(secs) * 1000)
+      return Number.isNaN(at.getTime()) ? '' : ` before ${at.toISOString()}`
+    }
+    const reasons = [
+      engine?.error && [
+        'engine-error',
+        `payout engine failed: ${engine.error}${engine.signature ? ` (${engine.signature})` : ''}`,
+      ],
+      engine?.stopped && ['engine-stopped', `payout engine stopped early: ${engine.stopped}`],
+      foreign.length && [
+        'foreign-epoch',
+        `epochs this keeper did not post, cancel each with cancel_epoch: ${foreign
+          .map((a) => `${a.mint}#${a.index}${before(a.claimStart)}`)
+          .join(', ')}`,
+      ],
+    ].filter((r) => r && !(clock() - (alertedAt.get(r[0]) ?? -Infinity) < ALERT_COOLDOWN_MS))
+    if (!reasons.length) return
+    for (const [reason] of reasons) alertedAt.set(reason, clock())
+    const text = `${brand.name} keeper tick: ${reasons.map(([, line]) => line).join('; ')}`
+      .replace(/\s+/g, ' ')
+      .slice(0, 1_900)
+    try {
+      const r = await fetch(webhook, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        // Discord reads `content`, Slack and Telegram `text`
+        body: JSON.stringify({ content: text, text }),
+        signal: AbortSignal.timeout(3_000),
+      })
+      r.body?.cancel().catch(() => {})
+      if (!r.ok) throw Object.assign(Error(), { name: `HTTP ${r.status}` })
+    } catch (e) {
+      // not sent: the next tick tries again
+      for (const [reason] of reasons) alertedAt.delete(reason)
+      console.error('[tick] alert webhook failed:', String(e?.name || 'Error'))
+    }
+  }
+
   async function status() {
     const [price, q, storageNow] = await Promise.all([solUsd(), quantumStatus(), storageStatus()])
     return {
@@ -1344,13 +1591,16 @@ export async function createApplication(options = {}) {
       // $QUANTP: no store reads (the limiter fails open while Redis is down).
       if (req.method === 'GET' && path === '/api/quantp') {
         await limitRead(req)
-        // With what was really paid and burned (the ledger, as cached on this instance: one still
-        // loading answers null this time rather than hold up the live figures).
-        const [snapshot, ledger] = await Promise.all([
-          quantp.snapshot(),
-          within(quantpLedger.ledger(), 1_500).catch(() => null),
-        ])
-        return json(res, 200, { ...snapshot, payouts: ledgerSummary(ledger) }, QUANTP_CACHE)
+        // With what was really paid and burned: the ledger as cached on this instance, never
+        // waited for. Asking starts a refresh when one is due, and asking again once the live
+        // figures are in gets whatever it finished meanwhile. An instance still reading them for
+        // the first time answers `payouts: null`, which the CDN holds only briefly; one whose read
+        // failed (retried only after a while) answers null, held as long as the live figures.
+        quantpLedger.peek()
+        const snapshot = await quantp.snapshot()
+        const payouts = ledgerSummary(quantpLedger.peek())
+        const cache = payouts || !quantpLedger.loading?.() ? QUANTP_CACHE : QUANTP_COLD_CACHE
+        return json(res, 200, { ...snapshot, payouts }, cache)
       }
       if (req.method === 'GET' && path === '/api/quantp/candles') {
         await limitRead(req)
@@ -1384,11 +1634,64 @@ export async function createApplication(options = {}) {
       }
       if (req.method === 'GET' && path === '/api/quantp/engine') {
         await limitRead(req)
-        return json(res, 200, await quantpEngine.status(), QUANTP_LEDGER_CACHE)
+        return json(res, 200, await engineStatus(), QUANTP_LEDGER_CACHE)
       }
+      // What an uptime monitor checks: 200 while the engine pays out and buys back on time, else
+      // a 503 saying why (engineHealth).
+      if (req.method === 'GET' && path === '/api/quantp/engine/health') {
+        await limitRead(req)
+        const [status, ledger] = await Promise.all([
+          quantpEngine.status().catch(() => null),
+          quantpLedger.ledger().catch(() => null),
+        ])
+        const health = engineHealth(status, ledger, Math.floor(clock() / 1000))
+        return json(res, health.ok ? 200 : 503, health, QUANTP_HEALTH_CACHE)
+      }
+      // The newest LEDGER_ROWS payouts and burns, with the totals and counts over all of them;
+      // ?all=1 lists every one. Other parameters are ignored.
       if (req.method === 'GET' && path === '/api/quantp/ledger') {
         await limitRead(req)
-        return json(res, 200, await quantpLedger.ledger(), QUANTP_LEDGER_CACHE)
+        const ledger = await quantpLedger.ledger()
+        const all = url.searchParams.get('all') === '1'
+        const rows = (list) => (all ? list : list.slice(0, LEDGER_ROWS))
+        const body = {
+          ...ledger,
+          payouts: rows(ledger.payouts),
+          burns: rows(ledger.burns),
+          payoutCount: ledger.payouts.length,
+          burnCount: ledger.burns.length,
+          more: !all && Math.max(ledger.payouts.length, ledger.burns.length) > LEDGER_ROWS,
+        }
+        return json(res, 200, body, QUANTP_LEDGER_CACHE)
+      }
+      // What one wallet was paid (its newest LEDGER_ROWS payouts listed), and its row in the
+      // engine's holders for the next run: { eligible: false } when it has none, null when the
+      // engine's status is unavailable. The address is never logged.
+      if (req.method === 'GET' && path === '/api/quantp/holder') {
+        await limitRead(req)
+        const wallet = url.searchParams.get('wallet')
+        if (!isWallet(wallet))
+          throw clientError('Enter a valid Solana wallet address.', 400, 'invalid_wallet')
+        const [paid, status] = await Promise.all([
+          quantpLedger.forWallet(wallet, { limit: LEDGER_ROWS }),
+          quantpEngine.status().catch(() => null),
+        ])
+        const holders = Array.isArray(status?.holders) ? status.holders : null
+        const body = {
+          wallet,
+          paid: {
+            lamports: paid.lamports,
+            payouts: paid.payouts,
+            lastAt: paid.lastAt,
+            items: paid.items,
+          },
+          engine: holders
+            ? (holders.find((h) => h?.wallet === wallet) ?? { eligible: false })
+            : null,
+          minHold: status?.minHold ?? null,
+          complete: paid.complete,
+        }
+        return json(res, 200, body, QUANTP_LEDGER_CACHE)
       }
 
       // POST /api/coins/track is a POST route; every other /api/coins/<x> is a coin read.
@@ -1447,19 +1750,31 @@ export async function createApplication(options = {}) {
         const started = Date.now()
         // Each step reports its own failure in the response instead of failing the tick, so one
         // that cannot run (the index pass and the keeper need the store, which can refuse every
-        // command) never stops the others. `ok` is false when any step failed.
-        const step = (promise) => promise.catch((e) => ({ error: e.message, code: e.code ?? null }))
-        // The payout engine first, when its hour is up (a store read otherwise), within 25 s: the
-        // index pass and the keeper then share what is left of the budget.
-        const payouts = await quantpEngine
-          .tick({ deadline: started + 25_000 })
-          .catch((e) => ({ ran: false, error: e.message }))
-        const index = await step(indexer.sync({ budget: 8, ...INDEX_MS }))
-        const keep = await step(keeper.tick({ timeLimitMs: keeperBudget(started) }))
+        // command) never stops the others. `ok` is false when any step failed. Every error is
+        // reported through tickError, which logs it whole.
+        const step = (name, promise) => promise.catch((e) => tickError(name, e))
+        // The payout engine first, when its hour is up (a store read otherwise), within ENGINE_MS:
+        // the index pass and the keeper then share what is left of the budget.
+        const engine = await engineStep(req, started + ENGINE_MS)
+        const index = await step('index', indexer.sync({ budget: 8, ...INDEX_MS }))
+        const keep = await step('keeper', keeper.tick({ timeLimitMs: keeperBudget(started) }))
         // the keeper just ran: the background pass after this response must not run it again
         await store.set('keeper:throttle', 1, { ttl: 120000 }).catch(() => {})
-        const ok = ![payouts, index, keep].some((r) => r?.error)
-        return json(res, 200, { ok, index, keeper: keep, engine: payouts })
+        const ok = ![engine, index, keep].some((r) => r?.error)
+        if (!ok || engine?.error || engine?.stopped)
+          console.error(
+            '[tick]',
+            JSON.stringify({
+              ok,
+              engine,
+              index: index?.error,
+              keeper: keep?.error ?? keep?.alerts,
+            }),
+          )
+        const body = { ok, index, keeper: keep, engine }
+        json(res, 200, body)
+        // after the answer, so the scheduler never waits on the webhook
+        return alert(body)
       }
 
       // Only the POST routes are left (allowedMethods above).

@@ -55,9 +55,13 @@ function settleWithin(promise, ms) {
  * One cached value: fresh for `ttl` ms, refreshed by one shared `load()` at a time. A failed load
  * keeps the last good value and is not retried for `retry` ms. A reader waits at most `wait` ms
  * for a refresh, then gets what is cached while the load finishes for the next reader.
- * Resolves to { value, at, state: 'ok' | 'stale' | 'down' }.
+ * `due(value)` may ask for the next refresh sooner than `ttl` (a value still being completed),
+ * without the value counting as stale before `ttl`.
+ * Resolves to { value, at, state: 'ok' | 'stale' | 'down' }. read.peek() gives the same at once,
+ * never waiting: it starts a refresh when one is due and leaves it to finish in the background.
+ * read.loading() says whether a refresh is under way.
  */
-export function cachedSource(load, { ttl, retry = ttl, wait = 6000, now = Date.now }) {
+export function cachedSource(load, { ttl, retry = ttl, wait = 6000, now = Date.now, due }) {
   let last = null
   let failedAt = -Infinity
   let pending = null
@@ -74,13 +78,24 @@ export function cachedSource(load, { ttl, retry = ttl, wait = 6000, now = Date.n
         },
       )
       .finally(() => (pending = null)))
-  return async function read() {
-    const t = now()
-    if (!(last && t - last.at < ttl) && (pending || t - failedAt >= retry))
-      await settleWithin(refresh(), wait)
-    if (!last) return { value: null, at: null, state: 'down' }
-    return { value: last.value, at: last.at, state: now() - last.at < ttl ? 'ok' : 'stale' }
+  // A refresh is started when the value is past its lifetime, unless the last one failed lately.
+  const refreshDue = (t) =>
+    !(last && t - last.at < Math.min(ttl, due?.(last.value) ?? ttl)) &&
+    (pending || t - failedAt >= retry)
+  const cached = () =>
+    last
+      ? { value: last.value, at: last.at, state: now() - last.at < ttl ? 'ok' : 'stale' }
+      : { value: null, at: null, state: 'down' }
+  async function read() {
+    if (refreshDue(now())) await settleWithin(refresh(), wait)
+    return cached()
   }
+  read.peek = () => {
+    if (refreshDue(now())) refresh()
+    return cached()
+  }
+  read.loading = () => pending !== null
+  return read
 }
 
 // ---- chain --------------------------------------------------------------------------------------
@@ -483,19 +498,23 @@ export function createQuantpFeed({
 // ---- payouts and burns --------------------------------------------------------------------------
 
 const SYSTEM_PROGRAM = '11111111111111111111111111111111'
-// Programs a payout transaction may hold besides its SOL transfers.
-const PAYOUT_EXTRAS = new Set([
-  'ComputeBudget111111111111111111111111111111',
+const MEMO_PROGRAMS = new Set([
   'MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr',
   'Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo',
 ])
+// Programs a payout transaction may hold besides its SOL transfers.
+const PAYOUT_EXTRAS = new Set(['ComputeBudget111111111111111111111111111111', ...MEMO_PROGRAMS])
+// The memo the payout engine ends each of its transactions with: `h` is the run's period (the UTC
+// clock hour, server/quantp-engine.mjs), the same in every transaction of one run.
+const RUN_MEMO = /qp-engine:v1 h=(\d+)/
 const TOKEN_PROGRAMS = new Set([network.tokenProgram, network.token2022Program])
 // web3.js gives keys as PublicKeys, the RPC's JSON as strings.
 const key = (v) => (v == null ? null : String(v.toBase58?.() ?? v))
 
 /**
  * The team wallets the payouts and burns are read from: the payout wallet the team pays from by
- * hand, the payout engine's wallet once it is set (server/quantp-engine.mjs), and the creator.
+ * hand, the payout engine's wallet once it is set (server/quantp-engine.mjs), the creator, and any
+ * other wallet the team keeps (`otherWallets`: SOL moved there alone is the team's, no payout).
  * `payers` are the ones whose SOL transfers to holders are payouts.
  */
 export function teamWallets(token = QUANTP) {
@@ -506,7 +525,7 @@ export function teamWallets(token = QUANTP) {
     creator: token.creator,
     engine,
     payers,
-    all: [...new Set([...payers, token.creator].filter(Boolean))],
+    all: [...new Set([...payers, token.creator, ...(token.otherWallets ?? [])].filter(Boolean))],
   }
 }
 
@@ -522,7 +541,10 @@ export function teamWallets(token = QUANTP) {
  *   - buy: a team wallet ending up with more of the token (counting what it burned here) for less
  *     SOL. `lamports` is the drop in the SOL it holds, its own and its token accounts' (so wrapped
  *     SOL and rent it keeps are not spent), less the network fee.
- * Failed transactions give none.
+ * Failed transactions give none, and so does the payout engine's hourly claim (a 0-byte account
+ * made from its wallet, earlier ones swept back, and its memo): no SOL leaves the team in it.
+ * A payout also keeps what each recipient got (`paid`, as [recipient, lamports] pairs). Every entry
+ * of a transaction the engine sent carries its run (`run`, the period its memo names).
  */
 export function ledgerEntries(tx, { token = QUANTP, wallets = teamWallets(token) } = {}) {
   const meta = tx?.meta
@@ -530,15 +552,21 @@ export function ledgerEntries(tx, { token = QUANTP, wallets = teamWallets(token)
   if (!meta || meta.err || !message) return []
   const team = new Set(wallets.all)
   const keys = message.accountKeys.map((k) => key(k.pubkey ?? k))
-  const base = {
-    signature: tx.transaction.signatures[0],
-    slot: tx.slot,
-    timestamp: tx.blockTime ?? null,
-  }
   const top = message.instructions
   const all = [...top, ...(meta.innerInstructions || []).flatMap((group) => group.instructions)]
   const program = (ix) => key(ix.programId)
   const isTransfer = (ix) => program(ix) === SYSTEM_PROGRAM && ix.parsed?.type === 'transfer'
+  // a parsed memo instruction's `parsed` is its text
+  const memo = top
+    .filter((ix) => MEMO_PROGRAMS.has(program(ix)) && typeof ix.parsed === 'string')
+    .map((ix) => RUN_MEMO.exec(ix.parsed))
+    .find(Boolean)
+  const base = {
+    signature: tx.transaction.signatures[0],
+    slot: tx.slot,
+    timestamp: tx.blockTime ?? null,
+    ...(memo ? { run: Number(memo[1]) } : {}),
+  }
   const out = []
 
   const payer = top.find((ix) => isTransfer(ix) && wallets.payers.includes(ix.parsed.info.source))
@@ -548,14 +576,21 @@ export function ledgerEntries(tx, { token = QUANTP, wallets = teamWallets(token)
       (ix) =>
         isTransfer(ix) && ix.parsed.info.source === payer && ix.parsed.info.destination !== payer,
     )
-    const paid = sent.some((ix) => !team.has(ix.parsed.info.destination)) ? sent : []
-    if (paid.length)
+    const paid = new Map() // recipient -> lamports
+    if (sent.some((ix) => !team.has(ix.parsed.info.destination)))
+      for (const { parsed } of sent)
+        paid.set(
+          parsed.info.destination,
+          (paid.get(parsed.info.destination) ?? 0n) + big(parsed.info.lamports),
+        )
+    if (paid.size)
       out.push({
         kind: 'payout',
         ...base,
         wallet: payer,
-        lamports: paid.reduce((s, ix) => s + big(ix.parsed.info.lamports), 0n),
-        recipients: [...new Set(paid.map((ix) => ix.parsed.info.destination))],
+        lamports: [...paid.values()].reduce((s, v) => s + v, 0n),
+        recipients: [...paid.keys()],
+        paid: [...paid],
       })
   }
 
@@ -621,14 +656,20 @@ export function ledgerEntries(tx, { token = QUANTP, wallets = teamWallets(token)
 }
 
 // Payout transactions this close together (seconds) are one burst: a round split over several
-// transactions, or resumed after an interruption.
+// transactions, or resumed after an interruption (round 1, paid by hand, took 9 s).
 const BURST_GAP = 1800
+// Across a clock hour, only transactions this close together (seconds) are one burst: the engine
+// runs once an hour (each run's transactions confirm within its 25 s deadline), so a late run and
+// the next hour's early one are two payouts even when less than BURST_GAP apart.
+const HOUR_GAP = 120
 
 /**
  * The real figures behind $QUANTP's 60/40 split, from a ledger() result (or null): what was paid
  * to holders and to how many wallets, the SOL spent buying $QUANTP back (burned or not yet), what
  * the team burned, and the SOL waiting in the payout wallet. /api/quantp carries it as `payouts`,
- * so every page that shows the split shows what actually happened, never an estimate.
+ * so every page that shows the split shows what actually happened, never an estimate. `complete`
+ * is false while older history is still being read: the figures are then at least these, counted
+ * from `since` (the oldest transaction read).
  */
 export function ledgerSummary(ledger) {
   const t = ledger?.totals
@@ -640,17 +681,22 @@ export function ledgerSummary(ledger) {
     burnedAmount: t.burnedAmount,
     waitingLamports: ledger.payoutLamports ?? null,
     updatedAt: ledger.updatedAt ?? null,
+    complete: ledger.complete !== false,
+    since: ledger.since ?? null,
   }
 }
 
 /**
  * The /api/quantp/ledger lists from every entry read so far (ledgerEntries), newest first.
- *   - payouts: bursts, each the payout transactions one wallet sent within BURST_GAP of the one
- *     before.
- *   - burns: each with `solSpent`, what the team's wallets paid for the tokens they bought since
- *     the burn before (the buyback, in small buys or in the burn's own transaction), in proportion
+ *   - payouts: bursts, each the payout transactions of one run: sent by one wallet, with the same
+ *     run memo (or none), within BURST_GAP of the one before and in the same clock hour unless
+ *     within HOUR_GAP. A burn by the wallet ends its burst (a run pays out, then buys back).
+ *     `lastTimestamp` is its newest transaction's.
+ *   - burns: each with `solSpent`, what the burning wallet paid for the tokens it bought since its
+ *     burn before (the buyback, in small buys or in the burn's own transaction), in proportion
  *     to the amount burned; null when nothing was bought for it. Buys in the launch (the creator's
- *     dev buy) are not buybacks. `totals.unburned` is what was bought and not burned yet.
+ *     dev buy) are not buybacks. `totals.unburned` is what was bought and not burned yet, and
+ *     `totals.unburnedByWallet` the same for each wallet holding some.
  * `payoutLamports` is the payout wallet's balance now (null when unknown).
  */
 export function quantpLedger(
@@ -664,33 +710,44 @@ export function quantpLedger(
       (a.signature < b.signature ? -1 : a.signature > b.signature ? 1 : 0) ||
       order[a.kind] - order[b.kind],
   )
-  const pending = { lamports: 0n, amount: 0n } // bought back and not burned yet
+  const pending = new Map() // wallet -> { lamports, amount }: bought back and not burned yet
+  const hour = (t) => Math.floor(t / 3600)
   const bursts = []
+  let open = null // the burst the next payout may join
   const burns = []
   for (const e of chronological) {
     if (e.kind === 'buy') {
       if (!(e.timestamp > token.launchedAt)) continue
-      pending.lamports += e.lamports
-      pending.amount += e.amount
+      const p = pending.get(e.wallet) ?? { lamports: 0n, amount: 0n }
+      pending.set(e.wallet, { lamports: p.lamports + e.lamports, amount: p.amount + e.amount })
     } else if (e.kind === 'payout') {
-      const last = bursts.at(-1)
-      const prev = last?.at(-1)
-      if (prev && prev.wallet === e.wallet && e.timestamp - prev.timestamp <= BURST_GAP)
-        last.push(e)
-      else bursts.push([e])
+      const prev = open?.at(-1)
+      const gap = prev ? e.timestamp - prev.timestamp : Infinity
+      if (
+        prev &&
+        prev.wallet === e.wallet &&
+        (prev.run ?? null) === (e.run ?? null) &&
+        gap <= BURST_GAP &&
+        (gap <= HOUR_GAP || hour(prev.timestamp) === hour(e.timestamp))
+      )
+        open.push(e)
+      else bursts.push((open = [e]))
     } else if (e.kind === 'burn') {
+      if (open?.[0].wallet === e.wallet) open = null
       let solSpent = null
-      if (pending.amount > 0n) {
-        const take = e.amount < pending.amount ? e.amount : pending.amount
-        solSpent = (pending.lamports * take) / pending.amount
-        pending.lamports -= solSpent
-        pending.amount -= take
+      const p = pending.get(e.wallet)
+      if (p?.amount > 0n) {
+        const take = e.amount < p.amount ? e.amount : p.amount
+        solSpent = (p.lamports * take) / p.amount
+        pending.set(e.wallet, { lamports: p.lamports - solSpent, amount: p.amount - take })
       }
       burns.push({ ...e, solSpent })
     }
   }
   const sum = (list, field) => list.reduce((s, e) => s + (e[field] ?? 0n), 0n)
   const paid = bursts.flat()
+  const unburned = [...pending].filter(([, p]) => p.amount > 0n || p.lamports > 0n)
+  const amounts = (p) => ({ lamports: p.lamports.toString(), amount: p.amount.toString() })
   return {
     mint: token.mint,
     wallets: { payout: wallets.payout, creator: wallets.creator, engine: wallets.engine },
@@ -699,6 +756,7 @@ export function quantpLedger(
       const recipients = new Set(burst.flatMap((e) => e.recipients))
       return {
         timestamp: burst[0].timestamp,
+        lastTimestamp: burst.at(-1).timestamp,
         wallet: burst[0].wallet,
         lamports: sum(burst, 'lamports').toString(),
         recipients: recipients.size,
@@ -727,62 +785,119 @@ export function quantpLedger(
       recipients: new Set(paid.flatMap((e) => e.recipients)).size,
       burnedAmount: sum(burns, 'amount').toString(),
       buybackLamports: sum(burns, 'solSpent').toString(),
-      unburned: { lamports: pending.lamports.toString(), amount: pending.amount.toString() },
+      unburned: amounts({
+        lamports: unburned.reduce((s, [, p]) => s + p.lamports, 0n),
+        amount: unburned.reduce((s, [, p]) => s + p.amount, 0n),
+      }),
+      unburnedByWallet: Object.fromEntries(unburned.map(([wallet, p]) => [wallet, amounts(p)])),
     },
   }
 }
 
+// Reads of one transaction that may fail before the ledger stops hurrying for it. It is still
+// asked for on every refresh, after the rest, but no longer refreshes the lists every partialTtl
+// or holds up the engine's health check: anyone can send the team's wallets dust in a transaction
+// version the node cannot return.
+const READ_TRIES = 3
+
 /**
- * $QUANTP's payouts and burns from the team wallets' histories. Each refresh (at most every `ttl`
- * per instance) lists the signatures newer than the last one seen, one call per wallet, and reads
- * only the transactions not read yet: a confirmed transaction never changes, so each is read once.
- * It also reads the payout wallet's balance (one call).
- * ledger() resolves to quantpLedger's lists with `updatedAt`, `state` and `unread` (transactions
- * listed but not read yet, which the lists may be missing), or throws a 503 when the histories have
- * never been listed on this instance.
+ * $QUANTP's payouts and burns from the team wallets' histories, read a part at a time. Each refresh
+ * (every `ttl` per instance, every `partialTtl` while there is more to list, or to read that has
+ * not failed READ_TRIES times):
+ *   - lists every wallet's signatures newer than the newest one listed (the wallets at once), at
+ *     most `maxPages` pages of `pageLimit`. A listing cut off there leaves a cursor on what it did
+ *     not reach: the older history on a first listing, or the gap down to the newest signature
+ *     listed before. Every refresh lists one more page from each open cursor until it closes, so
+ *     no signature is ever skipped and no refresh lists without bound;
+ *   - reads the transactions listed and not read yet, newest first, at most `maxReads` of them or
+ *     for `readMs` (at least one batch): a confirmed transaction never changes, so each is read
+ *     once. On the public RPC, which rate-limits hard, it pauses between batches;
+ *   - reads the payout wallet's balance (one call).
+ * ledger() resolves to quantpLedger's lists with `updatedAt`, `state`, `unread` (transactions
+ * listed but not read yet), `unreadable` (how many of those failed READ_TRIES reads),
+ * `newestUnreadAt` (the block time of the newest unread one, unreadable ones aside, or null),
+ * `complete` (false while a cursor is open or anything is unread: the lists may then be missing
+ * transactions, older ones first) and `since` (the oldest transaction read). `state` is 'partial'
+ * while incomplete. It throws a 503 when the histories have never been listed on this instance.
+ * peek() is the same, or null, at once: it never waits for a refresh. loading() says whether a
+ * refresh is under way. forWallet(address) resolves to what the payouts read so far sent that
+ * wallet.
  */
 export function createQuantpLedger({
   connection,
   now = Date.now,
   token = QUANTP,
   ttl = 120_000,
+  partialTtl = 10_000,
   pageLimit = 1000,
   maxPages = 3,
   concurrency = 4,
+  maxReads = 200,
+  readMs = 5_000,
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
 } = {}) {
   const wallets = teamWallets(token)
-  const listed = new Set() // successful transactions' signatures
+  const listed = new Map() // successful transactions' signatures -> { slot, blockTime }
   const read = new Map() // signature -> its entries
+  const failed = new Map() // signature -> reads that came back empty or were refused
   const newest = new Map() // wallet -> the newest signature listed
+  const cursors = new Map() // wallet -> [{ before, until }]: ranges of its history not listed yet
+  let hurry = false // the last load left more to list, or to read that may yet be read
+  const publicRpc = String(connection?.rpcEndpoint ?? '').includes('api.mainnet-beta.solana.com')
 
-  async function signaturesOf(wallet) {
-    const until = newest.get(wallet)
-    const found = []
-    let before
-    for (let page = 0; page < maxPages; page++) {
-      const list = await connection.getSignaturesForAddress(
+  // Up to `pages` pages of `wallet`'s signatures, newest first, older than `before` and newer than
+  // `until` (each when given). `truncated` when the last page was full: there may be more.
+  async function signaturesOf(wallet, { before, until } = {}, pages = maxPages) {
+    const list = []
+    for (let page = 0; page < pages; page++) {
+      const found = await connection.getSignaturesForAddress(
         new PublicKey(wallet),
         { limit: pageLimit, ...(before ? { before } : {}), ...(until ? { until } : {}) },
         'confirmed',
       )
-      found.push(...list)
-      if (list.length < pageLimit) break
-      before = list.at(-1).signature
+      list.push(...found)
+      if (found.length < pageLimit) return { list, truncated: false }
+      before = found.at(-1).signature
     }
-    return found
+    return { list, truncated: true }
+  }
+
+  // What is new at the tip of `wallet`'s history, and one more page of each range still open. A
+  // tip listing cut off before the newest signature listed so far opens a range for the gap below
+  // it, so `newest` moves up without leaving that gap behind.
+  async function listWallet(wallet) {
+    const until = newest.get(wallet)
+    const tip = await signaturesOf(wallet, { until })
+    const older = []
+    const open = []
+    for (const range of cursors.get(wallet) ?? []) {
+      const page = await signaturesOf(wallet, range, 1)
+      older.push(...page.list)
+      if (page.truncated) open.push({ ...range, before: page.list.at(-1).signature })
+    }
+    if (tip.truncated) open.push({ before: tip.list.at(-1).signature, until })
+    if (tip.list.length) newest.set(wallet, tip.list[0].signature)
+    cursors.set(wallet, open)
+    for (const s of [...tip.list, ...older])
+      if (!s.err && !listed.has(s.signature))
+        listed.set(s.signature, { slot: s.slot ?? 0, blockTime: s.blockTime ?? null })
   }
 
   async function load() {
-    for (const wallet of wallets.all) {
-      const list = await signaturesOf(wallet)
-      for (const s of list) if (!s.err) listed.add(s.signature)
-      if (list.length) newest.set(wallet, list[0].signature)
-    }
-    // Read what has not been read. One the node could not return or refused is left for the next
-    // refresh and counted in `unread`, so no single transaction (anyone can send the team's
-    // wallets dust in any transaction version) holds up the lists. Version 1 is the newest.
-    const pending = [...listed].filter((s) => !read.has(s))
+    const started = now()
+    await Promise.all(wallets.all.map(listWallet))
+    // Read what has not been read, newest first, and what failed to read before after the rest.
+    // One the node could not return or refused is left for a later refresh and counted in
+    // `unread`, so no transaction (anyone can send the team's wallets dust in any transaction
+    // version) holds up the lists. Version 1 is the newest.
+    const pending = [...listed]
+      .filter(([s]) => !read.has(s))
+      .sort(([a, x], [b, y]) => (failed.get(a) ?? 0) - (failed.get(b) ?? 0) || y.slot - x.slot)
+      .slice(0, maxReads)
+      .map(([s]) => s)
     for (let i = 0; i < pending.length; i += concurrency) {
+      if (i > 0 && now() - started >= readMs) break
+      if (i > 0 && publicRpc) await sleep(250)
       const batch = pending.slice(i, i + concurrency)
       const txs = await Promise.allSettled(
         batch.map((s) =>
@@ -792,9 +907,10 @@ export function createQuantpLedger({
           }),
         ),
       )
-      txs.forEach(
-        (r, j) => r.value && read.set(batch[j], ledgerEntries(r.value, { token, wallets })),
-      )
+      txs.forEach((r, j) => {
+        if (r.value) read.set(batch[j], ledgerEntries(r.value, { token, wallets }))
+        else failed.set(batch[j], (failed.get(batch[j]) ?? 0) + 1)
+      })
     }
     // what the payout wallet holds for the next bursts (unknown if it cannot be read)
     const payoutLamports = wallets.payout
@@ -802,26 +918,83 @@ export function createQuantpLedger({
           .then(() => connection.getBalance(new PublicKey(wallets.payout), 'confirmed'))
           .then(BigInt, () => null)
       : null
+    // The oldest transaction read; of those left to read, how many failed READ_TRIES times, and
+    // the newest of the rest (one listed without a block time counts as now).
+    let since = null
+    let unreadable = 0
+    let newestUnreadAt = null
+    for (const [s, { blockTime }] of listed) {
+      if (read.has(s)) {
+        if (blockTime != null && (since == null || blockTime < since)) since = blockTime
+      } else if ((failed.get(s) ?? 0) >= READ_TRIES) unreadable++
+      else newestUnreadAt = Math.max(newestUnreadAt ?? 0, blockTime ?? Math.floor(now() / 1000))
+    }
+    const unread = listed.size - read.size
+    const listing = [...cursors.values()].some((open) => open.length > 0)
+    hurry = listing || unread > unreadable
     return {
       ...quantpLedger([...read.values()].flat(), { token, wallets, payoutLamports }),
-      unread: listed.size - read.size,
+      unread,
+      unreadable,
+      newestUnreadAt,
+      complete: unread === 0 && !listing,
+      since,
     }
   }
 
-  const source = cachedSource(load, { ttl, retry: 30_000, wait: 8_000, now })
+  const source = cachedSource(load, {
+    ttl,
+    retry: 30_000,
+    wait: 8_000,
+    now,
+    due: () => (hurry ? partialTtl : ttl),
+  })
+  const shown = (r) => ({
+    ...r.value,
+    updatedAt: Math.floor(r.at / 1000),
+    state: r.state === 'ok' && !r.value.complete ? 'partial' : r.state,
+  })
+  async function ledger() {
+    const r = await source()
+    if (r.state === 'down')
+      throw Object.assign(Error('Payouts and burns are unavailable right now. Retrying shortly.'), {
+        status: 503,
+        expose: true,
+        code: 'LEDGER_UNAVAILABLE',
+      })
+    return shown(r)
+  }
   return {
-    async ledger() {
-      const r = await source()
-      if (r.state === 'down')
-        throw Object.assign(
-          Error('Payouts and burns are unavailable right now. Retrying shortly.'),
-          {
-            status: 503,
-            expose: true,
-            code: 'LEDGER_UNAVAILABLE',
-          },
-        )
-      return { ...r.value, updatedAt: Math.floor(r.at / 1000), state: r.state }
+    ledger,
+    peek() {
+      const r = source.peek()
+      return r.state === 'down' ? null : shown(r)
+    },
+    loading: source.loading,
+    // The payouts that paid `address` (newest first, at most `limit` listed), with the lists'
+    // `complete` and `since`.
+    async forWallet(address, { limit = 50 } = {}) {
+      const { complete, since } = await ledger()
+      const items = []
+      for (const entries of read.values())
+        for (const e of entries) {
+          const paid = e.kind === 'payout' ? e.paid.filter(([to]) => to === address) : []
+          if (paid.length)
+            items.push({ ...e, lamports: paid.reduce((s, [, lamports]) => s + lamports, 0n) })
+        }
+      items.sort((a, b) => b.slot - a.slot)
+      return {
+        lamports: items.reduce((s, e) => s + e.lamports, 0n).toString(),
+        payouts: items.length,
+        lastAt: items[0]?.timestamp ?? null,
+        items: items.slice(0, limit).map((e) => ({
+          signature: e.signature,
+          timestamp: e.timestamp,
+          lamports: e.lamports.toString(),
+        })),
+        complete,
+        since,
+      }
     },
   }
 }

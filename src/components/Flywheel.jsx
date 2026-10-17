@@ -12,7 +12,14 @@ import {
 import { supportsWebGL, useInView, usePageVisible, useReducedMotion } from '../three/support.js'
 import { CopyButton } from './UI.jsx'
 import { bps, compact, short } from '../lib/format.js'
-import { BUYBACK_RULE, HOLDERS_RULE, PAID_NOTE, solFigure } from './quantpPayouts.js'
+import {
+  BUYBACK_PCT,
+  BUYBACK_RULE,
+  HOLDERS_PCT,
+  HOLDERS_RULE,
+  PAID_NOTE,
+  solFigure,
+} from './quantpPayouts.js'
 import { QUANTP } from '../../shared/network.mjs'
 
 // The live chart (three.js), fetched only when the card comes near and WebGL is there.
@@ -46,10 +53,11 @@ class SceneGuard extends Component {
 // primitives.
 //
 // It is $QUANTP's flywheel, with the fee its pool really charges (feeBps from /api/quantp: 2% on
-// the bonding curve, 5% in the DAMM v2 pool after graduation). The 60/40 split of the creator's
-// share is the team's policy, paid out every hour by Quant Pad's payout engine, and the live
-// figures are what was really paid and bought back (`paidSol`, `boughtSol` from /api/quantp's
-// `payouts`), never an estimate. Every figure is null while /api/quantp is loading or down.
+// the bonding curve, 5% in the DAMM v2 pool after graduation). The 60/40 split is the team's
+// policy for what it sends to the payout wallet, paid out about once an hour by Quant Pad's
+// payout engine, and the live figures are what was really paid, bought back and burned (`paidSol`,
+// `boughtSol`, and `burned` in raw units, from /api/quantp's `payouts`), never an estimate. Every
+// figure is null while /api/quantp is loading or down.
 function Flywheel({
   feeBps = null,
   migrated = false,
@@ -92,12 +100,12 @@ function Flywheel({
 
   const feeText = feeBps == null ? '' : bps(feeBps)
   const feePhrase = feeBps == null ? 'a fee' : `a ${feeText} fee`
-  const lede =
-    feeBps == null
-      ? `2% of every $${QUANTP.symbol} trade on the curve, 5% after graduation. The creator’s share is paid out every hour:`
-      : migrated
-        ? `A ${feeText} fee on every $${QUANTP.symbol} trade in its DAMM v2 pool. The creator’s share is paid out every hour:`
-        : `A ${feeText} fee on every $${QUANTP.symbol} trade, ${bps(QUANTP.postGradFeeBps)} after graduation. The creator’s share is paid out every hour:`
+  const payout = 'What reaches the payout wallet is paid out about once an hour:'
+  const lede = migrated
+    ? `A ${bps(feeBps ?? QUANTP.postGradFeeBps)} fee on every $${QUANTP.symbol} trade in its DAMM v2 pool. ${payout}`
+    : feeBps == null
+      ? `2% of every $${QUANTP.symbol} trade on the curve, 5% after graduation. ${payout}`
+      : `A ${feeText} fee on every $${QUANTP.symbol} trade, ${bps(QUANTP.postGradFeeBps)} after graduation. ${payout}`
 
   return (
     <div className="fw">
@@ -114,7 +122,7 @@ function Flywheel({
           <div className="fw-rows">
             <div className="fw-row fw-holders" ref={rowHolders}>
               <i className="fw-row-glow" aria-hidden="true" />
-              <div className="fw-pct">60%</div>
+              <div className="fw-pct">{HOLDERS_PCT}%</div>
               <div>
                 <h3>To holders</h3>
                 <p>{HOLDERS_RULE}</p>
@@ -125,7 +133,7 @@ function Flywheel({
             </div>
             <div className="fw-row fw-burn" ref={rowBurn}>
               <i className="fw-row-glow" aria-hidden="true" />
-              <div className="fw-pct">40%</div>
+              <div className="fw-pct">{BUYBACK_PCT}%</div>
               <div>
                 <h3>Buyback &amp; burn</h3>
                 <p>{BUYBACK_RULE}</p>
@@ -156,7 +164,7 @@ function Flywheel({
           className="fw-art"
           ref={art}
           role="img"
-          aria-label={`Chart: ${feePhrase} on every $${QUANTP.symbol} trade; the creator’s share goes 60% to holders and 40% to buyback and burn`}
+          aria-label={`Chart: ${feePhrase} on every $${QUANTP.symbol} trade; what reaches the payout wallet is paid out about once an hour: ${HOLDERS_PCT}% to holders and ${BUYBACK_PCT}% to buyback and burn`}
           data-live={run && ready ? '' : undefined}
         >
           <div className="fw-canvas" ref={frame} aria-hidden="true">
@@ -188,6 +196,9 @@ function Flywheel({
               <b>{feeBps == null ? '—' : feeText}</b>
               <span>of every buy and sell</span>
             </div>
+            {/* These labels sit on the 60/40 slices drawn into the still (ad/src/social/
+                Flywheel.jsx) and the 3D scene (three/FlywheelScene.jsx), so they stay hard-coded:
+                HOLDERS_PCT must stay 60, or the art and the scene need redrawing. */}
             <div className="fw-chip fw-chip-burn" ref={burn}>
               40%<small>burn</small>
             </div>

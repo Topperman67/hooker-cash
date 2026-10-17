@@ -261,7 +261,7 @@ function EngineArt({ mode = 'idle', holders = 24, share = 0.6, level = 0.5, now,
         <path d={TO_BURN} className="eg-flow eg-flow-burn" />
 
         {/* the holders' wallets, each paid along its own ray, by balance */}
-        <g className="eg-holders">
+        <g className="eg-art-holders">
           {nodes.map((n, i) => (
             <path key={`r${i}`} d={n.ray} className="eg-ray" />
           ))}

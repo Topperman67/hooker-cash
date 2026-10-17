@@ -1,8 +1,9 @@
-// The $QUANTP payout engine, in 38 seconds: fees fill the payout wallet, every hour a slice is
-// released, 60% goes in SOL to every wallet holding 0.15% of the supply by balance, 40% is bought
-// back and burned, and every transaction shows on the site. Everything is a function of time
-// (anim.js), so any frame renders on its own. The holders are mainnet's (holders.js); the rules
-// are the engine's (shared/network.mjs).
+// The $QUANTP payout engine, in 38 seconds: the team sends SOL from the creator's fee claims to
+// the payout wallet, every hour a slice is released, 60% goes in SOL, by balance, to the wallets
+// holding 0.15% of the supply whose share is worth sending, 40% is bought back and burned, and
+// every transaction shows on the site. Everything is a function of time (anim.js), so any frame
+// renders on its own. The holders are mainnet's (holders.js); the rules are the engine's
+// (shared/network.mjs); the burn and the site's figures are the chain's (timeline.js FACTS).
 import { AbsoluteFill, Audio, staticFile, useCurrentFrame, Img } from 'remotion'
 import '@fontsource-variable/hubot-sans/wdth.css'
 import '@fontsource-variable/mona-sans/wdth.css'
@@ -10,17 +11,31 @@ import '@fontsource-variable/martian-mono'
 import { useFonts } from '../fonts.js'
 import { clamp01, ease, lerp, prog, rand } from '../anim.js'
 import {
+  BEAM_FLIGHT,
+  BURN_COIN_FLIGHT,
+  BURN_COINS,
   BURN_T,
+  BURN_TOKEN_FLIGHT,
+  BURN_TOKENS,
   COIN_FLIGHT,
+  CUES,
+  ELIGIBLE,
   FACTS,
   FPS,
   HEIGHT,
   HOLDERS_T,
+  PAID,
   SCENES,
   SWEEPS,
   TRADE_FLIGHT,
   TRADES,
   WIDTH,
+  assertRules,
+  beamAt,
+  beamLandsAt,
+  feeLandsAt,
+  lightAt,
+  sweepAt,
 } from './timeline.js'
 import { HOLDERS, SUPPLY } from './holders.js'
 import './engine.css'
@@ -372,7 +387,7 @@ function Title({ t }) {
   const hand = ease.inOut(prog(t, 0.6, 3.6)) * TAU
   const h1 = rise(t, 1.0, 0.6)
   const sub = rise(t, 1.45, 0.6)
-  const hit = pulse(t, 0.9, 0.4)
+  const hit = pulse(t, CUES.titleHit, 0.4)
   const scale = 1 + prog(t, 3.3, 4) * 0.05
   return (
     <AbsoluteFill style={{ opacity: o, transform: `scale(${scale})` }}>
@@ -402,7 +417,7 @@ function Title({ t }) {
           The Payout Engine
         </h1>
         <p style={{ opacity: sub, transform: `translateY(${(1 - sub) * 20}px)` }}>
-          Holders paid. Supply burned. <b style={{ color: '#fff' }}>Every hour.</b>
+          Holders paid. Supply burned. <b style={{ color: '#fff' }}>Hourly, from a team-funded wallet.</b>
         </p>
       </div>
     </AbsoluteFill>
@@ -415,15 +430,20 @@ function Fees({ t }) {
   if (!o) return null
   const pool = [700, 610]
   const vault = [1390, 610]
-  const landed = TRADES.filter((a) => t >= a + COIN_FLIGHT).length
+  const landed = TRADES.filter((_, i) => t >= feeLandsAt(i)).length
   const kick = Math.max(0, ...TRADES.map((a) => pulse(t, a, 0.18)))
-  const vaultKick = Math.max(0, ...TRADES.map((a) => pulse(t, a + COIN_FLIGHT, 0.2)))
+  const vaultKick = Math.max(0, ...TRADES.map((_, i) => pulse(t, feeLandsAt(i), 0.2)))
   return (
     <AbsoluteFill style={{ opacity: o }}>
       <svg width={WIDTH} height={HEIGHT} style={{ position: 'absolute', inset: 0 }}>
         <Defs />
-        {/* the path the fees take */}
-        <path d={`M${pool[0] + 130},${pool[1]} Q${(pool[0] + vault[0]) / 2},${pool[1] - 230} ${vault[0] - 130},${vault[1]}`} fill="none" stroke="rgba(143,164,255,0.25)" strokeWidth="3" strokeDasharray="4 14" strokeDashoffset={-t * 40} />
+        {/* the path the fees take, by the team's hand */}
+        <path id="feeArc" d={`M${pool[0] + 130},${pool[1]} Q${(pool[0] + vault[0]) / 2},${pool[1] - 230} ${vault[0] - 130},${vault[1]}`} fill="none" stroke="rgba(143,164,255,0.25)" strokeWidth="3" strokeDasharray="4 14" strokeDashoffset={-t * 40} />
+        <text dy={34} fill="#b8c0cc" opacity={rise(t, s.from + 1.2, 0.6)} style={{ font: '500 21px "Martian Mono Variable"' }}>
+          <textPath href="#feeArc" startOffset="50%" textAnchor="middle">
+            sent by the team
+          </textPath>
+        </text>
         <Pool x={pool[0]} y={pool[1]} t={t} kick={kick} />
         <Vault x={vault[0]} y={vault[1]} t={t} fill={0.12 + 0.55 * (landed / TRADES.length)} glow={vaultKick} />
         {TRADES.map((arrive, i) => {
@@ -459,19 +479,22 @@ function Fees({ t }) {
         <strong>Payout wallet</strong>
         <span>{FACTS.walletShort}</span>
       </div>
-      <Caption t={t} scene={s} num="1" color="#8fa4ff" kicker="FEES" title="Every trade pays a 5% fee" />
+      <Caption t={t} scene={s} num="1" color="#8fa4ff" kicker="FEES" title={`Every trade pays a ${FACTS.poolFee}% fee`} />
       <Sub t={t} from={5.0} to={s.to}>
-        The creator’s share of the fees goes to the <b>payout wallet</b>.
+        The team sends SOL from the creator’s fee claims to the <b>payout wallet</b>.
       </Sub>
     </AbsoluteFill>
   )
 }
 
-const TIER_ROWS = [
-  ['Below $100k', 'a fifth of the wallet a day', '20%'],
-  ['$100k to $1M', 'half of it a day', '50%'],
-  ['Above $1M', 'all of it, every day', '100%'],
-]
+// The market cap tiers, as the engine runs them: each run releases the tier's daily share over the
+// day's 24 runs (FACTS.runsPerDay), so a 24th of it each hour.
+const usdShort = (n) => (n >= 1e6 ? `$${n / 1e6}M` : `$${n / 1e3}k`)
+const TIER_ROWS = FACTS.tiers.map(({ belowUsd, dailyBps }, i, all) => {
+  const label = i === 0 ? `Below ${usdShort(belowUsd)}` : belowUsd == null ? `Above ${usdShort(all[i - 1].belowUsd)}` : `${usdShort(all[i - 1].belowUsd)} to ${usdShort(belowUsd)}`
+  const share = `1/${(FACTS.runsPerDay * 10_000) / dailyBps}`
+  return [label, i === 0 ? `${share} of the wallet each hour` : `${share} each hour`, `${(dailyBps / (FACTS.runsPerDay * 100)).toFixed(2)}%`]
+})
 
 function Hourly({ t }) {
   const s = SCENES.hourly
@@ -479,8 +502,8 @@ function Hourly({ t }) {
   if (!o) return null
   const vault = [690, 600]
   const ringP = ease.out(prog(t, s.from + 0.1, s.from + 0.9))
-  const sweep = SWEEPS.find((w) => t >= w.from && t < w.to + 0.6) ?? null
-  const hand = sweep ? ease.inOut(prog(t, sweep.from, sweep.to)) * TAU : 0
+  const sweep = sweepAt(t)
+  const hand = sweep ? sweep.angle : 0
   const active = sweep ? sweep.tier : t >= SWEEPS.at(-1).to ? 2 : 0
   return (
     <AbsoluteFill style={{ opacity: o }}>
@@ -523,7 +546,7 @@ function Hourly({ t }) {
         <span style={{ fontSize: 22 }}>one sweep = one hour</span>
       </div>
       <div className="eng-tiers" style={{ opacity: rise(t, s.from + 0.6, 0.6), transform: `translateX(${(1 - rise(t, s.from + 0.6, 0.6)) * 60}px)` }}>
-        <h3>Released per day, by market cap</h3>
+        <h3>Released each hour, by market cap</h3>
         {TIER_ROWS.map(([label, hint, pct], i) => {
           const on = i === active
           const glow = on ? 1 : 0
@@ -547,22 +570,22 @@ function Hourly({ t }) {
             </div>
           )
         })}
+        <p className="eng-tiers-cap">at most {FACTS.maxRunSol} SOL a run</p>
       </div>
       <Caption t={t} scene={s} num="2" color="#8fa4ff" kicker="EVERY HOUR" title="A slice of the wallet goes out" />
       <Sub t={t} from={s.from + 0.8} to={s.to}>
-        Spread over the day’s 24 runs: <b>small now, more as the market cap grows.</b>
+        One run an hour: <b>small now, more as the market cap grows.</b>
       </Sub>
     </AbsoluteFill>
   )
 }
 
-// The holders, biggest first, without the pools and the team (they are never paid).
+// The holders, biggest first, without the pools and the team (they are never paid). ELIGIBLE are
+// over the 0.15% line; PAID, those of them whose share of the run is worth sending (timeline.js).
 const PAID_KINDS = HOLDERS.filter((h) => h.kind === 'eligible' || h.kind === 'below')
 const MAX_TOKENS = PAID_KINDS[0].tokens
-const ELIGIBLE = PAID_KINDS.filter((h) => h.kind === 'eligible')
-const ELIGIBLE_TOKENS = ELIGIBLE.reduce((s, h) => s + h.tokens, 0)
 const MIN_HOLD = (SUPPLY * FACTS.minHoldPct) / 100
-const BAR = { x0: 150, x1: 1470, base: 930, max: 520 }
+const BAR = { x0: 150, x1: 1470, base: 914, max: 520 }
 const barH = (tokens) => Math.max(5, BAR.max * Math.sqrt(tokens / MAX_TOKENS))
 const pitch = (BAR.x1 - BAR.x0) / PAID_KINDS.length
 
@@ -572,30 +595,27 @@ function Holders({ t }) {
   if (!o) return null
   const [r0, r1] = HOLDERS_T.rise
   const [l0, l1] = HOLDERS_T.line
-  const [g0, g1] = HOLDERS_T.light
   const [b0, b1] = HOLDERS_T.beams
   const thY = BAR.base - barH(MIN_HOLD)
   const lineX = lerp(BAR.x0 - 40, BAR.x1 + 60, ease.inOut(prog(t, l0, l1)))
   const vault = [1530, 300]
-  const landedAt = (i) => b0 + (i / ELIGIBLE.length) * (b1 - b0 - 1.2) + 0.9
-  const paid = ELIGIBLE.filter((_, i) => t >= landedAt(i)).length
-  const lit = Math.round(ELIGIBLE.length * ease.out(prog(t, g0, g1)))
+  const paid = PAID.filter((_, i) => t >= beamLandsAt(i, PAID.length)).length
   return (
     <AbsoluteFill style={{ opacity: o }}>
       <svg width={WIDTH} height={HEIGHT} style={{ position: 'absolute', inset: 0 }}>
         <Defs />
         <line x1={BAR.x0 - 30} y1={BAR.base + 2} x2={BAR.x1 + 30} y2={BAR.base + 2} stroke="rgba(255,255,255,0.25)" strokeWidth="2" />
-        {/* the beams of SOL, by balance: thicker for bigger holders */}
-        {ELIGIBLE.map((h, i) => {
-          const start = b0 + (i / ELIGIBLE.length) * (b1 - b0 - 1.2)
-          const p = prog(t, start, start + 0.9)
+        {/* the beams of SOL to the wallets paid, by balance: thicker for bigger holders */}
+        {PAID.map((h, i) => {
+          const start = beamAt(i, PAID.length)
+          const p = prog(t, start, start + BEAM_FLIGHT)
           if (p <= 0) return null
           const j = PAID_KINDS.indexOf(h)
           const x = BAR.x0 + j * pitch + pitch / 2
           const top = BAR.base - barH(h.tokens)
           const width = 2 + 14 * (h.tokens / ELIGIBLE[0].tokens)
           const from = [vault[0] - 30, vault[1] + 60]
-          const ctrl = [lerp(from[0], x, 0.55), Math.min(from[1], top) - 120]
+          const ctrl = [lerp(from[0], x, 0.55), Math.min(from[1], top) - 95] // under the two-line title
           const to = [x, top - 6]
           const head = ease.inOut(p)
           const pts = Array.from({ length: 24 }, (_, k) => quad(from, ctrl, to, (k / 23) * head))
@@ -614,10 +634,11 @@ function Holders({ t }) {
           const grow = ease.out(prog(t, r0 + (j / PAID_KINDS.length) * (r1 - r0), r0 + (j / PAID_KINDS.length) * (r1 - r0) + 0.5))
           const hgt = barH(h.tokens) * grow
           const eligible = h.kind === 'eligible'
-          const on = eligible && ELIGIBLE.indexOf(h) < lit
+          const on = eligible && t >= lightAt(ELIGIBLE.indexOf(h), ELIGIBLE.length)
           const dim = !eligible && t > l0 + (lineX > x ? 0 : 99)
-          const beamAt = eligible ? b0 + (ELIGIBLE.indexOf(h) / ELIGIBLE.length) * (b1 - b0 - 1.2) + 0.9 : 99
-          const flash = pulse(t, beamAt, 0.35)
+          // a wallet whose share is too small to send stays lit, without a beam
+          const k = PAID.indexOf(h)
+          const flash = k < 0 ? 0 : pulse(t, beamLandsAt(k, PAID.length), 0.35)
           return (
             <g key={j}>
               {on && <rect x={x - 6} y={BAR.base - hgt - 6} width={34} height={hgt + 6} rx={10} fill="#12c26e" opacity={0.25 + flash * 0.5} filter="url(#softglow)" />}
@@ -638,7 +659,7 @@ function Holders({ t }) {
       </svg>
       {t >= l0 && (
         <div style={{ position: 'absolute', left: BAR.x1 + 86, top: thY - 30, opacity: rise(t, l1 - 0.2, 0.4), fontFamily: 'var(--mono)', fontSize: 21, color: '#ffd76a', lineHeight: 1.35 }}>
-          0.15% of supply
+          {FACTS.minHoldPct}% of supply
           <br />
           = {MIN_HOLD / 1e6}M $QUANTP
         </div>
@@ -650,16 +671,17 @@ function Holders({ t }) {
       <div className="eng-label" style={{ left: vault[0], top: vault[1] - 132 }}>
         <span>payout wallet</span>
       </div>
-      <Caption t={t} scene={s} num="60%" color="#12c26e" kicker="TO HOLDERS" title="Every wallet with 0.15% or more" />
+      <Caption t={t} scene={s} num={`${FACTS.holdersPct}%`} color="#12c26e" kicker="TO HOLDERS" title={`Every wallet with ${FACTS.minHoldPct}% or more, once its share is worth sending`} />
       <Sub t={t} from={HOLDERS_T.beams[0]} to={s.to}>
-        Paid in SOL <b>by balance</b>: hold more, get more. Pools and team wallets are never paid.
+        Paid in SOL, <b>by balance</b>. Pools and team wallets are never paid.
       </Sub>
     </AbsoluteFill>
   )
 }
 
-const BURN_COINS = Array.from({ length: 12 }, (_, i) => BURN_T.coins[0] + (i / 12) * (BURN_T.coins[1] - BURN_T.coins[0] - 0.8))
-const BURN_TOKENS = Array.from({ length: 18 }, (_, i) => BURN_T.tokens[0] + (i / 18) * (BURN_T.tokens[1] - BURN_T.tokens[0] - 1))
+// The first burn's day ('17 Oct') and the round-1 tokens in it ('3.07M').
+const BURN_DAY = FACTS.firstBurn.at.split(' ').slice(0, 2).join(' ')
+const ROUND1 = `${(FACTS.firstBurn.fromRound1 / 1e6).toFixed(2)}M`
 
 function Burn({ t }) {
   const s = SCENES.burn
@@ -668,10 +690,10 @@ function Burn({ t }) {
   const vault = [300, 600]
   const pool = [800, 600]
   const fire = [1380, 640]
-  const kick = Math.max(0, ...BURN_COINS.map((a) => pulse(t, a + 0.8, 0.2)))
-  const burnKick = Math.max(0, ...BURN_TOKENS.map((a) => pulse(t, a + 1, 0.25)))
+  const kick = Math.max(0, ...BURN_COINS.map((a) => pulse(t, a + BURN_COIN_FLIGHT, 0.2)))
+  const burnKick = Math.max(0, ...BURN_TOKENS.map((a) => pulse(t, a + BURN_TOKEN_FLIGHT, 0.25)))
   const count = ease.inOut(prog(t, BURN_T.count[0], BURN_T.count[1]))
-  const supply = SUPPLY - FACTS.simulatedBurn * count
+  const supply = SUPPLY - FACTS.firstBurn.amount * count
   return (
     <AbsoluteFill style={{ opacity: o }}>
       <svg width={WIDTH} height={HEIGHT} style={{ position: 'absolute', inset: 0 }}>
@@ -708,17 +730,17 @@ function Burn({ t }) {
         <Vault x={vault[0]} y={vault[1]} w={170} h={200} t={t} fill={0.55 - prog(t, BURN_T.coins[0], BURN_T.coins[1]) * 0.15} />
         <Pool x={pool[0]} y={pool[1]} r={120} t={t} kick={kick} />
         {BURN_COINS.map((a, i) => {
-          const p = prog(t, a, a + 0.8)
+          const p = prog(t, a, a + BURN_COIN_FLIGHT)
           if (p <= 0 || p >= 1) return null
           const [x, y] = quad([vault[0] + 80, vault[1] - 30], [(vault[0] + pool[0]) / 2, vault[1] - 200], [pool[0] - 90, pool[1] - 30], ease.inOut(p))
           return <SolCoin key={i} x={x} y={y} r={15} />
         })}
         {BURN_TOKENS.map((a, i) => {
-          const p = prog(t, a, a + 1)
+          const p = prog(t, a, a + BURN_TOKEN_FLIGHT)
           if (p <= 0) return null
           if (p >= 1) {
             // burst into embers on arrival
-            const q = prog(t, a + 1, a + 1.6)
+            const q = prog(t, a + BURN_TOKEN_FLIGHT, a + BURN_TOKEN_FLIGHT + 0.6)
             if (q >= 1) return null
             return (
               <g key={i}>
@@ -748,11 +770,13 @@ function Burn({ t }) {
       <div className="eng-count" style={{ left: 1040, top: 112, opacity: rise(t, BURN_T.count[0] - 0.3, 0.4) }}>
         <span>$QUANTP supply</span>
         <b>{fmt(supply)}</b>
-        <em style={{ background: 'rgba(255,62,165,0.18)', border: '1px solid rgba(255,127,196,0.5)', color: '#ffb3dc', opacity: rise(t, BURN_T.count[1] - 0.4, 0.4) }}>
-          −{fmt(FACTS.simulatedBurn)} · first run, simulated on mainnet
+        <em style={{ background: 'rgba(255,62,165,0.18)', border: '1px solid rgba(255,127,196,0.5)', borderRadius: 18, lineHeight: 1.45, color: '#ffb3dc', opacity: rise(t, BURN_T.count[1] - 0.4, 0.4) }}>
+          −{fmt(FACTS.firstBurn.amount)} · first engine burn, {BURN_DAY}
+          <br />
+          (incl. {ROUND1} from the round-1 buyback)
         </em>
       </div>
-      <Caption t={t} scene={s} num="40%" color="#ff3ea5" kicker="BUYBACK & BURN" title="Bought back. Burned." />
+      <Caption t={t} scene={s} num={`${FACTS.buybackPct}%`} color="#ff3ea5" kicker="BUYBACK & BURN" title="Bought back. Burned." />
       <Sub t={t} from={s.from + 0.9} to={s.to}>
         Every burn lowers the supply <b>for good</b>.
       </Sub>
@@ -784,58 +808,62 @@ function Site({ t }) {
           )
         })}
       </div>
-      <div className="eng-browser" style={{ opacity: clamp01(win), transform: `translateY(${(1 - win) * 60}px) scale(${0.94 + 0.06 * win})` }}>
-        <div className="eng-browser-bar">
-          <i />
-          <i />
-          <i />
-          <span>{FACTS.url}</span>
-        </div>
-        <div className="eng-panel">
-          <div className="eng-panel-head">
-            <h4>Payouts &amp; burns</h4>
-            <div className="eng-seg">
-              <span>Payouts</span>
-              <span>Burns</span>
-            </div>
+      <div className="eng-shot" style={{ opacity: clamp01(win), transform: `translateY(${(1 - win) * 60}px) scale(${0.94 + 0.06 * win})` }}>
+        <div className="eng-browser">
+          <div className="eng-browser-bar">
+            <i />
+            <i />
+            <i />
+            <span>{FACTS.url}</span>
           </div>
-          <div className="eng-auto" style={{ opacity: rows(0) }}>
-            <div className="eng-auto-head">
-              <b>Automatic payouts</b>
-              <em>Running hourly</em>
-            </div>
-            Every hour the engine wallet {FACTS.walletShort} releases 20% a day of its SOL: 60% to the{' '}
-            {FACTS.site.eligible} wallets holding at least 1.5M $QUANTP, by balance, and 40% to buy back and burn
-            $QUANTP.
-          </div>
-          <dl className="eng-totals" style={{ opacity: rows(1), margin: 0 }}>
-            {[
-              ['Paid out', FACTS.site.paid],
-              ['Wallets paid', FACTS.site.wallets],
-              ['Wallets eligible now', FACTS.site.eligible],
-              ['In the payout wallet', FACTS.site.waiting],
-            ].map(([k, v]) => (
-              <div key={k}>
-                <dt>{k}</dt>
-                <dd>{v}</dd>
+          <div className="eng-panel">
+            <div className="eng-panel-head">
+              <h4>Payouts &amp; burns</h4>
+              <div className="eng-seg">
+                <span>Payouts</span>
+                <span>Burns</span>
               </div>
-            ))}
-          </dl>
-          <div className="eng-rows" style={{ opacity: rows(2) }}>
-            <div>
-              <span>Age</span>
-              <span className="r">SOL</span>
-              <span>&nbsp;&nbsp;Paid to</span>
-              <span className="r">Tx</span>
             </div>
-            <div>
-              <span className="m">21h</span>
-              <span className="r m">0.55</span>
-              <span>&nbsp;&nbsp;51 wallets</span>
-              <span className="r">3 txs ⌄</span>
+            <div className="eng-auto" style={{ opacity: rows(0) }}>
+              <div className="eng-auto-head">
+                <b>Automatic payouts</b>
+                <em>Running hourly</em>
+              </div>
+              Each hour the engine wallet {FACTS.walletShort} releases {FACTS.site.hourly} of its SOL: {FACTS.holdersPct}% to wallets
+              holding at least {FACTS.site.minHold} $QUANTP, by balance, and {FACTS.buybackPct}% to buy back and burn.
+            </div>
+            <dl className="eng-totals" style={{ opacity: rows(1), margin: 0 }}>
+              {[
+                ['Paid out', FACTS.site.paid],
+                ['Wallets paid', FACTS.site.wallets],
+                ['Wallets eligible now', FACTS.site.eligible],
+                ['In the payout wallet', FACTS.site.waiting],
+              ].map(([k, v]) => (
+                <div key={k}>
+                  <dt>{k}</dt>
+                  <dd>{v}</dd>
+                </div>
+              ))}
+            </dl>
+            <div className="eng-rows" style={{ opacity: rows(2) }}>
+              <div>
+                <span>Age</span>
+                <span className="r">SOL</span>
+                <span>&nbsp;&nbsp;Paid to</span>
+                <span className="r">Tx</span>
+              </div>
+              {FACTS.site.rows.map((row) => (
+                <div key={row.age}>
+                  <span className="m">{row.age}</span>
+                  <span className="r m">{row.sol}</span>
+                  <span>&nbsp;&nbsp;{row.wallets} wallets</span>
+                  <span className="r">{row.txs} txs ⌄</span>
+                </div>
+              ))}
             </div>
           </div>
         </div>
+        <p className="eng-stamp">As of {FACTS.site.at}</p>
       </div>
       <Caption t={t} scene={s} num="✓" color="#ffc21a" kicker="ALL ON-CHAIN" title="Every payout and burn, listed" />
       <Sub t={t} from={s.from + 0.7} to={s.to}>
@@ -852,6 +880,7 @@ function End({ t }) {
   const a = rise(t, s.from + 0.1, 0.8, ease.outBack)
   const b = rise(t, s.from + 0.5, 0.6)
   const c = rise(t, s.from + 0.9, 0.6)
+  const fine = rise(t, s.from + 0.2, 0.6)
   return (
     <AbsoluteFill style={{ opacity: o }}>
       <svg width={WIDTH} height={HEIGHT} style={{ position: 'absolute', inset: 0 }}>
@@ -864,18 +893,20 @@ function End({ t }) {
           $QUANTP Payout Engine
         </h2>
         <span className="eng-url" style={{ opacity: c }}>
-          {FACTS.url}
+          {FACTS.engineUrl}
         </span>
       </div>
-      <p className="eng-fine" style={{ opacity: c }}>
-        Runs on Quant Pad’s server from a wallet the team funds; nothing on-chain enforces it. Memecoins are extremely risky. Not
-        financial advice.
+      <p className="eng-fine" style={{ opacity: fine }}>
+        Runs on Quant Pad’s server from a wallet the team funds; nothing on-chain enforces it.
+        <br />
+        Memecoins are extremely risky. Not financial advice.
       </p>
     </AbsoluteFill>
   )
 }
 
 export function Engine() {
+  assertRules() // the rules the film states are still the engine's, or it refuses to render
   useFonts()
   const frame = useCurrentFrame()
   const t = frame / FPS
@@ -890,6 +921,8 @@ export function Engine() {
       <Site t={t} />
       <End t={t} />
       <Wipe t={t} />
+      {/* on every frame, above the cuts: what the engine is, for anyone who sees only a moment */}
+      <p className="eng-bug">Off-chain · team-funded · not financial advice</p>
       <Audio src={staticFile('engine-soundtrack.wav')} />
     </AbsoluteFill>
   )

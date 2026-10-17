@@ -13,7 +13,7 @@ import { loadJob, registerOnce } from '../lib/launchPlan.js'
 import { usePlatform } from '../context/PlatformContext.jsx'
 import Price from '../components/Price.js'
 import { ago, pct, safeLink, sol, usd } from '../lib/format.js'
-import { explorer, isAddress, QUANTP } from '../../shared/network.mjs'
+import { explorer, isAddress } from '../../shared/network.mjs'
 import { MeteoraMark } from '../components/Meteora.jsx'
 
 const storage = () => {
@@ -130,12 +130,6 @@ export default function CoinPage() {
           image={c.image}
           quantum={c.quantum}
           hooks={hooks}
-          label={c.mint === QUANTP.mint ? 'Quant Pad’s own token' : undefined}
-          plain={
-            c.mint === QUANTP.mint
-              ? 'The creator’s fee share is paid out every hour by Quant Pad’s payout engine, not enforced on-chain: 60% in SOL to wallets holding at least 0.15% of the supply, 40% to buyback & burn.'
-              : undefined
-          }
           footer={
             <span>
               {c.complete
@@ -156,11 +150,8 @@ export default function CoinPage() {
               {c.complete && (
                 <span className="chip chip-grad">{c.migrated ? 'Graduated' : 'Graduating'}</span>
               )}
-              {c.mint === QUANTP.mint ? (
-                <span className="chip">Quant Pad’s own token</span>
-              ) : (
-                c.external && <span className="chip">Launched outside Quant Pad</span>
-              )}
+              {/* $QUANTP never shows here: /coin/<its mint> redirects to its own page (App.jsx) */}
+              {c.external && <span className="chip">Launched outside Quant Pad</span>}
               <Address value={c.mint} href={explorer.token(c.mint)} />
             </div>
           </div>

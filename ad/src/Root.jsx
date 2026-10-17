@@ -7,6 +7,8 @@ import { Flywheel, FLYWHEEL } from './social/Flywheel.jsx'
 import { FPS, DURATION, WIDTH, HEIGHT } from './timeline.js'
 import { Engine } from './engine/Engine.jsx'
 import * as ENGINE from './engine/timeline.js'
+import { Receipts } from './receipts/Receipts.jsx'
+import * as RECEIPTS from './receipts/timeline.js'
 
 export function Root() {
   return (
@@ -20,6 +22,15 @@ export function Root() {
         fps={ENGINE.FPS}
         width={ENGINE.WIDTH}
         height={ENGINE.HEIGHT}
+      />
+      {/* the payout engine's first day as a printed log, square for the feed (see src/receipts/) */}
+      <Composition
+        id="Receipts"
+        component={Receipts}
+        durationInFrames={RECEIPTS.DURATION}
+        fps={RECEIPTS.FPS}
+        width={RECEIPTS.WIDTH}
+        height={RECEIPTS.HEIGHT}
       />
       {/* Twitter/X profile stills, rendered at 2x (see src/social/Stills.jsx) */}
       <Composition id="Avatar" component={Avatar} durationInFrames={1} fps={FPS} width={AVATAR.width} height={AVATAR.height} />

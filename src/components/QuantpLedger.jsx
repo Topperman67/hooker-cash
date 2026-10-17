@@ -3,12 +3,22 @@ import { Link } from 'react-router-dom'
 import { ChevronDown } from 'lucide-react'
 import { useResource } from '../lib/api.js'
 import { Address, Segmented, Stat } from './UI.jsx'
-import { ago, compact, formatUnits, short, sol, toSol } from '../lib/format.js'
+import { ago, bps, compact, formatUnits, short, sol, toSol } from '../lib/format.js'
 import { QUANTP, explorer } from '../../shared/network.mjs'
-import { ENGINE_PATH, ENGINE_STATE_LABEL, engineState } from './quantpPayouts.js'
+import { ENGINE_PATH, ENGINE_STATE_LABEL, dailyShare, engineState } from './quantpPayouts.js'
 
+const LEDGER = '/api/quantp/ledger'
+const POLICY = QUANTP.engine
 // Rows shown before "Show all": the panel sits in the page's narrow side column.
 const FIRST_ROWS = 8
+// Runs shown before "Show the last 7 days".
+const FIRST_RUNS = 24
+const WEEK = 7 * 86_400
+const MIN_BUYBACK = BigInt(POLICY.minBuybackLamports)
+const minBuybackText = sol(toSol(POLICY.minBuybackLamports))
+// The engine's first run, 17 Oct 2026 06:06 UTC. The engine wallet is the payout wallet, which the
+// team paid round 1 from by hand before then: what it paid or burned earlier is no engine run.
+const ENGINE_FIRST_RUN = 1792217176
 
 const when = (seconds) =>
   seconds
@@ -17,17 +27,37 @@ const when = (seconds) =>
         timeStyle: 'short',
       })
     : undefined
+const day = (seconds) =>
+  new Date(seconds * 1000).toLocaleDateString('en-US', { dateStyle: 'medium' })
+const utc = (seconds, options) =>
+  new Date(seconds * 1000).toLocaleString('en-US', { timeZone: 'UTC', ...options })
 const wallets = (n) => `${n.toLocaleString('en-US')} ${n === 1 ? 'wallet' : 'wallets'}`
+const big = (v) => {
+  try {
+    return BigInt(v ?? 0)
+  } catch {
+    return 0n
+  }
+}
 
+// The visible text stays the signature's first characters; screen readers hear what it is and
+// that it leaves the page.
 function TxLink({ signature }) {
   return (
     <a href={explorer.tx(signature)} target="_blank" rel="noreferrer" className="faint">
+      <span className="sr-only">Transaction </span>
       {signature.slice(0, 6)}
+      <span className="sr-only"> (opens in a new tab)</span>
     </a>
   )
 }
 
-function Rows({ rows, head, row }) {
+/**
+ * A table that shows its first rows, then all of them on request. `total` is how many there are
+ * on the server (more than `rows` when the ledger answered with its newest only); `onAll` asks it
+ * for the rest.
+ */
+function Rows({ rows, head, row, total = rows.length, onAll }) {
   const [all, setAll] = useState(false)
   const shown = all ? rows : rows.slice(0, FIRST_ROWS)
   return (
@@ -40,9 +70,16 @@ function Rows({ rows, head, row }) {
           <tbody>{shown.map(row)}</tbody>
         </table>
       </div>
-      {rows.length > FIRST_ROWS && (
-        <button type="button" className="btn btn-sm qp-ledger-more" onClick={() => setAll(!all)}>
-          {all ? 'Show fewer' : `Show all ${rows.length}`}
+      {Math.max(total, rows.length) > FIRST_ROWS && (
+        <button
+          type="button"
+          className="btn btn-sm qp-ledger-more"
+          onClick={() => {
+            if (!all) onAll?.()
+            setAll(!all)
+          }}
+        >
+          {all ? 'Show fewer' : `Show all ${Math.max(total, rows.length).toLocaleString('en-US')}`}
         </button>
       )}
     </>
@@ -105,35 +142,43 @@ function Burst({ burst }) {
 }
 
 /**
- * The payout engine (/api/quantp/engine), shown once it is switched on: where it stands, what it
- * does every hour at the current market cap, how many wallets it pays, its next run, the payout
- * wallet's last payout on-chain (`lastPayoutAt`, from the ledger) and a link to its own page.
+ * The payout engine (/api/quantp/engine), shown once it is switched on: where it stands, what each
+ * hourly run releases at the current market cap and how that adds up over a day, how many of the
+ * eligible wallets its next run pays, the payout wallet's last payout on-chain (`lastPayoutAt`,
+ * from the ledger) and a link to its own page.
  */
 function Engine({ engine, lastPayoutAt, symbol, decimals }) {
   if (!engine?.live) return null
   const minHold = Number(engine.minHold) / 10 ** decimals
   const holdersPct = engine.holdersShareBps / 100
+  const daily = Number(engine.dailyBps)
   const ticker = `$${symbol}`
   const state = engineState(engine)
+  const stale = engine.state === 'stale'
+  const next = engine.next ?? {}
+  const release = sol(toSol(next.release), { digits: 4 })
   return (
     <div className="qp-engine">
       <p className="qp-engine-head">
         <strong>Automatic payouts</strong>
-        <span className={`chip ${state === 'running' ? 'chip-grad' : ''}`}>
+        <span className={`chip ${state === 'running' && !stale ? 'chip-grad' : ''}`}>
           {ENGINE_STATE_LABEL[state]}
         </span>
       </p>
       <p className="qp-engine-text">
-        Every hour the engine wallet{' '}
+        Each hour the engine wallet{' '}
         <Address value={engine.wallet} href={explorer.account(engine.wallet)} /> releases{' '}
-        {engine.dailyBps / 100}% a day of its SOL (more as the market cap grows): {holdersPct}% to
-        the {engine.eligible.toLocaleString('en-US')} wallets holding at least {compact(minHold)}{' '}
-        {ticker} ({engine.minHoldBps / 100}% of the supply), by balance, and {100 - holdersPct}% to
-        buy back and burn {ticker}.
+        {bps(daily / 24)} of its SOL (about {Math.round(dailyShare(daily) * 100)}% of it a day at
+        this market cap): {holdersPct}% to wallets holding at least {compact(minHold)} {ticker} (
+        {engine.minHoldBps / 100}% of the supply), by balance, and {100 - holdersPct}% to buy back
+        and burn {ticker}.
       </p>
       <p className="faint qp-engine-text">
-        Next run about {sol(toSol(engine.next.release), { digits: 4 })} ·{' '}
-        {lastPayoutAt ? `last payout ${ago(lastPayoutAt)} ago` : 'no payout yet'} ·{' '}
+        {next.paying != null && engine.eligible != null
+          ? `Next run pays ${next.paying.toLocaleString('en-US')} of ${engine.eligible.toLocaleString('en-US')} eligible wallets, releasing about ${release}`
+          : `Next run about ${release}`}{' '}
+        · {lastPayoutAt ? `last payout ${ago(lastPayoutAt)} ago` : 'no payout yet'} ·{' '}
+        {stale && 'figures may be out of date · '}
         <Link to={ENGINE_PATH}>How it works</Link>
       </p>
     </div>
@@ -141,19 +186,227 @@ function Engine({ engine, lastPayoutAt, symbol, decimals }) {
 }
 
 /**
- * $QUANTP's payouts to holders and its burns, read from the team's wallets by /api/quantp/ledger,
- * with the payout engine's state from /api/quantp/engine, so holders can see what was actually
- * paid, bought back and burned. `burned` is the whole tokens gone from the supply. `showEngine`
- * false leaves out the engine's block, for the engine's own page, which shows it in full.
+ * The engine wallet's runs from the ledger, newest first: one per UTC hour (or per `run`, the hour
+ * the engine's memo names, when the ledger reads it), with what it paid, to how many wallets and in
+ * how many payments, what its buyback spent and burned, and its transactions. The ledger joins
+ * payouts less than 30 minutes apart into one burst, which can hold two runs, so each payout
+ * transaction counts in its own hour. `status` says how the run went:
+ *   - 'complete': it bought back and burned (or had nothing to pay);
+ *   - 'no buyback (below minimum)': the buyback its payout implies (paid × 40/60) is under the
+ *     minimum, so it was skipped and its SOL stayed in the wallet;
+ *   - 'buyback did not go through': otherwise;
+ *   - 'manual payout' or 'manual burn': the team's own, before the engine's first run (`since`).
+ * `repeated` is set when an engine hour has payouts from two bursts or more, or pays a wallet twice.
  */
-export default function QuantpLedger({ symbol, decimals, burned, showEngine = true }) {
+export function engineRuns(
+  d,
+  { everySecs = POLICY.everySecs, wallet, since = ENGINE_FIRST_RUN } = {},
+) {
+  const engineWallet = wallet ?? d?.wallets?.engine ?? POLICY.wallet
+  const runs = new Map()
+  const runOf = (entry, tag = entry.run) => {
+    const hour = Number.isInteger(tag) ? tag : Math.floor(entry.timestamp / everySecs)
+    if (!runs.has(hour))
+      runs.set(hour, {
+        hour,
+        at: hour * everySecs,
+        bursts: 0,
+        paid: 0n,
+        recipients: 0,
+        payments: 0,
+        burns: 0,
+        bought: 0n,
+        burned: 0n,
+        signatures: [],
+        manual: true,
+      })
+    const run = runs.get(hour)
+    if (Number.isInteger(tag) || entry.timestamp >= since) run.manual = false
+    return run
+  }
+  for (const burst of d?.payouts ?? []) {
+    if (burst.wallet && burst.wallet !== engineWallet) continue
+    const parts = new Map() // run -> the burst's transactions in it
+    for (const x of burst.transactions) {
+      const run = runOf(x, x.run ?? burst.run)
+      parts.set(run, [...(parts.get(run) ?? []), x])
+    }
+    for (const [run, txs] of parts) {
+      const whole = parts.size === 1
+      const payments = txs.reduce((s, x) => s + (x.recipients ?? 0), 0)
+      // a burst all in one run knows its distinct wallets: fewer than its payments when it paid a
+      // wallet twice (two runs minutes apart)
+      const recipients = whole ? (burst.recipients ?? payments) : payments
+      run.bursts += 1
+      run.paid += whole ? big(burst.lamports) : txs.reduce((s, x) => s + big(x.lamports), 0n)
+      run.recipients += recipients
+      run.payments += Math.max(payments, recipients)
+      run.signatures.push(...txs.map((x) => x.signature))
+    }
+  }
+  for (const burn of d?.burns ?? []) {
+    if (burn.wallet !== engineWallet) continue
+    const run = runOf(burn)
+    run.burns += 1
+    run.bought += big(burn.solSpent)
+    run.burned += big(burn.amount)
+    run.signatures.push(burn.signature)
+  }
+  return [...runs.values()]
+    .sort((a, b) => b.hour - a.hour)
+    .map((run) => {
+      const implied = (run.paid * BigInt(QUANTP.buybackShareBps)) / BigInt(QUANTP.holdersShareBps)
+      return {
+        ...run,
+        status: run.manual
+          ? run.bursts
+            ? 'manual payout'
+            : 'manual burn'
+          : run.burns > 0 || run.paid === 0n
+            ? 'complete'
+            : implied < MIN_BUYBACK
+              ? 'no buyback (below minimum)'
+              : 'buyback did not go through',
+        repeated: !run.manual && (run.bursts >= 2 || run.payments > run.recipients),
+      }
+    })
+}
+
+/** The engine's runs, the last 24 first, then the last 7 days on request. */
+function Runs({ runs, symbol, decimals, more, onAll }) {
+  const [week, setWeek] = useState(false)
+  const since = Date.now() / 1000 - WEEK
+  const recent = runs.filter((r) => r.at + POLICY.everySecs > since)
+  const shown = week ? recent : runs.slice(0, FIRST_RUNS)
+  if (!runs.length)
+    return (
+      <p className="muted qp-ledger-empty">
+        No runs yet. Each hour in which the engine wallet pays holders or burns ${symbol} shows here
+        once it confirms.
+      </p>
+    )
+  return (
+    <>
+      <div className="table-wrap">
+        <table className="table qp-runs">
+          <thead>
+            <tr>
+              <th>Hour (UTC)</th>
+              <th className="right">SOL paid</th>
+              <th className="right">SOL bought</th>
+              <th className="right">{symbol} burned</th>
+            </tr>
+          </thead>
+          <tbody>
+            {shown.map((r) => (
+              <RunRows key={r.hour} run={r} symbol={symbol} decimals={decimals} />
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {(week || recent.length > FIRST_RUNS || more) && (
+        <button
+          type="button"
+          className="btn btn-sm qp-ledger-more"
+          onClick={() => {
+            if (!week) onAll?.()
+            setWeek(!week)
+          }}
+        >
+          {week ? 'Show the last 24' : 'Show the last 7 days'}
+        </button>
+      )}
+    </>
+  )
+}
+
+/** A run's figures, and under them how it went and its transactions (four columns fit a phone). */
+function RunRows({ run, symbol, decimals }) {
+  const ok = run.status === 'complete' && !run.repeated
+  return (
+    <>
+      <tr className="qp-run">
+        <td className="num" title={utc(run.at, { dateStyle: 'full', timeStyle: 'short' })}>
+          {utc(run.at, { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })}
+          <span className="qp-run-day">{utc(run.at, { month: 'short', day: 'numeric' })}</span>
+        </td>
+        <td className="right num">
+          {run.bursts ? sol(toSol(run.paid), { unit: false }) : '—'}
+          {/* a repeated hour may have paid the same wallets twice: its count is of payments */}
+          {run.bursts > 0 && (
+            <span className="qp-run-day">
+              {run.repeated
+                ? `${run.payments.toLocaleString('en-US')} payments`
+                : wallets(run.recipients)}
+            </span>
+          )}
+        </td>
+        {run.burns ? (
+          <td
+            className="right num"
+            title={`Includes earlier buys whose $${symbol} this run burned`}
+          >
+            {sol(toSol(run.bought), { unit: false })}
+          </td>
+        ) : (
+          <td className="right num">—</td>
+        )}
+        <td className="right num">
+          {run.burns ? compact(Number(run.burned) / 10 ** decimals) : '—'}
+        </td>
+      </tr>
+      <tr className="qp-ledger-sub qp-run-status">
+        <td colSpan={4}>
+          <div className="qp-run-foot">
+            <span className={`chip qp-run-chip ${ok ? 'chip-grad' : ''}`}>{run.status}</span>
+            {run.repeated && <span className="chip qp-run-chip">repeated</span>}
+            <span className="qp-run-txs">
+              {run.signatures.map((s) => (
+                <TxLink key={s} signature={s} />
+              ))}
+            </span>
+          </div>
+        </td>
+      </tr>
+    </>
+  )
+}
+
+/**
+ * $QUANTP's payouts to holders, its burns and the engine's hourly runs, read from the team's
+ * wallets by /api/quantp/ledger, with the payout engine's state, so holders can see what was
+ * actually paid, bought back and burned. `burned` is the whole tokens gone from the supply.
+ * `engine` is the /api/quantp/engine body when the page already loads it (null included); left
+ * out, the panel fetches it itself. `showEngine` false leaves out the engine's block and
+ * `showTotals` false the payout totals, for the engine's own page, which shows both in full.
+ */
+export default function QuantpLedger({
+  symbol,
+  decimals,
+  burned,
+  engine: engineProp,
+  showEngine = true,
+  showTotals = true,
+}) {
   const [tab, setTab] = useState('payouts')
-  const ledger = useResource('/api/quantp/ledger', 30_000)
-  const engine = useResource('/api/quantp/engine', 60_000).data
+  // The ledger answers with its newest rows; "Show all" asks it for every one, once it has more.
+  const [wantAll, setWantAll] = useState(false)
+  const full = useResource(wantAll ? `${LEDGER}?all=1` : null, 60_000)
+  const newest = useResource(full.data ? null : LEDGER, 60_000)
+  const ledger = full.data ? full : newest
+  const own = useResource(engineProp === undefined ? '/api/quantp/engine' : null, 60_000).data
+  const engine = engineProp === undefined ? own : engineProp
   const d = ledger.data
   const t = d?.totals
+  const more = !!d?.more
+  const requestAll = () => more && setWantAll(true)
   const teamBurned = t ? Number(t.burnedAmount) / 10 ** decimals : null
   const othersBurned = burned != null && teamBurned != null ? burned - teamBurned : null
+  const unburnedTokens = t ? Number(t.unburned.amount) / 10 ** decimals : 0
+  const latest = d?.payouts[0]
+  const lastPayoutAt = latest
+    ? (latest.lastTimestamp ?? latest.transactions?.at(-1)?.timestamp ?? latest.timestamp)
+    : null
 
   let body
   if (!d)
@@ -167,32 +420,36 @@ export default function QuantpLedger({ symbol, decimals, burned, showEngine = tr
       <>
         <Engine
           engine={showEngine ? engine : null}
-          lastPayoutAt={d.payouts[0]?.timestamp ?? null}
+          lastPayoutAt={lastPayoutAt}
           symbol={symbol}
           decimals={decimals}
         />
-        <dl className="qp-ledger-totals">
-          <Stat label="Paid out">
-            <span className="num">{sol(toSol(t.paidLamports), { digits: 3 })}</span>
-          </Stat>
-          <Stat label="Wallets paid">
-            <span className="num">{t.recipients.toLocaleString('en-US')}</span>
-          </Stat>
-          <Stat label="Wallets eligible now">
-            <span
-              className="num"
-              title={`Holding at least ${QUANTP.engine.minHoldBps / 100}% of the supply`}
-            >
-              {engine?.configured ? engine.eligible.toLocaleString('en-US') : '—'}
-            </span>
-          </Stat>
-          <Stat label="In the payout wallet">
-            <span className="num">{sol(toSol(d.payoutLamports), { digits: 3 })}</span>
-          </Stat>
-        </dl>
+        {showTotals && (
+          <dl className="qp-ledger-totals">
+            <Stat label="Paid out">
+              <span className="num">{sol(toSol(t.paidLamports), { digits: 3 })}</span>
+            </Stat>
+            <Stat label="Wallets paid">
+              <span className="num">{t.recipients.toLocaleString('en-US')}</span>
+            </Stat>
+            <Stat label="Wallets eligible now">
+              <span
+                className="num"
+                title={`Holding at least ${POLICY.minHoldBps / 100}% of the supply`}
+              >
+                {engine?.configured ? engine.eligible.toLocaleString('en-US') : '—'}
+              </span>
+            </Stat>
+            <Stat label="In the payout wallet">
+              <span className="num">{sol(toSol(d.payoutLamports), { digits: 3 })}</span>
+            </Stat>
+          </dl>
+        )}
         {d.payouts.length ? (
           <Rows
             rows={d.payouts}
+            total={d.payoutCount}
+            onAll={requestAll}
             head={
               <>
                 <th>Age</th>
@@ -215,7 +472,7 @@ export default function QuantpLedger({ symbol, decimals, burned, showEngine = tr
         </p>
       </>
     )
-  else
+  else if (tab === 'burns')
     body = (
       <>
         <dl className="qp-ledger-totals">
@@ -236,6 +493,11 @@ export default function QuantpLedger({ symbol, decimals, burned, showEngine = tr
             >
               {sol(toSol(t.unburned.lamports), { digits: 3 })}
             </span>
+            {unburnedTokens > 0 && (
+              <span className="num qp-ledger-tokens">
+                {compact(unburnedTokens)} {symbol}
+              </span>
+            )}
           </Stat>
           <Stat label="Next buyback">
             <span className="num">
@@ -246,6 +508,8 @@ export default function QuantpLedger({ symbol, decimals, burned, showEngine = tr
         {d.burns.length ? (
           <Rows
             rows={d.burns}
+            total={d.burnCount}
+            onAll={requestAll}
             head={
               <>
                 <th>Age</th>
@@ -260,9 +524,16 @@ export default function QuantpLedger({ symbol, decimals, burned, showEngine = tr
                   {ago(b.timestamp)}
                 </td>
                 <td className="right num">{formatUnits(b.amount, decimals, 0)}</td>
-                <td className="right num">
-                  {b.solSpent == null ? '—' : sol(toSol(b.solSpent), { unit: false })}
-                </td>
+                {b.solSpent == null ? (
+                  <td className="right num">—</td>
+                ) : (
+                  <td
+                    className="right num"
+                    title={`Includes earlier buys whose $${symbol} this transaction burned`}
+                  >
+                    {sol(toSol(b.solSpent), { unit: false })}
+                  </td>
+                )}
                 <td className="right">
                   <TxLink signature={b.signature} />
                 </td>
@@ -279,12 +550,35 @@ export default function QuantpLedger({ symbol, decimals, burned, showEngine = tr
           <Address value={d.wallets.payout} href={explorer.account(d.wallets.payout)} /> and the
           creator wallet{' '}
           <Address value={d.wallets.creator} href={explorer.account(d.wallets.creator)} />.
-          {engine?.live && ' The payout engine buys back and burns every hour.'} SOL spent is what
-          they paid for the ${symbol} they bought since the burn before, the launch’s dev buy aside.
+          {engine?.live &&
+            (big(engine.next?.buyback) > 0n
+              ? ` The payout engine buys back and burns about once an hour when its share is at least ${minBuybackText}.`
+              : ` No buyback this hour: its share is under ${minBuybackText} and stays in the wallet.`)}{' '}
+          SOL spent is what they paid for the ${symbol} they bought since the burn before, the
+          launch’s dev buy aside.
           {othersBurned >= 1 && ` Other wallets have burned ${compact(othersBurned)} ${symbol}.`}
         </p>
       </>
     )
+  else {
+    const runs = engineRuns(d)
+    body = (
+      <>
+        <Runs runs={runs} symbol={symbol} decimals={decimals} more={more} onAll={requestAll} />
+        <p className="faint qp-fine">
+          One row per UTC hour in which the engine wallet{' '}
+          <Address
+            value={d.wallets.engine ?? POLICY.wallet}
+            href={explorer.account(d.wallets.engine ?? POLICY.wallet)}
+          />{' '}
+          paid holders or burned ${symbol}, read from the chain. A buyback under {minBuybackText} is
+          skipped and its SOL stays in the wallet.
+          {runs.some((r) => r.manual) &&
+            ` Rows marked manual are the team’s own, by hand, from before the engine’s first run on ${utc(ENGINE_FIRST_RUN, { dateStyle: 'medium' })}.`}
+        </p>
+      </>
+    )
+  }
 
   return (
     <section id="payouts" className="panel qp-ledger" aria-labelledby="qp-ledger-title">
@@ -293,16 +587,23 @@ export default function QuantpLedger({ symbol, decimals, burned, showEngine = tr
           Payouts & burns
         </h2>
         <Segmented
-          label="Show payouts or burns"
+          label="Show payouts, burns or runs"
           value={tab}
           onChange={setTab}
           options={[
             ['payouts', 'Payouts'],
             ['burns', 'Burns'],
+            ['runs', 'Runs'],
           ]}
         />
       </div>
       {body}
+      {d?.complete === false && (
+        <p className="faint qp-fine">
+          {d.since ? `Showing history since ${day(d.since)}` : 'Showing recent history'}; older
+          transactions are still loading.
+        </p>
+      )}
       {d?.unread > 0 && (
         <p className="faint qp-fine">
           {d.unread === 1 ? '1 transaction' : `${d.unread} transactions`} of the team’s wallets

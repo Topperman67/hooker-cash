@@ -33,6 +33,34 @@ export default function TermsPage() {
           are operated by third parties with their own fees, rules and admin powers. Their changes
           can affect coins launched here, including stopping Quantum Hooks.
         </p>
+        {/* DRAFT: the owner or counsel approves this section before it ships. It is kept word for
+            word the same as documentation/reference/terms-of-use.md. */}
+        <h2>$QUANTP and its payout engine</h2>
+        <p>
+          $QUANTP is Quant Pad’s own token, and Quant Pad promotes it on this site. It did not
+          launch through Quant Pad’s launch flow: it launched through Midas on Meteora, and Quantum
+          Hooks do not route its fees.
+        </p>
+        <ul>
+          <li>
+            The team may send SOL to a payout wallet, from which Quant Pad’s payout engine pays
+            holders in SOL and buys back and burns $QUANTP. These payouts and buybacks are the
+            team’s discretionary policy, not an obligation: the team can change, pause or stop them
+            at any time, and any run can pay nothing. No on-chain program enforces them.
+          </li>
+          <li>
+            Holding $QUANTP gives you no right to any payout, buyback, burn or other payment, and no
+            share in Quant Pad or its fees.
+          </li>
+          <li>
+            You are responsible for any taxes on what you receive, buy or sell, and for reporting it
+            where you live.
+          </li>
+          <li>
+            $QUANTP and its payouts are not offered where they are prohibited. Do not buy or hold it
+            where the laws that apply to you do not allow it.
+          </li>
+        </ul>
         <h2>No warranty</h2>
         <p>
           The software is provided as is, without warranties of any kind. Smart contracts can

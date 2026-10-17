@@ -805,7 +805,7 @@ test('operator docs match the current program, client and server settings', () =
     '64 KB',
   ])
     assert.ok(deploy.includes(text), `DEPLOY.md: ${text}`)
-  // The dev buy is never split from create_v2, and small fees to an empty treasury are left out.
+  // The dev buy is never split from the DBC create, and small fees to an empty treasury are left out.
   assert.doesNotMatch(deploy, /window for snipers|split into two transactions/)
   assert.match(deploy, /`QUANTPAD_LOOKUP_TABLE` is required for any launch with a dev buy/)
   assert.match(deploy, /leaves out fee transfers smaller than that/)
@@ -813,8 +813,11 @@ test('operator docs match the current program, client and server settings', () =
   // Program handoff: keypair restore, deploy together, keeper rent refund.
   assert.match(deploy, /quantum_hooks-keypair\.json/)
   assert.match(deploy, /QUANTPAD_NEW_PROGRAM_ID=1/)
-  assert.match(deploy, /`rent_payer` signer and `fusion` takes `lp_token_program`/)
-  assert.match(deploy, /0\.00204 SOL/)
+  assert.match(deploy, /builds each instruction's accounts and arguments from that IDL/)
+  assert.match(
+    deploy,
+    /`harvest` creates it to receive the fees and refunds its rent to the caller/,
+  )
   // The spec describes the instructions as the program now defines them.
   const spec = read('docs/QUANTUM_HOOKS_SPEC.md')
   for (const text of [

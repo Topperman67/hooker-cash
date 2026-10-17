@@ -635,11 +635,10 @@ test('DEPLOY.md sizes the keeper, explains its key and documents the authority o
   const deploy = read('docs/DEPLOY.md')
   const env = read('.env.example')
   for (const text of [
-    // Realistic keeper SOL: one-time rent per coin and epoch rent held for the claim window.
-    '3,918,480',
-    '1,844,400',
-    '2,074,080',
-    'about 0.008 SOL',
+    // Realistic keeper SOL: one-time rent per coin (the well's token account on Meteora) and epoch
+    // rent held for the claim window.
+    "creates the well's token account for the coin at the keeper's expense",
+    '2,039,280 lamports, about 0.002 SOL',
     '30-day claim window',
     'up to 0.5 SOL',
     // The key: where it lives, what a leak can do, keeping it small, rotating it.
@@ -703,10 +702,10 @@ test('DEPLOY.md, .env.example and README.md describe this round of server and pr
     'owed to the treasury and held in the coin',
     'never split among the other recipients',
     '`max_burn_lamports / 10`',
-    "the coin's graduation",
-    'volume-accumulator setup',
+    "the coin's migration to DAMM v2",
+    'no Meteora instruction at all',
     'Quantum burns and Fusion',
-    'Pulses, claims, epoch closes, epoch cancels and token releases keep working',
+    'Harvests, pulses, claims, epoch closes, epoch cancels and token releases keep working',
     // QP-SEC-5: the only defence against a leaked key's epoch needs someone to look.
     'check for epochs your keeper did not post',
   ])
@@ -716,8 +715,14 @@ test('DEPLOY.md, .env.example and README.md describe this round of server and pr
     'until you raise it',
     'pulses defer the protocol share',
     'new Quantum registrations stop (see',
+    // the pump.fun stack Quant Pad left for Meteora
+    'pump.fun',
+    'PumpSwap',
+    'create_v2',
   ])
     assert.ok(!deploy.includes(stale), `DEPLOY.md still says: ${stale}`)
+  for (const stale of ['pump.fun', 'PumpSwap'])
+    assert.ok(!readme.includes(stale), `README.md still says: ${stale}`)
   for (const text of [
     'PUBLIC_URL_UNSET',
     '# QUANTPAD_PIN_DAILY=400',
