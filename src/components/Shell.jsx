@@ -13,7 +13,7 @@ import { useWallet } from '../context/WalletContext.jsx'
 import { usePlatform } from '../context/PlatformContext.jsx'
 import { Address } from './UI.jsx'
 import { changeClass, QuantpPrice, useQuantpFigures } from './QuantpShowcase.jsx'
-import { ENGINE_PATH } from './quantpPayouts.js'
+import { ENGINE_PATH, QUANTP_DISCLOSURE } from './quantpPayouts.js'
 import { pct, short, sol, toSol, usd } from '../lib/format.js'
 import { DOCS_URL } from '../lib/links.js'
 import { explorer, QUANTP } from '../../shared/network.mjs'
@@ -27,9 +27,9 @@ const LINKS = [
 ]
 
 // The docs live on GitBook. In the header the link shimmers blue every 3 s (shell.css).
-function DocsLink({ onClick }) {
+function DocsLink() {
   return (
-    <a href={DOCS_URL} target="_blank" rel="noreferrer" className="nav-docs" onClick={onClick}>
+    <a href={DOCS_URL} target="_blank" rel="noreferrer" className="nav-docs">
       Docs
     </a>
   )
@@ -43,16 +43,20 @@ function WalletButton() {
         <Wallet size={16} aria-hidden="true" /> <span className="wallet-label">Connect</span>
       </button>
     )
+  // The name starts with what the button shows ("1.017 SOL, wallet details"), so a voice command
+  // that reads the balance finds it. From 100 SOL one decimal, to leave the search its room.
+  const amount = toSol(balance)
   return (
-    <button className="btn wallet-btn" onClick={openDialog} aria-label="Wallet details">
+    <button className="btn wallet-btn" onClick={openDialog}>
       {wallet?.icon ? (
         <img src={wallet.icon} alt="" width="18" height="18" style={{ borderRadius: 5 }} />
       ) : (
         <Wallet size={16} aria-hidden="true" />
       )}
       <span className="num wallet-label">
-        {balance == null ? short(address) : sol(toSol(balance), { digits: 3 })}
+        {amount == null ? short(address) : sol(amount, { digits: amount >= 100 ? 1 : 3 })}
       </span>
+      <span className="sr-only">, wallet details</span>
     </button>
   )
 }
@@ -78,7 +82,9 @@ function QuantpMenuRow() {
   )
 }
 
-// The footer's $QUANTP row: the contract with a copy button, and where to trade and track it.
+// The footer's $QUANTP row: the contract with a copy button, where to trade and track it, and the
+// disclosure every $QUANTP card carries. The disclosure opens with "Quant Pad’s own token" and
+// closes with the risk line, so neither the row nor the footer's text above says them again.
 function QuantpFooter() {
   const { q } = useQuantpFigures()
   return (
@@ -87,7 +93,6 @@ function QuantpFooter() {
         <span className="footer-token-name">
           <img src="/brand/mark-small-dark.svg" alt="" width="18" height="18" />
           <strong>${q.symbol}</strong>
-          <span>Quant Pad’s own token</span>
         </span>
         <Address value={q.mint} head={6} tail={6} href={explorer.token(q.mint)} />
         <span className="footer-token-links">
@@ -100,10 +105,7 @@ function QuantpFooter() {
           </a>
         </span>
       </div>
-      <p className="footer-token-note">
-        Quant Pad’s own token. Its fee split is paid out every hour by Quant Pad’s payout engine
-        from a wallet the team funds; nothing on-chain enforces it.
-      </p>
+      <p className="footer-token-note">{QUANTP_DISCLOSURE}</p>
     </div>
   )
 }
@@ -114,10 +116,23 @@ export default function Shell({ children }) {
   const { solUsd } = usePlatform()
   const { dialogOpen } = useWallet()
   const toggle = useRef(null)
+  const main = useRef(null)
+  const shown = useRef(location.pathname)
   useEffect(() => {
     setMenu(false)
     window.scrollTo(0, 0)
+    // A new page takes keyboard and screen reader focus, as a full page load would; the first
+    // page leaves it at the top, where the skip link is.
+    if (shown.current === location.pathname) return
+    shown.current = location.pathname
+    main.current?.focus({ preventScroll: true })
   }, [location.pathname])
+  // Any link in the menu closes it, the current page's too (which does not navigate), and hands
+  // focus to the page: the link it was on is hidden now.
+  const leaveMenu = () => {
+    setMenu(false)
+    main.current?.focus({ preventScroll: true })
+  }
   // Escape closes the open menu and puts focus back on its toggle. An open dialog handles Escape
   // first (it marks the event as handled).
   useEffect(() => {
@@ -132,6 +147,18 @@ export default function Shell({ children }) {
   }, [menu])
   return (
     <div className="app">
+      {/* Focuses the page itself: no #main in the URL, and no jump that tucks the page's top
+          under the sticky header. */}
+      <a
+        className="skip-link"
+        href="#main"
+        onClick={(e) => {
+          e.preventDefault()
+          main.current?.focus()
+        }}
+      >
+        Skip to content
+      </a>
       <StudioLights />
       <header className="topbar">
         <div className="wrap">
@@ -148,7 +175,7 @@ export default function Shell({ children }) {
                 title="Coins launch and trade on Meteora"
                 aria-label="Built on Meteora"
               >
-                <MeteoraMark size={16} /> <span>Built on Meteora</span>
+                <MeteoraMark size={16} />
               </a>
               <nav className="nav" aria-label="Main">
                 {LINKS.map(([to, label]) => (
@@ -174,29 +201,38 @@ export default function Shell({ children }) {
                 </button>
               </div>
             </div>
-            <nav id="mobile-nav" className="mobile-nav" hidden={!menu} aria-label="Main">
-              <SearchBox onDone={() => setMenu(false)} />
+            <nav
+              id="mobile-nav"
+              className="mobile-nav"
+              hidden={!menu}
+              aria-label="Main"
+              onClick={(e) => {
+                if (e.target.closest('a')) leaveMenu()
+              }}
+            >
+              <SearchBox onDone={leaveMenu} />
               <QuantpMenuRow />
               {LINKS.map(([to, label]) => (
                 <NavLink key={to} to={to}>
                   {label}
                 </NavLink>
               ))}
-              <DocsLink onClick={() => setMenu(false)} />
+              <DocsLink />
             </nav>
           </Glass>
         </div>
       </header>
       <Tape />
-      <main className="app-main">{children}</main>
+      <main id="main" ref={main} className="app-main" tabIndex={-1}>
+        {children}
+      </main>
       <footer className="footer">
         <div className="wrap footer-inner">
           <div>
             <Logo tone="dark" className="footer-lockup" />
             <p>
               Quant Pad launches coins on Meteora’s Dynamic Bonding Curve on Solana and routes their
-              creator fees through Quantum Hooks. Memecoins are extremely risky. Nothing here is
-              financial advice.
+              creator fees through Quantum Hooks.
               {solUsd ? <span className="num"> SOL {usd(solUsd)}.</span> : null}
             </p>
             <QuantpFooter />

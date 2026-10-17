@@ -391,11 +391,34 @@ test('segmented labels and nav links never wrap mid-word', () => {
 
 test('the header collapses into the menu before the search box gets squeezed', () => {
   // six links (with the Payout Engine) and the search's whole placeholder need about 1280px
-  const collapse = '@media (max-width: 1279px)'
+  const collapse = '@media (max-width: 1279.98px)'
   assert.equal(decl(shell, '.nav', 'display', collapse), 'none')
   assert.equal(decl(shell, '.topbar-search', 'display', collapse), 'none')
   assert.equal(decl(shell, '.topbar .menu-toggle', 'display', collapse), 'inline-flex')
   assert.equal(decl(shell, '.topbar-search', 'min-width'), '180px')
+  // .98 meets the desktop's min-width: 1280px with no gap: at 1279.5px (zoom, display scaling) a
+  // max-width of 1279px and a min-width of 1280px would both miss, showing the full bar clipped.
+  const queries = new Set(shell.map((r) => r.media).filter(Boolean))
+  assert.ok(queries.has('@media (min-width: 1280px)'))
+  for (const query of queries) assert.doesNotMatch(query, /max-width: 1279px/, query)
+})
+
+test('the open menu fits the screen: it scrolls inside, under the sticky header', () => {
+  const collapse = '@media (max-width: 1279.98px)'
+  const open = '.mobile-nav:not([hidden])'
+  assert.equal(decl(shell, open, 'max-height', collapse), 'calc(100dvh - 84px)')
+  assert.equal(decl(shell, open, 'overflow-y', collapse), 'auto')
+  assert.equal(decl(shell, open, 'overscroll-behavior', collapse), 'contain')
+  // with a vh fallback first, for browsers without dvh
+  const source = readFileSync(new URL('../../src/styles/shell.css', import.meta.url), 'utf8')
+  assert.match(source, /max-height: calc\(100vh - 84px\);\s*max-height: calc\(100dvh - 84px\);/)
+  // short (landscape) and tablet-wide screens put the links in two columns
+  const twoColumns =
+    '@media (max-width: 1279.98px) and (max-height: 560px), (min-width: 768px) and (max-width: 1279.98px)'
+  assert.equal(decl(shell, open, 'display', twoColumns), 'grid')
+  assert.equal(decl(shell, open, 'grid-template-columns', twoColumns), 'repeat(2, minmax(0, 1fr))')
+  assert.equal(decl(shell, '.mobile-nav a.qp-menu', 'grid-column', twoColumns), '1 / -1')
+  assert.equal(decl(shell, '.mobile-nav .topbar-search', 'grid-column', twoColumns), '1 / -1')
 })
 
 test('the fee flow stacks with downward arrows once it stops fitting on one row', () => {
@@ -404,6 +427,33 @@ test('the fee flow stacks with downward arrows once it stops fitting on one row'
   assert.equal(decl(pages, '.flow-node', 'flex', narrow), 'none')
   assert.equal(decl(pages, '.flow-arrow::after', 'border-left-color', narrow), 'transparent')
   assert.equal(decl(pages, '.flow-arrow::after', 'border-top-color', narrow), 'var(--steel)')
+})
+
+test('the header search shows a focus ring in light mode, and keeps the dark one in dark mode', () => {
+  // the glass's resting insets, then the ring
+  assert.equal(
+    decl(shell, '.topbar-search input:focus', 'box-shadow'),
+    'inset 0 1px 3px rgba(21, 24, 29, 0.1), inset 0 -1px 0 rgba(255, 255, 255, 0.7), 0 0 0 3px rgba(46, 75, 255, 0.14)',
+  )
+  // theme-dark.css loads last with the same specificity, so its ring wins there
+  const dark = readCss('theme-dark.css')
+  assert.match(
+    decl(dark, ":where(:root[data-theme='dark']) .topbar-search input:focus", 'box-shadow'),
+    /0 0 0 3px rgba\(143, 164, 255, 0\.22\)$/,
+  )
+})
+
+test('the footer says “Quant Pad’s own token” and the risk line once, in the shared disclosure', async () => {
+  const { QUANTP_DISCLOSURE } = await import('../../src/components/quantpPayouts.js')
+  assert.match(QUANTP_DISCLOSURE, /^Quant Pad’s own token\./)
+  assert.match(QUANTP_DISCLOSURE, /Memecoins are extremely risky\./)
+  // the $QUANTP row and the footer's own text, with the disclosure left to its constant
+  const jsx = readFileSync(new URL('../../src/components/Shell.jsx', import.meta.url), 'utf8')
+  const footer =
+    jsx.slice(jsx.indexOf('function QuantpFooter'), jsx.indexOf('export default function Shell')) +
+    jsx.slice(jsx.indexOf('<footer'), jsx.indexOf('</footer>'))
+  assert.match(footer, /<p className="footer-token-note">\{QUANTP_DISCLOSURE\}<\/p>/)
+  assert.doesNotMatch(footer, /own token|extremely risky|financial advice/i)
 })
 
 // ---------- production-04: text contrast over glass and studio light ----------
