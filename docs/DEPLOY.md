@@ -15,17 +15,20 @@ This runbook takes Quant Pad from an empty Vercel project to live Quantum launch
 
 ## 2. Lookup table (**wallet**, about 0.01 SOL)
 
-A launch transaction (the DBC create, the creator hand-off to the well, `sync` and the dev buy)
-references about 30 accounts, which at 32 bytes each is well over Solana's limit of 1 232 bytes. The
-lookup table holds the accounts every launch shares (Meteora's DBC accounts, Quant Pad's DBC launch
-configs, the token programs and sysvars, and Quantum Hooks' config), so each costs one byte:
+A Quantum launch's main transaction (the DBC create, the creator hand-off to the well, `sync` and
+the dev buy) references 22 accounts, or 23 with the platform fee, at 32 bytes each. It comes to
+about 1 120 to 1 250 bytes depending on the coin's name, ticker and metadata URI: close to Solana's
+limit of 1 232 bytes, and over it with a long name or URI. The lookup table holds the accounts every
+launch shares (Meteora's DBC accounts, Quant Pad's DBC launch configs, the token programs and
+sysvars, and Quantum Hooks' config), so most of them cost one byte instead of 32, which takes about
+150 bytes off every launch:
 
 ```bash
 node scripts/create-lookup-table.mjs --keypair path/to/operator.json --rpc "$QUANTPAD_RPC_URL" \
   --config <DBC config>,<DBC config>,...
 ```
 
-`--config` takes the launch configs, comma-separated: the `config` of each tier in `launchTiers` (`shared/network.mjs`). Without it the script uses `QUANTPAD_DBC_CONFIG`. Set the printed `QUANTPAD_LOOKUP_TABLE` and redeploy. Rerun with `--table <address>` to add a new launch config or other new static accounts; it adds only the addresses the table lacks. `QUANTPAD_LOOKUP_TABLE` is required for any launch with a dev buy, standard or Quantum: the DBC create and the dev buy always go in one transaction, which only fits with the table, and the launch page refuses a dev buy when no table is configured. Launches without a dev buy still work without it.
+`--config` takes the launch configs, comma-separated: the `config` of each tier in `launchTiers` (`shared/network.mjs`). Without it the script uses `QUANTPAD_DBC_CONFIG`. Set the printed `QUANTPAD_LOOKUP_TABLE` and redeploy. Rerun with `--table <address>` to add a new launch config or other new static accounts; it adds only the addresses the table lacks. `QUANTPAD_LOOKUP_TABLE` is required for any launch with a dev buy, standard or Quantum: the DBC create and the dev buy always go in one transaction, which the table keeps under the limit, and the launch page refuses a dev buy when no table is configured. Launches without a dev buy still work without it.
 
 ## 3. Quantum Hooks program (**wallet**)
 
