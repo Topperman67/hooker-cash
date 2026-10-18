@@ -87,6 +87,30 @@ test('packGroups merges whole groups greedily, keeps order and reports group ind
   assert.equal(tooBig.group, 1)
 })
 
+test('packGroups merges only what passes canMerge, while a lone group may fill the limit', () => {
+  const size = (ixs) => ixs.reduce((s, x) => s + x.size, 0)
+  const fits = (ixs) => size(ixs) <= 10
+  const roomy = (ixs) => size(ixs) <= 7
+  const g = (...sizes) => sizes.map((size) => ({ size }))
+  // register 2 + launch 5 leaves room; adding the lock (2) would fit but leaves none, so it splits
+  assert.deepEqual(
+    packGroups([g(2), g(5), g(2)], fits, roomy).map((t) => t.groups),
+    [[0, 1], [2]],
+  )
+  // a launch group of 10 still goes out on its own
+  assert.deepEqual(
+    packGroups([g(1), g(10), g(1)], fits, roomy).map((t) => t.groups),
+    [[0], [1], [2]],
+  )
+})
+
+test('launch packing leaves the wallet room and sets the loaded-data limit explicitly', () => {
+  const solana = readFileSync(new URL('../../src/lib/solana.js', import.meta.url), 'utf8')
+  assert.match(solana, /const WALLET_HEADROOM = \d+/)
+  assert.match(solana, /fits\(message\(ixs\), WALLET_HEADROOM\)/)
+  assert.match(solana, /loadedDataLimitInstruction\(\),/)
+})
+
 test('launch groups keep the DBC create, the dev buy and the fee in one group (Quantum and standard)', () => {
   const [register, create, ata, buy, fee, lock] = [
     'register',

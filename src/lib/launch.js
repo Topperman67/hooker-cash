@@ -85,7 +85,8 @@ export async function devBuyQuote(lamports, dbcConfig) {
  * [register] (Quantum only), [DBC create, dev buy, fee?], [lock] (Quantum with a lock).
  * The create and the dev buy are one indivisible group in both modes, so nobody can trade between
  * them: if that group cannot fit in one transaction, packTransactions fails instead of splitting.
- * The packer merges register into it, and the lock after it, only when everything fits.
+ * The packer merges register into it, and the lock after it, only when the merged transaction still
+ * leaves the wallet room (see packTransactions); otherwise each gets its own prompt.
  */
 export async function launchInstructions({
   launcher,

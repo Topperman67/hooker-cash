@@ -6,6 +6,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import { createPublicKey, verify } from 'node:crypto'
 import {
+  ComputeBudgetProgram,
   Keypair,
   PublicKey,
   SystemProgram,
@@ -15,7 +16,15 @@ import {
 } from '@solana/web3.js'
 import bs58 from 'bs58'
 
-const { assertSimulates, cosign, walletSendAll } = await import('../../src/lib/txflow.js')
+const {
+  LOADED_DATA_HEADROOM,
+  MAX_LOADED_DATA_BYTES,
+  assertSimulates,
+  cosign,
+  fitLoadedDataLimit,
+  loadedDataLimitInstruction,
+  walletSendAll,
+} = await import('../../src/lib/txflow.js')
 const { explainSimulation, MESSAGES, registerQuantumIdl } =
   await import('../../src/lib/txerrors.js')
 const quantum = await import('../../shared/quantum.mjs')
@@ -340,13 +349,46 @@ test('a later transaction is simulated again while the RPC catches up with the o
   assert.deepEqual(sleeps, [1500])
 })
 
-test('a simulation that cannot run does not block the wallet prompt', async () => {
+test('a simulation that cannot run is retried, then refused before the wallet sees it', async () => {
+  const user = Keypair.generate()
+  const events = []
+  const { wallet, account } = fakeWallet(user, { events })
+  const sleeps = []
+  const rpc = fakeRpc(events, {
+    simulate: () => {
+      throw Error('503 Service Unavailable')
+    },
+  })
+  await assert.rejects(
+    walletSendAll([userTx(user)], {
+      wallet,
+      account,
+      chain: CHAIN,
+      lastValidBlockHeight: 1_000,
+      rpc,
+      sleep: async (ms) => sleeps.push(ms),
+    }),
+    (e) => {
+      assert.equal(e.message, MESSAGES.uncheckable)
+      assert.equal(e.friendly, true)
+      assert.equal(e.retryable, true)
+      assert.deepEqual(e.completed, [])
+      return true
+    },
+  )
+  assert.equal(events.filter((e) => e.startsWith('simulate')).length, 3)
+  assert.deepEqual(sleeps, [1500, 3000])
+  assert.ok(!events.some((e) => e.startsWith('prompt')), 'the wallet never saw it')
+})
+
+test('a simulation that runs on the second try lets the prompt through', async () => {
   const user = Keypair.generate()
   const events = []
   const { wallet, account } = fakeWallet(user, { events })
   const rpc = fakeRpc(events, {
-    simulate: () => {
-      throw Error('503 Service Unavailable')
+    simulate: (tx, i) => {
+      if (i === 0) throw Error('429 Too Many Requests')
+      return { err: null, logs: [] }
     },
   })
   const signatures = await walletSendAll([userTx(user)], {
@@ -355,9 +397,81 @@ test('a simulation that cannot run does not block the wallet prompt', async () =
     chain: CHAIN,
     lastValidBlockHeight: 1_000,
     rpc,
+    sleep: noSleep,
   })
   assert.equal(signatures.length, 1)
   assert.ok(events.includes('prompt:1'))
+})
+
+// The loaded-accounts-data limit a transaction carries (ComputeBudget instruction 4), or null.
+function loadedDataLimit(tx) {
+  const ix = tx.message.compiledInstructions.find(
+    (ix) =>
+      tx.message.staticAccountKeys[ix.programIdIndex].equals(ComputeBudgetProgram.programId) &&
+      ix.data[0] === 4,
+  )
+  return ix ? Buffer.from(ix.data).readUInt32LE(1) : null
+}
+
+// A launch-shaped transaction with the compute budget instructions solana.js adds.
+const budgetedTx = (payer, mint, ...budget) =>
+  new VersionedTransaction(
+    new TransactionMessage({
+      payerKey: payer.publicKey,
+      recentBlockhash: Keypair.generate().publicKey.toBase58(),
+      instructions: [
+        ComputeBudgetProgram.setComputeUnitLimit({ units: 500_000 }),
+        ...budget,
+        SystemProgram.createAccount({
+          fromPubkey: payer.publicKey,
+          newAccountPubkey: mint.publicKey,
+          lamports: 1_461_600,
+          space: 82,
+          programId: SystemProgram.programId,
+        }),
+      ],
+    }).compileToV0Message(),
+  )
+
+test('the loaded-data limit is set explicitly and narrowed to what the simulation loaded', async () => {
+  const user = Keypair.generate()
+  const mint = Keypair.generate()
+  const tx = budgetedTx(user, mint, loadedDataLimitInstruction())
+  assert.equal(loadedDataLimit(tx), MAX_LOADED_DATA_BYTES)
+  const before = tx.serialize().length
+
+  const events = []
+  const { wallet, account, seen } = fakeWallet(user, { events })
+  const rpc = fakeRpc(events, {
+    simulate: () => ({ err: null, logs: [], loadedAccountsDataSize: 4_108_846 }),
+  })
+  await walletSendAll([tx], {
+    wallet,
+    account,
+    chain: CHAIN,
+    signers: [mint],
+    lastValidBlockHeight: 1_000,
+    rpc,
+  })
+  // What the wallet saw and what was sent carry the narrowed limit: loaded + 1 MiB, in 32 KiB steps.
+  const expected = Math.ceil((4_108_846 + LOADED_DATA_HEADROOM) / 32_768) * 32_768
+  assert.equal(loadedDataLimit(seen[0]), expected)
+  assert.equal(loadedDataLimit(rpc.sent[0]), expected)
+  assert.equal(seen[0].serialize().length, before, 'the transaction keeps its size')
+  assert.ok(signedBy(rpc.sent[0], user.publicKey))
+  assert.ok(signedBy(rpc.sent[0], mint.publicKey))
+
+  // No reported size, or no limit instruction: left as built. Never above the protocol ceiling.
+  const unreported = budgetedTx(user, mint, loadedDataLimitInstruction())
+  fitLoadedDataLimit(unreported, undefined)
+  assert.equal(loadedDataLimit(unreported), MAX_LOADED_DATA_BYTES)
+  const without = budgetedTx(user, mint)
+  const bytes = Buffer.from(without.serialize())
+  fitLoadedDataLimit(without, 1234)
+  assert.deepEqual(Buffer.from(without.serialize()), bytes)
+  const huge = budgetedTx(user, mint, loadedDataLimitInstruction())
+  fitLoadedDataLimit(huge, MAX_LOADED_DATA_BYTES)
+  assert.equal(loadedDataLimit(huge), MAX_LOADED_DATA_BYTES)
 })
 
 test('a declined prompt reads as declined and sends nothing', async () => {
@@ -412,16 +526,19 @@ test('simulation failures are worded for people', async () => {
     }),
     MESSAGES.slippage,
   )
-  // A passing simulation resolves; one with nothing to read resolves to null.
+  // A passing simulation resolves; one that cannot run is refused once its tries run out.
   assert.deepEqual(await assertSimulates(async () => ({ err: null, logs: ['ok'] })), {
     err: null,
     logs: ['ok'],
   })
-  assert.equal(
-    await assertSimulates(async () => {
-      throw Error('fetch failed')
-    }),
-    null,
+  await assert.rejects(
+    assertSimulates(
+      async () => {
+        throw Error('fetch failed')
+      },
+      { sleep: noSleep },
+    ),
+    (e) => e.message === MESSAGES.uncheckable && e.retryable && e.cause.message === 'fetch failed',
   )
 })
 

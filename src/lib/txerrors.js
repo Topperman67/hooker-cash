@@ -54,6 +54,8 @@ export const MESSAGES = {
     'This coin’s transfer hook refused the transfer. Its owner can change its rules at any time; try again later.',
   hookWhitelist:
     'This coin’s transfer hook only lets whitelisted wallets trade until its open time. Try again once it opens.',
+  uncheckable:
+    'Quant Pad could not check this transaction with the Solana network, so your wallet was not asked to sign it. Try again in a moment.',
 }
 
 const TOO_LARGE = 'That amount is too large for this pool. Try a smaller amount.'
