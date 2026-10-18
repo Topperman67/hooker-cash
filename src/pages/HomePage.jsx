@@ -36,8 +36,7 @@ function quantpCoin(qp, solUsd) {
 }
 
 // $QUANTP joins Trending now (it trades on Quant Pad) where the server's trending order
-// (server/indexer.mjs SORTS) would put it, even while the market list cannot load. It stays out of
-// Just launched, which lists coins launched through Quant Pad.
+// (server/indexer.mjs SORTS) would put it, even while the market list cannot load.
 const trendingOrder = (a, b) =>
   (b.trades24h || 0) - (a.trades24h || 0) || (b.volume24h || 0) - (a.volume24h || 0)
 function withQuantp(items = [], coin) {
@@ -48,14 +47,12 @@ function withQuantp(items = [], coin) {
 }
 
 export default function HomePage() {
-  const latest = useResource('/api/market?sort=newest', 15000)
   const trending = useResource('/api/market?sort=trending', 20000)
   const stats = useResource('/api/stats', 30000)
   const { solUsd, quantum } = usePlatform()
   const qp = useQuantp().data
   const qpCoin = quantpCoin(qp, solUsd)
   const trendingItems = withQuantp(trending.data?.items, qpCoin)
-  const latestItems = latest.data?.items || []
   const s = stats.data
 
   return (
@@ -160,22 +157,6 @@ export default function HomePage() {
           </Empty>
         )}
       </section>
-
-      {latestItems.length > 0 && (
-        <section className="wrap section">
-          <div className="section-head">
-            <h2>Just launched</h2>
-            <Link to="/market?sort=newest" className="btn btn-ghost">
-              All new coins
-            </Link>
-          </div>
-          <div className="coin-grid">
-            {latestItems.slice(0, 6).map((c) => (
-              <CoinCard key={c.mint} coin={c} />
-            ))}
-          </div>
-        </section>
-      )}
 
       <section className="wrap section">
         <div className="section-head">

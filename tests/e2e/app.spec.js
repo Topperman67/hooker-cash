@@ -50,6 +50,8 @@ test('home shows live coins, hook catalog and navigates', async ({ page }) => {
   page.on('pageerror', (e) => errors.push(e.message))
   await stubApi(page)
   await enter(page)
+  const newest = []
+  page.on('request', (r) => r.url().includes('sort=newest') && newest.push(r.url()))
   await page.goto('/')
   await expect(page.locator('.refractor-q img')).toBeVisible()
   await expect(page.getByRole('banner').getByRole('img', { name: 'Quant Pad' })).toBeVisible()
@@ -60,6 +62,9 @@ test('home shows live coins, hook catalog and navigates', async ({ page }) => {
     await expect(page.locator('.hook-tile h3', { hasText: name })).toBeVisible()
   // Quantum Hooks are live: no "being deployed" notice.
   await expect(page.getByText('Quantum Hooks are being deployed')).toHaveCount(0)
+  // No "Just launched" list on home, so it does not poll the newest coins either.
+  await expect(page.getByRole('heading', { name: 'Just launched' })).toHaveCount(0)
+  expect(newest).toEqual([])
   await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Market' }).click()
   await expect(page).toHaveURL(/\/market$/)
   expect(errors).toEqual([])
