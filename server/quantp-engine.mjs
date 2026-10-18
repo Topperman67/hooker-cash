@@ -113,6 +113,24 @@ const TRANSIENT = /Blockhash not found|Minimum context slot|Node is behind|unhea
 const PREFLIGHT_RETRIES = 3
 // Asks for a blockhash before signing (nothing is sent before it, so a failed ask is asked again).
 const BLOCKHASH_TRIES = 3
+// The public RPC answers a burst with 429 ("Connection rate limits exceeded"): it did nothing with
+// the request, so the same request is made again after a pause, up to RATE_LIMIT_TRIES times
+// while the run's deadline allows. The engine's connection does not retry 429s itself
+// (disableRetryOnRateLimit), so these waits follow the deadline. Without this, a run on the
+// public RPC sent its first few transactions and failed the rest (2026-10-17 and 18: the 23:00,
+// 00:00 and 01:00 UTC runs).
+const RATE_LIMITED = /\b429\b|too many requests|rate limit/i
+const rateLimited = (e) => RATE_LIMITED.test(`${e?.message ?? ''} ${e?.transactionMessage ?? ''}`)
+const RATE_LIMIT_TRIES = 8
+// 1 s, 2 s, then 4 s between tries
+const backoff = (tries) => Math.min(4_000, 1_000 * 2 ** tries)
+// A confirmation wait reads the block height (to know when the blockhash expired) only from this
+// many status checks on, and sends the bytes again this often: most transactions land within
+// two checks, and each read counts against the RPC's rate limit.
+const HEIGHT_FROM_CHECK = 3
+const RESEND_MS = 3_000
+// Priority fees read for the same accounts within this long are reused.
+const FEE_TTL_MS = 20_000
 
 const sum = (list, field) => list.reduce((s, x) => s + x[field], 0n)
 // An address a wallet can own: on the ed25519 curve, so no program derived it. Being on the curve
@@ -712,37 +730,60 @@ export function createQuantpEngine({
     return { at: null, conclusive }
   }
 
+  // `call()`, made again while the RPC answers 429 and the deadline allows (RATE_LIMIT_TRIES
+  // times at most, backing off); any other error is thrown at once.
+  async function patient(call, deadline) {
+    for (let tries = 0; ; tries++) {
+      try {
+        return await call()
+      } catch (e) {
+        const wait = backoff(tries)
+        if (!rateLimited(e) || tries + 1 >= RATE_LIMIT_TRIES || now() + wait >= deadline) throw e
+        await sleep(wait)
+      }
+    }
+  }
+
   // The fee per compute unit: the 75th percentile of recent non-zero fees paid by transactions
-  // that wrote to `accounts` (the ones this transaction writes), between 10,000 and 500,000.
+  // that wrote to `accounts` (the ones this transaction writes), between 10,000 and 500,000. A
+  // run's transactions that write the same accounts share one read (FEE_TTL_MS).
+  const fees = new Map() // accounts -> { at, price }
   async function priorityFee(accounts) {
-    const fees = await Promise.resolve()
+    const key = accounts.map(String).join()
+    const known = fees.get(key)
+    if (known && now() - known.at < FEE_TTL_MS) return known.price
+    const recent = await Promise.resolve()
       .then(() => connection.getRecentPrioritizationFees({ lockedWritableAccounts: accounts }))
-      .catch(() => [])
-    const paid = fees
+      .catch(() => null)
+    const paid = (recent ?? [])
       .map((f) => f.prioritizationFee)
       .filter((f) => f > 0)
       .sort((a, b) => a - b)
     const p75 = paid.length ? paid[Math.floor((paid.length - 1) * 0.75)] : 0
-    return Math.min(Math.max(p75, 10_000), 500_000)
+    const price = Math.min(Math.max(p75, 10_000), 500_000)
+    if (recent) fees.set(key, { at: now(), price })
+    return price
   }
 
-  // The blockhash to sign with, asked up to BLOCKHASH_TRIES times, 700 ms apart, while there is
-  // time: nothing is signed or sent before it, so one failed ask need not cost the transaction.
+  // The blockhash to sign with, asked while there is time: up to BLOCKHASH_TRIES times, 700 ms
+  // apart, or up to RATE_LIMIT_TRIES times, backing off, while the RPC answers 429. Nothing is
+  // signed or sent before it, so one failed ask need not cost the transaction.
   async function latestBlockhash(deadline) {
     for (let tries = 1; ; tries++) {
       try {
         return await connection.getLatestBlockhashAndContext('confirmed')
       } catch (e) {
-        if (tries >= BLOCKHASH_TRIES || now() >= deadline) throw e
-        await sleep(700)
+        const limited = rateLimited(e)
+        if (tries >= (limited ? RATE_LIMIT_TRIES : BLOCKHASH_TRIES) || now() >= deadline) throw e
+        await sleep(limited ? backoff(tries - 1) : 700)
       }
     }
   }
 
   // Signs and sends `instructions`, and resolves to the signature once it is confirmed. A refusal
-  // that only says the node was behind (no logs, or a blockhash it has not seen yet) is answered by
-  // sending the same signed bytes again, never by signing anew: whatever the node did with them,
-  // the transaction can land once at most. Errors carry `stage`: 'preflight' when the node refused
+  // that only says the node was behind (no logs, or a blockhash it has not seen yet), or a 429, is
+  // answered by sending the same signed bytes again, never by signing anew: whatever the node did
+  // with them, the transaction can land once at most. Errors carry `stage`: 'preflight' when the node refused
   // it (it was not sent: `signature` is null), 'confirm' after it was sent (with its signature, and
   // `unknown` when it may still land). With `signBy` (ms), it signs nothing from then on and throws
   // an error marked `late` instead.
@@ -767,6 +808,20 @@ export function createQuantpEngine({
         })
         break
       } catch (e) {
+        // Rate-limited: the node took nothing, so the same bytes go again after a pause. Every
+        // try so far was turned away, so when no time is left for another it was never sent.
+        if (rateLimited(e)) {
+          if (tries + 1 < RATE_LIMIT_TRIES && now() + backoff(tries) < deadline) {
+            await sleep(backoff(tries))
+            continue
+          }
+          throw Object.assign(Error('The RPC rate-limited the transaction, so it was not sent.'), {
+            stage: 'preflight',
+            rpcMessage: e.transactionMessage ?? e.message,
+            signature: null,
+            rateLimited: true,
+          })
+        }
         if (!isRefusal(e)) break // a network error or timeout: it may be out, so see if it lands
         const transient =
           TRANSIENT.test(e.transactionMessage ?? '') ||
@@ -804,12 +859,13 @@ export function createQuantpEngine({
     })
   }
 
-  // Waits for `signature` to confirm, sending the same bytes again every 2 s (without preflight)
-  // in case a node dropped them. Stops when it lands, fails, the deadline passes or its blockhash
-  // expires. An RPC error while it waits is no answer, so it asks again.
+  // Waits for `signature` to confirm, sending the same bytes again every RESEND_MS (without
+  // preflight) in case a node dropped them. Stops when it lands, fails, the deadline passes or its
+  // blockhash expires (the block height is read from the HEIGHT_FROM_CHECK-th check on). An RPC
+  // error while it waits is no answer, so it asks again.
   async function confirm(signature, bytes, lastValidBlockHeight, deadline) {
     let sentAt = now()
-    for (;;) {
+    for (let check = 1; ; check++) {
       const [status] = await Promise.resolve()
         .then(() => connection.getSignatureStatuses([signature]))
         .then(
@@ -823,16 +879,19 @@ export function createQuantpEngine({
         )
       if (status?.confirmationStatus === 'confirmed' || status?.confirmationStatus === 'finalized')
         return signature
-      const height = await Promise.resolve()
-        .then(() => connection.getBlockHeight('confirmed'))
-        .catch(() => null)
+      const height =
+        check >= HEIGHT_FROM_CHECK
+          ? await Promise.resolve()
+              .then(() => connection.getBlockHeight('confirmed'))
+              .catch(() => null)
+          : null
       if (now() > deadline || height > lastValidBlockHeight)
         throw Object.assign(Error(`Transaction ${signature} is not confirmed yet.`), {
           stage: 'confirm',
           signature,
           unknown: true,
         })
-      if (now() - sentAt >= 2_000) {
+      if (now() - sentAt >= RESEND_MS) {
         sentAt = now()
         await Promise.resolve()
           .then(() => connection.sendRawTransaction(bytes, { skipPreflight: true }))
@@ -911,14 +970,18 @@ export function createQuantpEngine({
     }
   }
 
-  // The buyback of `plan` in hour `hour`, built against the pool now, or why there is none.
-  async function buybackFor(plan, hour) {
-    const venue = await fetchMeteoraVenue(connection, mint, { dbcPool: token.pool })
+  // The buyback of `plan` in hour `hour`, built against the pool now, or why there is none. Its
+  // reads are made again while the RPC answers 429, until `deadline`.
+  async function buybackFor(plan, hour, deadline) {
+    const venue = await patient(
+      () => fetchMeteoraVenue(connection, mint, { dbcPool: token.pool }),
+      deadline,
+    )
     if (venue.kind !== 'pool') return { stopped: 'no DAMM v2 pool' }
     const point =
       Number(venue.damm.raw.activationType) === 1
         ? BigInt(Math.floor(now() / 1000))
-        : BigInt(await connection.getSlot('confirmed'))
+        : BigInt(await patient(() => connection.getSlot('confirmed'), deadline))
     const buy = await buybackInstructions({
       venue,
       wallet,
@@ -977,7 +1040,7 @@ export function createQuantpEngine({
 
   // Sends the plan's buyback and records it in `report`. Resolves to why there is none, or null.
   async function buyback(plan, hour, deadline, report) {
-    const b = await buybackFor(plan, hour)
+    const b = await buybackFor(plan, hour, deadline)
     if (b.stopped) return b.stopped
     const signature = await send(b.buy.instructions, {
       units: BUYBACK_UNITS,
@@ -1286,7 +1349,7 @@ export function createQuantpEngine({
         })
       let stopped = null
       if (plan.buyback > 0n) {
-        const b = await buybackFor(plan, hour)
+        const b = await buybackFor(plan, hour, now() + 60_000)
         if (b.stopped) stopped = b.stopped
         else
           parts.push({

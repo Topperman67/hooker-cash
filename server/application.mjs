@@ -202,11 +202,12 @@ export function engineHealth(status, ledger, nowSecs) {
 }
 
 // The payout engine's own messages, which say what happened on-chain and echo no provider: a
-// transaction that failed (with its on-chain error) or is not confirmed yet, the supply it could
-// not read, and its hourly claim failing.
+// transaction that failed (with its on-chain error), is not confirmed yet or was turned away by
+// the RPC's rate limit, the supply it could not read, and its hourly claim failing.
 const ENGINE_MESSAGES = [
   /^Transaction [1-9A-HJ-NP-Za-km-z]{32,88} failed\b/,
   /\bis not confirmed yet\.?$/,
+  /^The RPC rate-limited the transaction, so it was not sent\.$/,
   /^The \$QUANTP supply could not be read\b/,
   /\bclaim failed\b/i,
 ]

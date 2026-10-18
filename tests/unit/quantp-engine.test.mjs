@@ -1442,7 +1442,8 @@ test('a blockhash the node fails to give is asked for again: nothing was signed 
   assert.deepEqual([run.ran, run.stopped, run.failed], [true, undefined, undefined])
   assert.deepEqual(sentKinds(connection), ['claim', 'buyback', 'payout', 'payout'])
   assert.equal(payoutsIn(connection).length, 25)
-  assert.equal(clock.t, HOUR0 + 3 * 700)
+  // each ask the RPC answered with 429 backed off 1 s
+  assert.equal(clock.t, HOUR0 + 3 * 1_000)
   // a node that cannot give one at all: three asks, then the hour is skipped with nothing sent
   const down = stubChain({ holders: MANY, clock })
   down.getLatestBlockhashAndContext = async () => {
@@ -1458,7 +1459,7 @@ test('a blockhash the node fails to give is asked for again: nothing was signed 
   assert.equal(clock.t, HOUR0 + 3_600_000 + 2 * 700)
 })
 
-test('a transaction whose blockhash has expired is reported at once, not waited on to the deadline', async () => {
+test('a transaction whose blockhash has expired is reported within seconds, not waited on to the deadline', async () => {
   const clock = { t: HOUR0 }
   const connection = stubChain({ holders: MANY, clock })
   // the first payout's send times out, and the chain is already past its blockhash's last height
@@ -1467,29 +1468,69 @@ test('a transaction whose blockhash has expired is reported at once, not waited 
   const run = await engineOn(connection, memoryStore(), clock).tick()
   assert.equal(run.stopped, 'payout not confirmed')
   assert.deepEqual([run.failed[0].unknown, run.failed[0].recipients], [true, 18])
-  assert.equal(clock.t, HOUR0, 'no wait')
+  // the block height is read from the third status check on: two checks a second apart
+  assert.equal(clock.t, HOUR0 + 2_000)
   assert.equal(connection.attempts.filter((a) => a.options.skipPreflight).length, 0)
 })
 
 test('the priority fee is the 75th percentile paid on its accounts, between 10,000 and 500,000', async () => {
+  const priceOf = (tx) =>
+    Number(ComputeBudgetInstruction.decodeSetComputeUnitPrice(instructionsOf(tx)[1]).microLamports)
+  for (const [sample, price] of [
+    [[0, 0, 3_000, 9_000], 10_000], // under the floor
+    [[600_000, 700_000, 900_000, 2_000_000], 500_000], // over the cap
+    [[0, 20_000, 30_000, 40_000, 50_000], 40_000], // the 75th percentile of the fees paid
+  ]) {
+    const clock = { t: HOUR0 }
+    const connection = stubChain({ holders: MANY, clock })
+    let reads = 0
+    connection.getRecentPrioritizationFees = async () => {
+      reads++
+      return sample.map((prioritizationFee) => ({ slot: 1, prioritizationFee }))
+    }
+    assert.equal((await engineOn(connection, memoryStore(), clock).tick()).ran, true)
+    // the claim and both payouts write the same accounts: one read serves the run
+    assert.deepEqual(connection.sent.map(priceOf), [price, price, price])
+    assert.equal(reads, 1)
+  }
+})
+
+test('a send the RPC answers with 429 is made again with the same signed bytes, after a pause', async () => {
   const clock = { t: HOUR0 }
   const connection = stubChain({ holders: MANY, clock })
-  const samples = [
-    [0, 0, 3_000, 9_000], // for the claim: under the floor
-    [600_000, 700_000, 900_000, 2_000_000], // the first payout: over the cap
-    [0, 20_000, 30_000, 40_000, 50_000], // the second: the 75th percentile of the fees paid
-  ]
-  connection.getRecentPrioritizationFees = async () =>
-    samples.shift().map((prioritizationFee) => ({ slot: 1, prioritizationFee }))
-  assert.equal((await engineOn(connection, memoryStore(), clock).tick()).ran, true)
+  const limited = () =>
+    Error(
+      '429 Too Many Requests:  {"jsonrpc":"2.0","error":{"code": 429, "message":"Connection rate limits exceeded"}}',
+    )
+  // the first payout's first two sends meet the public RPC's rate limit (the claim's is the first)
+  connection.refuse = (tx, n) => (kindOf(tx) === 'payout' && n <= 3 ? limited() : null)
+  const run = await engineOn(connection, memoryStore(), clock).tick()
   assert.deepEqual(
-    connection.sent.map((tx) =>
-      Number(
-        ComputeBudgetInstruction.decodeSetComputeUnitPrice(instructionsOf(tx)[1]).microLamports,
-      ),
-    ),
-    [10_000, 500_000, 40_000],
+    [run.ran, run.stopped, run.failed, run.error],
+    [true, undefined, undefined, undefined],
   )
+  assert.deepEqual(
+    run.payouts.map((p) => p.recipients),
+    [18, 7],
+  )
+  // the claim, then the first payout three times: the same bytes each time
+  const payouts = connection.attempts.filter((a) => a.signature === run.payouts[0].signature)
+  assert.equal(payouts.length, 3)
+  assert.ok(payouts.every((a) => a.bytes.equals(payouts[0].bytes)))
+  // it waited 1 s, then 2 s
+  assert.equal(clock.t, HOUR0 + 3_000)
+  // A batch the RPC keeps refusing until there is no time for another try was never sent: it is
+  // recorded as not sent and the run goes on to the next, never waiting past its deadline.
+  const late = { t: HOUR0 }
+  const hurried = stubChain({ holders: MANY, clock: late })
+  hurried.refuse = (tx) => (kindOf(tx) === 'payout' ? limited() : null)
+  const cut = await engineOn(hurried, memoryStore(), late).tick({ deadline: HOUR0 + 20_000 })
+  assert.deepEqual([cut.ran, cut.payouts.length, cut.failed.length], [true, 0, 2])
+  assert.ok(
+    cut.failed.every((f) => f.stage === 'preflight' && f.signature === null),
+    JSON.stringify(cut.failed),
+  )
+  assert.ok(late.t <= HOUR0 + 20_000, String(late.t - HOUR0))
 })
 
 test('the buyback through a tick: the third transaction swaps in the DAMM v2 pool and burns, memo last', async () => {
@@ -1504,8 +1545,8 @@ test('the buyback through a tick: the third transaction swaps in the DAMM v2 poo
   const run = await engine.tick()
   assert.equal(run.ran, true)
   assert.equal(run.plannedBuyback, '3333334')
-  assert.deepEqual(connection.sent.map(kindOf), ['claim', 'payout', 'buyback'])
-  const buyback = connection.sent[2]
+  assert.deepEqual(sentKinds(connection), ['claim', 'buyback', 'payout'])
+  const buyback = connection.sent.find((tx) => kindOf(tx) === 'buyback')
   const ixs = instructionsOf(buyback)
   assert.ok(ixs.some((ix) => ix.programId.toBase58() === network.dammV2Program))
   assert.equal(ixs.at(-1).programId.toBase58(), MEMO)
