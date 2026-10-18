@@ -18,6 +18,8 @@ import {
   HOLDERS_PCT,
   HOLDERS_RULE,
   PAID_NOTE,
+  PARTIAL_NOTE,
+  atLeast,
   solFigure,
 } from './quantpPayouts.js'
 import { QUANTP } from '../../shared/network.mjs'
@@ -57,13 +59,15 @@ class SceneGuard extends Component {
 // policy for what it sends to the payout wallet, paid out about once an hour by Quant Pad's
 // payout engine, and the live figures are what was really paid, bought back and burned (`paidSol`,
 // `boughtSol`, and `burned` in raw units, from /api/quantp's `payouts`), never an estimate. Every
-// figure is null while /api/quantp is loading or down.
+// figure is null while /api/quantp is loading or down, and reads "≥" while `partial` (the server
+// is still reading older history).
 function Flywheel({
   feeBps = null,
   migrated = false,
   paidSol = null,
   boughtSol = null,
   burned = null,
+  partial = false,
 }) {
   const stage = useRef(null)
   const art = useRef(null)
@@ -126,8 +130,8 @@ function Flywheel({
               <div>
                 <h3>To holders</h3>
                 <p>{HOLDERS_RULE}</p>
-                <p className="fw-earned" title={PAID_NOTE}>
-                  <b>{solFigure(paidSol)}</b> paid so far
+                <p className="fw-earned" title={partial ? PARTIAL_NOTE : PAID_NOTE}>
+                  <b>{atLeast(solFigure(paidSol), partial)}</b> paid so far
                 </p>
               </div>
             </div>
@@ -137,8 +141,9 @@ function Flywheel({
               <div>
                 <h3>Buyback &amp; burn</h3>
                 <p>{BUYBACK_RULE}</p>
-                <p className="fw-earned" title={PAID_NOTE}>
-                  <b>{solFigure(boughtSol)}</b> bought back · <b>{burnedText(burned)}</b> burned
+                <p className="fw-earned" title={partial ? PARTIAL_NOTE : PAID_NOTE}>
+                  <b>{atLeast(solFigure(boughtSol), partial)}</b> bought back ·{' '}
+                  <b>{atLeast(burnedText(burned), partial)}</b> burned
                 </p>
               </div>
             </div>

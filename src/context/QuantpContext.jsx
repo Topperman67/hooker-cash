@@ -1,6 +1,7 @@
 import { createContext, useContext, useMemo, useRef } from 'react'
 import { useResource } from '../lib/api.js'
 import { QUANTP } from '../../shared/network.mjs'
+import { keepComplete } from '../components/quantpPayouts.js'
 
 // Live $QUANTP figures from GET /api/quantp (server/quantp.mjs), polled once for the whole app so
 // the tape pin, menu row, home showcase, flywheel, footer and /quantp page share one request.
@@ -20,7 +21,8 @@ import { QUANTP } from '../../shared/network.mjs'
 //   feeBps, postGradFeeBps,              // the fee charged now (200 on the curve, 500 after graduation)
 //   fees: { lifetimeSol, creatorLifetimeSol, holdersSol, buybackSol } | null,
 //                                        // estimates of the fees so far; not shown as payouts
-//   payouts: { paidLamports, wallets, boughtLamports, burnedAmount, waitingLamports } | null,
+//   payouts: { paidLamports, wallets, boughtLamports, burnedAmount, waitingLamports, complete,
+//              since } | null,
 //                                        // what the payout wallet really paid holders, spent on
 //                                        // buybacks and burned, and holds now (server/quantp.mjs
 //                                        // ledgerSummary); null until the chain has been read
@@ -31,13 +33,16 @@ const QuantpContext = createContext(null)
 
 export function QuantpProvider({ children }) {
   const live = useResource('/api/quantp', 20000)
-  // An instance that has not read the ledger yet (a cold start) answers `payouts: null`: keep the
-  // last figures already shown instead of turning them into dashes until it has.
+  // An instance that has not read the ledger yet (a cold start) answers `payouts: null`, or a
+  // summary of only its newest history (`complete: false`): keep the last complete figures
+  // already shown instead of turning them into dashes or smaller totals (keepComplete).
   const payouts = useRef(null)
   const data = useMemo(() => {
-    if (live.data?.payouts) payouts.current = live.data.payouts
-    else if (live.data && payouts.current) return { ...live.data, payouts: payouts.current }
-    return live.data
+    if (!live.data) return live.data
+    payouts.current = keepComplete(payouts.current, live.data.payouts)
+    return payouts.current === live.data.payouts
+      ? live.data
+      : { ...live.data, payouts: payouts.current }
   }, [live.data])
   const value = {
     ...QUANTP,

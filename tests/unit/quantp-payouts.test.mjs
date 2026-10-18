@@ -4,11 +4,13 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  atLeast,
   BUYBACK_RULE,
   dailyShare,
   ENGINE_STATE_LABEL,
   engineState,
   HOLDERS_RULE,
+  keepComplete,
   payoutFigures,
   QUANTP_DISCLOSURE,
   solFigure,
@@ -108,9 +110,17 @@ test('the payout figures are numbers, or null when the route sends nothing usabl
       boughtSol: 0.552559872,
       burned: 3_119_233.145959,
       waitingSol: 1.021862,
+      partial: false,
     },
   )
-  const none = { paidSol: null, wallets: null, boughtSol: null, burned: null, waitingSol: null }
+  const none = {
+    paidSol: null,
+    wallets: null,
+    boughtSol: null,
+    burned: null,
+    waitingSol: null,
+    partial: false,
+  }
   assert.deepEqual(payoutFigures(null), none)
   assert.deepEqual(payoutFigures(undefined), none)
   assert.deepEqual(payoutFigures({}), none)
@@ -145,4 +155,34 @@ test('the rules and the disclosure promise no fixed hour and no right to a payme
   assert.match(QUANTP_DISCLOSURE, /holding \$QUANTP gives no right to any payment/)
   assert.match(QUANTP_DISCLOSURE, /about once an hour/)
   assert.doesNotMatch(QUANTP_DISCLOSURE, /every hour/)
+})
+
+test('payout totals still being read show as "at least", and never replace complete ones', () => {
+  const complete = { paidLamports: '650000000', burnedAmount: '3486347208070', complete: true }
+  const partial = {
+    paidLamports: '42405758',
+    burnedAmount: '49979400711',
+    waitingLamports: '2768041908',
+    complete: false,
+  }
+  assert.equal(payoutFigures(complete).partial, false)
+  assert.equal(payoutFigures(partial).partial, true)
+  // an older server without `complete` is read as complete
+  assert.equal(payoutFigures({ paidLamports: '1' }).partial, false)
+  assert.equal(atLeast(solFigure(0.042405758), true), '≥ 0.042 SOL')
+  assert.equal(atLeast(solFigure(0.042405758), false), '0.042 SOL')
+  assert.equal(atLeast('—', true), '—')
+  // a partial summary keeps the complete totals already shown, with the live balance
+  assert.deepEqual(keepComplete(complete, partial), { ...complete, waitingLamports: '2768041908' })
+  // a complete one, or a partial one with nothing complete before it, is taken as it is
+  const newer = { ...complete, paidLamports: '760000000' }
+  assert.equal(keepComplete(partial, newer), newer)
+  assert.equal(keepComplete(null, partial), partial)
+  assert.equal(
+    keepComplete(partial, { ...partial, paidLamports: '50000000' }).paidLamports,
+    '50000000',
+  )
+  // a server that has not read the ledger yet keeps what was shown
+  assert.equal(keepComplete(complete, null), complete)
+  assert.equal(keepComplete(null, null), null)
 })

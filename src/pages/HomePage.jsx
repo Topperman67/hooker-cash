@@ -125,6 +125,7 @@ export default function HomePage() {
           paidSol={qp?.payouts ? toSol(qp.payouts.paidLamports) : null}
           boughtSol={qp?.payouts ? toSol(qp.payouts.boughtLamports) : null}
           burned={qp?.payouts?.burnedAmount ?? null}
+          partial={qp?.payouts?.complete === false}
         />
       </section>
 

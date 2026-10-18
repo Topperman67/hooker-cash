@@ -91,7 +91,11 @@ const lamportsToSol = (v) => {
   return n == null ? null : toSol(n)
 }
 
-/** The real figures, as numbers (SOL and whole tokens), each null when unknown. */
+/**
+ * The real figures, as numbers (SOL and whole tokens), each null when unknown. `partial` is true
+ * while the server is still reading older history (`complete: false`): the totals are then at
+ * least these, not all of it.
+ */
 export function payoutFigures(payouts, decimals = QUANTP.decimals) {
   const burned = finite(payouts?.burnedAmount)
   return {
@@ -100,9 +104,26 @@ export function payoutFigures(payouts, decimals = QUANTP.decimals) {
     boughtSol: lamportsToSol(payouts?.boughtLamports),
     burned: burned == null ? null : burned / 10 ** decimals,
     waitingSol: lamportsToSol(payouts?.waitingLamports),
+    partial: payouts?.complete === false,
   }
+}
+
+/**
+ * The summary to show, from the one shown before (`shown`) and the one just read (`fresh`): a
+ * summary still reading older history never replaces a complete one, since the totals only grow.
+ * Only the payout wallet's balance, which is read live, comes from it then.
+ */
+export function keepComplete(shown, fresh) {
+  if (!fresh) return shown ?? null
+  if (fresh.complete !== false || !shown || shown.complete === false) return fresh
+  return { ...shown, waitingLamports: fresh.waitingLamports ?? shown.waitingLamports }
 }
 
 export const solFigure = (value) =>
   value == null ? '—' : sol(value, { digits: value !== 0 && value < 10 ? 3 : 2 })
 export const tokenFigure = (value) => (value == null ? '—' : compact(value))
+/** A figure as "≥ 0.042 SOL" while it is a partial total. */
+export const atLeast = (text, partial) => (partial && text !== '—' ? `≥ ${text}` : text)
+/** Why a figure reads "≥". */
+export const PARTIAL_NOTE =
+  'Older transactions are still being read from the chain: these totals are at least this much.'

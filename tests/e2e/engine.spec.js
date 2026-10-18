@@ -516,6 +516,73 @@ test('figures already shown stay when a cold server answers without its ledger',
   await expect(stats).toContainText('Paid to holders0.55 SOL')
 })
 
+// A cold instance on a slow RPC can answer with only its newest history (complete: false): on
+// 2026-10-17 it showed 50K $QUANTP burned and 0.042 SOL paid, when the chain held 3.49M and 0.65.
+const partialPayouts = {
+  paidLamports: '42405758',
+  wallets: 62,
+  boughtLamports: '9149511',
+  burnedAmount: '49979400711',
+  waitingLamports: '2768041908',
+  complete: false,
+  since: 1792256404,
+}
+
+test('totals still being read show as "at least" on the engine, $QUANTP and home pages', async ({
+  page,
+}) => {
+  await stubApi(page)
+  await stubQuantp(page, {
+    snapshot: quantpSnapshot({ payouts: partialPayouts }),
+    engine: quantpEngine(),
+  })
+  await enter(page)
+  await page.goto(ENGINE)
+  const stats = page.locator('.eg-stats')
+  await expect(stats).toContainText('Paid to holders≥ 0.042 SOLstill reading older payouts')
+  await expect(stats).toContainText(
+    'Bought back and burned≥ 49.98K QUANTPstill reading older burns',
+  )
+  await expect(stats.locator('dd').last()).toHaveAttribute('title', /^At least 49,979\.4/)
+  // the live balance is not a total: it reads as it is
+  await expect(stats).toContainText('In the payout wallet2.768 SOL')
+
+  await page.goto(QUANTP.path)
+  await expect(page.locator('.qp-split-legend')).toContainText('≥ 0.042 SOL paid so far')
+  await expect(page.locator('.qp-split-legend')).toContainText(
+    '≥ 0.009 SOL bought back · ≥ 49.98K burned',
+  )
+
+  await page.goto('/')
+  await expect(page.locator('.fw-rows')).toContainText('≥ 0.042 SOL paid so far')
+  await expect(page.locator('.fw-rows')).toContainText('≥ 49.98K burned')
+})
+
+test('complete totals already shown stay when a later answer is still reading', async ({
+  page,
+}) => {
+  await page.clock.install()
+  await stubApi(page)
+  await stubQuantp(page, { engine: quantpEngine() })
+  let partial = false
+  await page.route('**/api/quantp', (route) =>
+    route.fulfill({ json: quantpSnapshot(partial ? { payouts: partialPayouts } : {}) }),
+  )
+  await enter(page)
+  await page.goto(ENGINE)
+  const stats = page.locator('.eg-stats')
+  await expect(stats).toContainText('Paid to holders0.55 SOLto 51 wallets so far')
+  partial = true
+  const refreshed = page.waitForResponse((r) => r.url().endsWith('/api/quantp'))
+  await page.clock.runFor(21_000)
+  expect((await (await refreshed).json()).payouts.complete).toBe(false)
+  await page.waitForTimeout(300)
+  await expect(stats).toContainText('Paid to holders0.55 SOLto 51 wallets so far')
+  await expect(stats).not.toContainText('≥')
+  // only the payout wallet's balance, read live, moves on
+  await expect(stats).toContainText('In the payout wallet2.768 SOL')
+})
+
 test('the header, the phone menu and the footer link to the engine page', async ({ page }) => {
   await stubApi(page)
   await stubQuantp(page, { engine: quantpEngine() })

@@ -11,7 +11,9 @@ import {
   GRADUATED,
   HOLDERS_PCT,
   HOLDERS_RULE,
+  PARTIAL_NOTE,
   QUANTP_DAMM_POOL,
+  atLeast,
   payoutFigures,
   solFigure,
   tokenFigure,
@@ -267,9 +269,11 @@ export default function QuantpPage() {
                   <i className="qp-dot qp-dot-holders" /> {holdersPct}% to holders
                 </dt>
                 <dd>{HOLDERS_RULE}</dd>
-                <dd className="num qp-earned">
-                  {solFigure(paid.paidSol)} paid so far
-                  {paid.wallets ? ` to ${paid.wallets.toLocaleString('en-US')} wallets` : ''}
+                <dd className="num qp-earned" title={paid.partial ? PARTIAL_NOTE : undefined}>
+                  {atLeast(solFigure(paid.paidSol), paid.partial)} paid so far
+                  {paid.wallets && !paid.partial
+                    ? ` to ${paid.wallets.toLocaleString('en-US')} wallets`
+                    : ''}
                 </dd>
               </div>
               <div>
@@ -277,10 +281,11 @@ export default function QuantpPage() {
                   <i className="qp-dot qp-dot-burn" /> {buybackPct}% buyback & burn
                 </dt>
                 <dd>{BUYBACK_RULE}</dd>
-                <dd className="num qp-earned">
+                <dd className="num qp-earned" title={paid.partial ? PARTIAL_NOTE : undefined}>
                   {/* the team's own burns: the supply's total, others' burns included, is the
                       Burned stat */}
-                  {solFigure(paid.boughtSol)} bought back · {tokenFigure(paid.burned)} burned
+                  {atLeast(solFigure(paid.boughtSol), paid.partial)} bought back ·{' '}
+                  {atLeast(tokenFigure(paid.burned), paid.partial)} burned
                 </dd>
               </div>
             </dl>

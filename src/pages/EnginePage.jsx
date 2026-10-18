@@ -26,6 +26,8 @@ import {
   ENGINE_STATE_LABEL,
   engineState,
   payoutFigures,
+  PARTIAL_NOTE,
+  atLeast,
   solFigure,
   tokenFigure,
 } from '../components/quantpPayouts.js'
@@ -723,17 +725,30 @@ export default function EnginePage() {
         <StatTile
           label="Paid to holders"
           tone="green"
-          note={paid.wallets ? `to ${count(paid.wallets, 'wallet')} so far` : null}
+          note={
+            paid.partial
+              ? 'still reading older payouts'
+              : paid.wallets
+                ? `to ${count(paid.wallets, 'wallet')} so far`
+                : null
+          }
+          title={paid.partial ? PARTIAL_NOTE : undefined}
         >
-          <span className="num">{solFigure(paid.paidSol)}</span>
+          <span className="num">{atLeast(solFigure(paid.paidSol), paid.partial)}</span>
         </StatTile>
         <StatTile
           label="Bought back and burned"
           tone="pink"
-          note={paid.boughtSol ? `${solFigure(paid.boughtSol)} bought back` : null}
+          note={
+            paid.partial
+              ? 'still reading older burns'
+              : paid.boughtSol
+                ? `${solFigure(paid.boughtSol)} bought back`
+                : null
+          }
           title={
             d?.payouts
-              ? `${formatUnits(d.payouts.burnedAmount, q.decimals)} ${q.symbol}`
+              ? `${paid.partial ? 'At least ' : ''}${formatUnits(d.payouts.burnedAmount, q.decimals)} ${q.symbol}`
               : undefined
           }
         >
@@ -741,7 +756,7 @@ export default function EnginePage() {
             <span className="num">—</span>
           ) : (
             <>
-              <span className="num">{tokenFigure(paid.burned)}</span>{' '}
+              <span className="num">{atLeast(tokenFigure(paid.burned), paid.partial)}</span>{' '}
               <span className="eg-unit">{q.symbol}</span>
             </>
           )}
